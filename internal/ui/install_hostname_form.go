@@ -9,6 +9,11 @@ import (
 
 type InstallHostnameBackMsg struct{}
 
+type InstallAdvancedMsg struct {
+	ImageRef string
+	Hostname string
+}
+
 type InstallHostnameForm struct {
 	form     Form
 	imageRef string
@@ -42,6 +47,13 @@ func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 			}
 		}
 	})
+	m.form.SetActionButton("Advanced settings", func() tea.Msg {
+		return InstallAdvancedMsg{
+			ImageRef: imageRef,
+			Hostname: hostnameField.Value(),
+		}
+	})
+
 	m.form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return InstallHostnameBackMsg{} }
 	})

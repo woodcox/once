@@ -25,7 +25,7 @@ const (
 	initialFlushDelay  = 10 * time.Second
 	scannerBufSize     = 64 * 1024
 	scannerMaxSize     = 1024 * 1024
-	healthCheckPath    = docker.HealthCheckPath
+	healthCheckPath    = docker.DefaultHealthCheckPath
 )
 
 type dockerClient interface {

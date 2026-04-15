@@ -47,10 +47,22 @@ func TestSettingsFormApplication_TabNavigation(t *testing.T) {
 	assert.Equal(t, 2, form.form.Focused(), "tls")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 3, form.form.Focused(), "done button")
+	assert.Equal(t, 3, form.form.Focused(), "health check path")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 4, form.form.Focused(), "cancel button")
+	assert.Equal(t, 4, form.form.Focused(), "app port")
+
+	applicationPressTab(&form)
+	assert.Equal(t, 5, form.form.Focused(), "volume paths")
+
+	applicationPressTab(&form)
+	assert.Equal(t, 6, form.form.Focused(), "skip rails env")
+
+	applicationPressTab(&form)
+	assert.Equal(t, 7, form.form.Focused(), "done button")
+
+	applicationPressTab(&form)
+	assert.Equal(t, 8, form.form.Focused(), "cancel button")
 
 	applicationPressTab(&form)
 	assert.Equal(t, 0, form.form.Focused(), "wraps to image")
@@ -60,10 +72,10 @@ func TestSettingsFormApplication_ShiftTabNavigation(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 4, form.form.Focused(), "cancel button")
+	assert.Equal(t, 8, form.form.Focused(), "cancel button")
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 3, form.form.Focused(), "done button")
+	assert.Equal(t, 7, form.form.Focused(), "done button")
 }
 
 func TestSettingsFormApplication_SpaceTogglesTLS(t *testing.T) {
@@ -111,7 +123,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 		Host:  "app.example.com",
 	})
 
-	for range 3 {
+	for range 7 {
 		applicationPressTab(&form)
 	}
 
@@ -131,7 +143,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 func TestSettingsFormApplication_Cancel(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
-	for range 4 {
+	for range 8 {
 		applicationPressTab(&form)
 	}
 
