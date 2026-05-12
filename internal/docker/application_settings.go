@@ -118,9 +118,11 @@ func (s ApplicationSettings) BuildEnv(vol ApplicationVolumeSettings) []string {
 
 	env = append(env, s.SMTP.BuildEnv()...)
 
-	if s.HealthCheckPath != "" {
-		env = append(env, "HEALTH_CHECK_PATH="+s.HealthCheckPath)
+	healthCheckPath := s.HealthCheckPath
+	if healthCheckPath == "" {
+		healthCheckPath = HealthCheckPath
 	}
+	env = append(env, "HEALTH_CHECK_PATH="+healthCheckPath)
 
 	for k, v := range s.EnvVars {
 		env = append(env, k+"="+v)

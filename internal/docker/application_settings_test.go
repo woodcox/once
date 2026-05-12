@@ -155,6 +155,21 @@ func TestEnvVarsEqualDiffers(t *testing.T) {
 	assert.False(t, base.Equal(none))
 }
 
+func TestBuildEnvIncludesDefaultHealthCheckPath(t *testing.T) {
+	settings := ApplicationSettings{}
+	env := settings.BuildEnv(ApplicationVolumeSettings{SecretKeyBase: "test-secret-key"})
+
+	assert.Contains(t, env, "HEALTH_CHECK_PATH=/up")
+}
+
+func TestBuildEnvUsesCustomHealthCheckPath(t *testing.T) {
+	settings := ApplicationSettings{HealthCheckPath: "/health"}
+	env := settings.BuildEnv(ApplicationVolumeSettings{SecretKeyBase: "test-secret-key"})
+
+	assert.Contains(t, env, "HEALTH_CHECK_PATH=/health")
+	assert.NotContains(t, env, "HEALTH_CHECK_PATH=/up")
+}
+
 func TestAutoUpdateAndBackupMarshalRoundTrip(t *testing.T) {
 	original := ApplicationSettings{
 		Name:       "app",
