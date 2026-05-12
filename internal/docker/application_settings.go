@@ -37,15 +37,16 @@ type BackupSettings struct {
 }
 
 type ApplicationSettings struct {
-	Name       string             `json:"name"`
-	Image      string             `json:"image"`
-	Host       string             `json:"host"`
-	DisableTLS bool               `json:"disableTLS"`
-	EnvVars    map[string]string  `json:"env"`
-	SMTP       SMTPSettings       `json:"smtp"`
-	Resources  ContainerResources `json:"resources"`
-	AutoUpdate bool               `json:"autoUpdate"`
-	Backup     BackupSettings     `json:"backup"`
+	Name            string             `json:"name"`
+	Image           string             `json:"image"`
+	Host            string             `json:"host"`
+	DisableTLS      bool               `json:"disableTLS"`
+	HealthCheckPath string             `json:"healthCheckPath,omitempty"`
+	EnvVars         map[string]string  `json:"env"`
+	SMTP            SMTPSettings       `json:"smtp"`
+	Resources       ContainerResources `json:"resources"`
+	AutoUpdate      bool               `json:"autoUpdate"`
+	Backup          BackupSettings     `json:"backup"`
 }
 
 func UnmarshalApplicationSettings(s string) (ApplicationSettings, error) {
@@ -74,7 +75,7 @@ func (s ApplicationSettings) TLSEnabled() bool {
 }
 
 func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
-	if s.Name != other.Name || s.Image != other.Image || s.Host != other.Host || s.DisableTLS != other.DisableTLS {
+	if s.Name != other.Name || s.Image != other.Image || s.Host != other.Host || s.DisableTLS != other.DisableTLS || s.HealthCheckPath != other.HealthCheckPath {
 		return false
 	}
 	if s.Resources != other.Resources {
@@ -116,6 +117,10 @@ func (s ApplicationSettings) BuildEnv(vol ApplicationVolumeSettings) []string {
 	}
 
 	env = append(env, s.SMTP.BuildEnv()...)
+
+	if s.HealthCheckPath != "" {
+		env = append(env, "HEALTH_CHECK_PATH="+s.HealthCheckPath)
+	}
 
 	for k, v := range s.EnvVars {
 		env = append(env, k+"="+v)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -143,6 +144,13 @@ func (a *Application) URL() string {
 		return base + ":" + strconv.Itoa(port)
 	}
 	return base
+}
+
+func (a *Application) GetHealthCheckPath() string {
+	if a.Settings.HealthCheckPath != "" {
+		return a.Settings.HealthCheckPath
+	}
+	return HealthCheckPath
 }
 
 func (a *Application) Stop(ctx context.Context) error {
@@ -384,7 +392,7 @@ func (a *Application) verifyHTTP(ctx context.Context) error {
 	}
 
 	client := &http.Client{Timeout: httpVerifyTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+HealthCheckPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+a.GetHealthCheckPath(), nil)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
