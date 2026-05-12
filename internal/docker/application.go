@@ -40,9 +40,15 @@ var (
 
 const (
 	AutomaticTaskInterval = 24 * time.Hour
-	HealthCheckPath       = "/up"
 	httpVerifyTimeout     = 30 * time.Second
 )
+
+var HealthCheckPath = func() string {
+	if p := os.Getenv("HEALTH_CHECK_PATH"); p != "" {
+		return p
+	}
+	return "/up"
+}()
 
 // AppVolumeMountTargets defines the paths where the app data volume is mounted
 // inside the container. The first entry is the primary path used for backups.

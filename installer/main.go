@@ -103,7 +103,12 @@ func main() {
 		panic(err)
 	}
 
-	http.HandleFunc("GET /up", healthHandler)
+	healthCheckPath := os.Getenv("HEALTH_CHECK_PATH")
+	if healthCheckPath == "" {
+		healthCheckPath = "/up"
+	}
+
+	http.HandleFunc("GET "+healthCheckPath, healthHandler)
 	http.HandleFunc("GET /{image...}", withLogging(newInstallScriptHandler(template)))
 
 	port := os.Getenv("HTTP_PORT")
