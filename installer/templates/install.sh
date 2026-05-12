@@ -3,7 +3,7 @@ set -eu
 
 REPO='woodcox/once'
 INSTALL_DIR='/usr/local/bin'
-IMAGE_REF='{{ .ImageRef }}'
+IMAGE_REF=''
 RELEASE_JSON=''
 ONCE_BIN=''
 
