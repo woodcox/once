@@ -41,7 +41,7 @@ func TestUIInstallAndManageApp(t *testing.T) {
 	d.waitForView("Image", 5*time.Second)
 
 	// -- Screen 2: Image form --
-	d.typeText("ghcr.io/woodcox/once-campfire:main")
+	d.typeText("ghcr.io/basecamp/once-campfire:main")
 	d.send(keyMsg("tab"))
 	d.send(keyMsg("enter"))
 

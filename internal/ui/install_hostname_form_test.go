@@ -9,7 +9,7 @@ import (
 )
 
 func TestInstallHostnameForm_Submit(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/woodcox/once-campfire", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "")
 
 	hostnameFormTypeText(&form, "chat.example.com")
 	hostnameFormPressTab(&form)
@@ -19,12 +19,12 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 	msg := cmd()
 	submit, ok := msg.(InstallFormSubmitMsg)
 	require.True(t, ok, "expected InstallFormSubmitMsg, got %T", msg)
-	assert.Equal(t, "ghcr.io/woodcox/once-campfire", submit.ImageRef)
+	assert.Equal(t, "ghcr.io/basecamp/once-campfire", submit.ImageRef)
 	assert.Equal(t, "chat.example.com", submit.Hostname)
 }
 
 func TestInstallHostnameForm_Cancel(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/woodcox/once-campfire:latest", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
 	// Tab to submit, tab to action, tab to cancel
 	hostnameFormPressTab(&form)
@@ -39,7 +39,7 @@ func TestInstallHostnameForm_Cancel(t *testing.T) {
 }
 
 func TestInstallHostnameForm_AdvancedSettings(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/woodcox/once-campfire", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "")
 
 	hostnameFormTypeText(&form, "chat.example.com")
 
@@ -52,12 +52,12 @@ func TestInstallHostnameForm_AdvancedSettings(t *testing.T) {
 	msg := cmd()
 	advMsg, ok := msg.(InstallAdvancedMsg)
 	require.True(t, ok, "expected InstallAdvancedMsg, got %T", msg)
-	assert.Equal(t, "ghcr.io/woodcox/once-campfire", advMsg.ImageRef)
+	assert.Equal(t, "ghcr.io/basecamp/once-campfire", advMsg.ImageRef)
 	assert.Equal(t, "chat.example.com", advMsg.Hostname)
 }
 
 func TestInstallHostnameForm_RequiresHostname(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/woodcox/once-campfire:latest", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
 	// Tab to submit button, then press enter with empty hostname
 	hostnameFormPressTab(&form)
@@ -66,19 +66,19 @@ func TestInstallHostnameForm_RequiresHostname(t *testing.T) {
 }
 
 func TestInstallHostnameForm_Hostname(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/woodcox/once-campfire:latest", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 	hostnameFormTypeText(&form, "app.example.com")
 	assert.Equal(t, "app.example.com", form.Hostname())
 }
 
 func TestInstallHostnameForm_ShowsTitleWhenSet(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/woodcox/once-campfire", "campfire")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "campfire")
 	view := ansi.Strip(form.View())
 	assert.Contains(t, view, "Installing campfire")
 }
 
 func TestInstallHostnameForm_NoTitleWhenEmpty(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/woodcox/once-campfire", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "")
 	view := ansi.Strip(form.View())
 	assert.NotContains(t, view, "Installing")
 }

@@ -12,21 +12,21 @@ import (
 
 func TestSettingsFormApplication_InitialState_NonLocalhost(t *testing.T) {
 	settings := docker.ApplicationSettings{
-		Image:      "ghcr.io/woodcox/once-campfire:latest",
+		Image:      "ghcr.io/basecamp/once-campfire:latest",
 		Host:       "app.example.com",
 		DisableTLS: false,
 	}
 	form := NewSettingsFormApplication(settings)
 
 	assert.Equal(t, 0, form.form.Focused())
-	assert.Equal(t, "ghcr.io/woodcox/once-campfire:latest", form.form.TextField(appImageField).Value())
+	assert.Equal(t, "ghcr.io/basecamp/once-campfire:latest", form.form.TextField(appImageField).Value())
 	assert.Equal(t, "app.example.com", form.form.TextField(appHostnameField).Value())
 	assert.True(t, form.form.CheckboxField(appTLSField).Checked())
 }
 
 func TestSettingsFormApplication_InitialState_Localhost(t *testing.T) {
 	settings := docker.ApplicationSettings{
-		Image:      "ghcr.io/woodcox/once-campfire:latest",
+		Image:      "ghcr.io/basecamp/once-campfire:latest",
 		Host:       "chat.localhost",
 		DisableTLS: false,
 	}
@@ -119,7 +119,7 @@ func TestSettingsFormApplication_TLSShowsDisabledForLocalhost(t *testing.T) {
 func TestSettingsFormApplication_Submit(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{
 		Name:  "myapp",
-		Image: "ghcr.io/woodcox/once-campfire:latest",
+		Image: "ghcr.io/basecamp/once-campfire:latest",
 		Host:  "app.example.com",
 	})
 
@@ -135,7 +135,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 	submitMsg, ok := msg.(SettingsSectionSubmitMsg)
 	require.True(t, ok, "expected SettingsSectionSubmitMsg, got %T", msg)
 	assert.Equal(t, "myapp", submitMsg.Settings.Name)
-	assert.Equal(t, "ghcr.io/woodcox/once-campfire:latest", submitMsg.Settings.Image)
+	assert.Equal(t, "ghcr.io/basecamp/once-campfire:latest", submitMsg.Settings.Image)
 	assert.Equal(t, "app.example.com", submitMsg.Settings.Host)
 	assert.False(t, submitMsg.Settings.DisableTLS)
 }

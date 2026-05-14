@@ -19,11 +19,11 @@ func TestInstall_KnownAppFlow(t *testing.T) {
 	assert.Equal(t, installStateAppList, m.state)
 
 	// Select Campfire (first item, already selected)
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
 	assert.Equal(t, installStateHostname, m.state)
 
 	// Enter hostname and submit
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 }
 
@@ -36,11 +36,11 @@ func TestInstall_CustomImageFlow(t *testing.T) {
 	assert.Equal(t, installStateImageForm, m.state)
 
 	// Submit image
-	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 	assert.Equal(t, installStateHostname, m.state)
 
 	// Submit hostname
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest", Hostname: "app.example.com"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest", Hostname: "app.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 }
 
@@ -60,7 +60,7 @@ func TestInstall_CLIModeExpandsAlias(t *testing.T) {
 func TestInstall_InteractiveModeHasNoTitle(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
 	view := ansi.Strip(m.View())
 	assert.NotContains(t, view, "Installing")
 }
@@ -68,7 +68,7 @@ func TestInstall_InteractiveModeHasNoTitle(t *testing.T) {
 func TestInstall_SubmitTriggersActivity(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest", Hostname: "app.example.com"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest", Hostname: "app.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 }
 
@@ -91,8 +91,8 @@ func TestInstall_FailureReturnsToHostname(t *testing.T) {
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	// Go through known app flow to hostname
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 
 	// Simulate failure
@@ -107,7 +107,7 @@ func TestInstall_FailureReturnsToHostname(t *testing.T) {
 func TestInstall_ErrorClearsOnKeypress(t *testing.T) {
 	m := newTestInstall()
 	m.state = installStateHostname
-	m.hostnameForm = NewInstallHostnameForm("ghcr.io/woodcox/once-campfire:latest", "")
+	m.hostnameForm = NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 	m.err = errors.New("some error")
 
 	m, _ = updateInstall(m, keyPressMsg("a"))
@@ -136,7 +136,7 @@ func TestInstall_BackNavigation_ImageFormEscGoesToAppList(t *testing.T) {
 
 func TestInstall_BackNavigation_HostnameEscGoesToAppList(t *testing.T) {
 	m := newTestInstall()
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
 	assert.Equal(t, installStateHostname, m.state)
 
 	m, _ = updateInstall(m, keyPressMsg("esc"))
@@ -146,7 +146,7 @@ func TestInstall_BackNavigation_HostnameEscGoesToAppList(t *testing.T) {
 func TestInstall_BackNavigation_HostnameEscGoesToImageForm(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
-	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 	assert.Equal(t, installStateHostname, m.state)
 	assert.True(t, m.customImage)
 
@@ -156,7 +156,7 @@ func TestInstall_BackNavigation_HostnameEscGoesToImageForm(t *testing.T) {
 
 func TestInstall_BackNavigation_HostnameBackMsgKnownApp(t *testing.T) {
 	m := newTestInstall()
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
 
 	m, _ = updateInstall(m, InstallHostnameBackMsg{})
 	assert.Equal(t, installStateAppList, m.state)
@@ -165,7 +165,7 @@ func TestInstall_BackNavigation_HostnameBackMsgKnownApp(t *testing.T) {
 func TestInstall_BackNavigation_HostnameBackMsgCustomImage(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
-	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 
 	m, _ = updateInstall(m, InstallHostnameBackMsg{})
 	assert.Equal(t, installStateImageForm, m.state)
@@ -180,7 +180,7 @@ func TestInstall_BackNavigation_ImageFormBackMsg(t *testing.T) {
 }
 
 func TestInstall_EscQuitsInCLIMode(t *testing.T) {
-	m := NewInstall(newTestNamespace(), "ghcr.io/woodcox/once-campfire:latest")
+	m := NewInstall(newTestNamespace(), "ghcr.io/basecamp/once-campfire:latest")
 
 	_, cmd := updateInstall(m, keyPressMsg("esc"))
 	require.NotNil(t, cmd)
@@ -191,7 +191,7 @@ func TestInstall_EscQuitsInCLIMode(t *testing.T) {
 }
 
 func TestInstall_HostnameBackQuitsInCLIMode(t *testing.T) {
-	m := NewInstall(newTestNamespace(), "ghcr.io/woodcox/once-campfire:latest")
+	m := NewInstall(newTestNamespace(), "ghcr.io/basecamp/once-campfire:latest")
 
 	_, cmd := updateInstall(m, InstallHostnameBackMsg{})
 	require.NotNil(t, cmd)
@@ -251,8 +251,8 @@ func TestInstall_PullFailureReturnsToAppList(t *testing.T) {
 	ns := newTestNamespace()
 	m := NewInstall(ns, "")
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 
 	pullErr := fmt.Errorf("%w: %w", docker.ErrDeployFailed, docker.ErrPullFailed)
@@ -265,8 +265,8 @@ func TestInstall_NonPullDeployFailureReturnsToHostname(t *testing.T) {
 	ns := newTestNamespace()
 	m := NewInstall(ns, "")
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 
 	deployErr := fmt.Errorf("%w: %w", docker.ErrDeployFailed, errors.New("container crashed"))
 	m, _ = updateInstall(m, InstallActivityFailedMsg{Err: deployErr})
@@ -277,9 +277,9 @@ func TestInstall_AdvancedMsgTriggersEnvVars(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 	assert.Equal(t, installStateEnvVars, m.state)
-	assert.Equal(t, "ghcr.io/woodcox/once-campfire", m.pendingSubmit.ImageRef)
+	assert.Equal(t, "ghcr.io/basecamp/once-campfire", m.pendingSubmit.ImageRef)
 	assert.Equal(t, "chat.example.com", m.pendingSubmit.Hostname)
 }
 
@@ -287,7 +287,7 @@ func TestInstall_AdvancedMsgEmptyHostnameShowsError(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: ""})
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: ""})
 	assert.NotEqual(t, installStateEnvVars, m.state)
 	assert.Error(t, m.err)
 	assert.Contains(t, m.err.Error(), "hostname is required")
@@ -297,7 +297,7 @@ func TestInstall_AdvancedSettingsThreadedToActivity(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 	assert.Equal(t, installStateEnvVars, m.state)
 
 	settings := docker.ApplicationSettings{AppPort: 8080, SkipRailsEnv: true}
@@ -310,7 +310,7 @@ func TestInstall_AdvancedCancelReturnsToHostname(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 	assert.Equal(t, installStateEnvVars, m.state)
 
 	m, _ = updateInstall(m, SettingsSectionCancelMsg{})
@@ -321,7 +321,7 @@ func TestInstall_AdvancedBackReturnsToHostname(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "chat.example.com"})
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
 	assert.Equal(t, installStateEnvVars, m.state)
 
 	m, _ = updateInstall(m, keyPressMsg("esc"))
@@ -332,10 +332,10 @@ func TestInstall_HostnameInUseBlocksInstall(t *testing.T) {
 	ns := newTestNamespace(docker.ApplicationSettings{Name: "myapp", Host: "taken.example.com"})
 	m := NewInstall(ns, "")
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
 	assert.Equal(t, installStateHostname, m.state)
 
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "taken.example.com"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "taken.example.com"})
 	assert.Equal(t, installStateHostname, m.state)
 	assert.ErrorIs(t, m.err, docker.ErrHostnameInUse)
 }
@@ -344,9 +344,9 @@ func TestInstall_UniqueHostnameAllowsInstall(t *testing.T) {
 	ns := newTestNamespace(docker.ApplicationSettings{Name: "myapp", Host: "taken.example.com"})
 	m := NewInstall(ns, "")
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/woodcox/once-campfire"})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
 
-	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire", Hostname: "unique.example.com"})
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "unique.example.com"})
 	assert.Equal(t, installStateActivity, m.state)
 	assert.Nil(t, m.err)
 }
@@ -355,7 +355,7 @@ func TestInstall_FailureDoesNotRestartLogo(t *testing.T) {
 	ns := newTestNamespace()
 	noApps := NewInstall(ns, "")
 	noApps, _ = updateInstall(noApps, tea.WindowSizeMsg{Width: 80, Height: 40})
-	noApps, _ = updateInstall(noApps, InstallFormSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest", Hostname: "app.example.com"})
+	noApps, _ = updateInstall(noApps, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest", Hostname: "app.example.com"})
 	_, cmd := updateInstall(noApps, InstallActivityFailedMsg{Err: errors.New("fail")})
 	assert.Nil(t, cmd)
 }
@@ -374,7 +374,7 @@ func TestInstall_HelpKeyShownOnHostnameScreen(t *testing.T) {
 	assert.NotContains(t, view, "F1")
 
 	// Hostname: F1 shown
-	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 	view = ansi.Strip(m.View())
 	assert.Contains(t, view, "F1")
 	assert.Contains(t, view, "help")
@@ -387,7 +387,7 @@ func TestInstall_HelpKeyShownOnHostnameScreenNonFirstRun(t *testing.T) {
 
 	// Navigate to hostname screen
 	m, _ = updateInstall(m, InstallCustomSelectedMsg{})
-	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/woodcox/once-campfire:latest"})
+	m, _ = updateInstall(m, InstallImageSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire:latest"})
 
 	view := ansi.Strip(m.View())
 	assert.Contains(t, view, "F1")
