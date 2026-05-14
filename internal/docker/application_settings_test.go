@@ -112,6 +112,22 @@ func TestBuildEnvWithVAPIDKeys(t *testing.T) {
 	assert.Contains(t, env, "VAPID_PRIVATE_KEY=test-vapid-private")
 }
 
+func TestBuildEnvSkipRailsEnv(t *testing.T) {
+	vol := ApplicationVolumeSettings{
+		SecretKeyBase:   "secret",
+		VAPIDPublicKey:  "pub",
+		VAPIDPrivateKey: "priv",
+	}
+
+	env := ApplicationSettings{SkipRailsEnv: true, Resources: ContainerResources{CPUs: 2}}.BuildEnv(vol)
+
+	assert.NotContains(t, env, "SECRET_KEY_BASE=secret")
+	assert.NotContains(t, env, "VAPID_PUBLIC_KEY=pub")
+	assert.NotContains(t, env, "VAPID_PRIVATE_KEY=priv")
+	assert.NotContains(t, env, "DISABLE_SSL=true")
+	assert.Contains(t, env, "NUM_CPUS=2")
+}
+
 func TestBuildEnvWithEnvVars(t *testing.T) {
 	settings := ApplicationSettings{
 		EnvVars: map[string]string{
@@ -168,4 +184,74 @@ func TestAutoUpdateAndBackupMarshalRoundTrip(t *testing.T) {
 	assert.Equal(t, "/backups", restored.Backup.Path)
 	assert.True(t, restored.Backup.AutoBackup)
 	assert.True(t, original.Equal(restored))
+}
+
+func TestDeployTarget(t *testing.T) {
+	assert.Equal(t, "abc123", ApplicationSettings{}.DeployTarget("abc123"))
+	assert.Equal(t, "abc123:8080", ApplicationSettings{AppPort: 8080}.DeployTarget("abc123"))
+}
+
+func TestEffectiveVolumePaths(t *testing.T) {
+	assert.Equal(t, DefaultVolumePaths, ApplicationSettings{}.EffectiveVolumePaths())
+	assert.Equal(t, []string{"/data"}, ApplicationSettings{VolumePaths: []string{"/data"}}.EffectiveVolumePaths())
+}
+
+func TestEffectiveHealthCheckPath(t *testing.T) {
+	assert.Equal(t, DefaultHealthCheckPath, ApplicationSettings{}.EffectiveHealthCheckPath())
+	assert.Equal(t, "/healthz", ApplicationSettings{HealthCheckPath: "/healthz"}.EffectiveHealthCheckPath())
+}
+
+func TestParseVolumePaths(t *testing.T) {
+	assert.Equal(t, []string{"/storage", "/rails/storage"}, ParseVolumePaths("/storage, /rails/storage"))
+	assert.Equal(t, []string{"/data"}, ParseVolumePaths("/data"))
+	assert.Nil(t, ParseVolumePaths(""))
+	assert.Nil(t, ParseVolumePaths("  ,  "))
+}
+
+func TestAppPortEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{Name: "app", AppPort: 8080}
+	different := ApplicationSettings{Name: "app", AppPort: 3000}
+	assert.False(t, base.Equal(different))
+}
+
+func TestVolumePathsEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{Name: "app", VolumePaths: []string{"/data"}}
+	different := ApplicationSettings{Name: "app", VolumePaths: []string{"/storage"}}
+	assert.False(t, base.Equal(different))
+
+	none := ApplicationSettings{Name: "app"}
+	assert.False(t, base.Equal(none))
+}
+
+func TestSkipRailsEnvEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{Name: "app", SkipRailsEnv: true}
+	different := ApplicationSettings{Name: "app", SkipRailsEnv: false}
+	assert.False(t, base.Equal(different))
+}
+
+func TestNewFieldsMarshalRoundTrip(t *testing.T) {
+	original := ApplicationSettings{
+		Name:            "app",
+		Image:           "img:latest",
+		HealthCheckPath: "/healthz",
+		AppPort:         8080,
+		VolumePaths:     []string{"/data", "/config"},
+		SkipRailsEnv:    true,
+	}
+	restored, err := UnmarshalApplicationSettings(original.Marshal())
+	require.NoError(t, err)
+	assert.Equal(t, "/healthz", restored.HealthCheckPath)
+	assert.Equal(t, 8080, restored.AppPort)
+	assert.Equal(t, []string{"/data", "/config"}, restored.VolumePaths)
+	assert.True(t, restored.SkipRailsEnv)
+	assert.True(t, original.Equal(restored))
+}
+
+func TestNewFieldsOmittedWhenDefault(t *testing.T) {
+	settings := ApplicationSettings{Name: "app", Image: "img:latest"}
+	marshaled := settings.Marshal()
+	assert.NotContains(t, marshaled, "healthCheckPath")
+	assert.NotContains(t, marshaled, "appPort")
+	assert.NotContains(t, marshaled, "volumePaths")
+	assert.NotContains(t, marshaled, "skipRailsEnv")
 }

@@ -273,6 +273,61 @@ func TestInstall_NonPullDeployFailureReturnsToHostname(t *testing.T) {
 	assert.Equal(t, installStateHostname, m.state)
 }
 
+func TestInstall_AdvancedMsgTriggersEnvVars(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
+	assert.Equal(t, installStateEnvVars, m.state)
+	assert.Equal(t, "ghcr.io/basecamp/once-campfire", m.pendingSubmit.ImageRef)
+	assert.Equal(t, "chat.example.com", m.pendingSubmit.Hostname)
+}
+
+func TestInstall_AdvancedMsgEmptyHostnameShowsError(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: ""})
+	assert.NotEqual(t, installStateEnvVars, m.state)
+	assert.Error(t, m.err)
+	assert.Contains(t, m.err.Error(), "hostname is required")
+}
+
+func TestInstall_AdvancedSettingsThreadedToActivity(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
+	assert.Equal(t, installStateEnvVars, m.state)
+
+	settings := docker.ApplicationSettings{AppPort: 8080, SkipRailsEnv: true}
+	m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: settings})
+	assert.Equal(t, installStateActivity, m.state)
+	assert.NotNil(t, m.activity)
+}
+
+func TestInstall_AdvancedCancelReturnsToHostname(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
+	assert.Equal(t, installStateEnvVars, m.state)
+
+	m, _ = updateInstall(m, SettingsSectionCancelMsg{})
+	assert.Equal(t, installStateHostname, m.state)
+}
+
+func TestInstall_AdvancedBackReturnsToHostname(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "chat.example.com"})
+	assert.Equal(t, installStateEnvVars, m.state)
+
+	m, _ = updateInstall(m, keyPressMsg("esc"))
+	assert.Equal(t, installStateHostname, m.state)
+}
+
 func TestInstall_HostnameInUseBlocksInstall(t *testing.T) {
 	ns := newTestNamespace(docker.ApplicationSettings{Name: "myapp", Host: "taken.example.com"})
 	m := NewInstall(ns, "")

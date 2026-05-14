@@ -40,13 +40,13 @@ var (
 
 const (
 	AutomaticTaskInterval = 24 * time.Hour
-	HealthCheckPath       = "/up"
+	DefaultHealthCheckPath = "/up"
 	httpVerifyTimeout     = 30 * time.Second
 )
 
-// AppVolumeMountTargets defines the paths where the app data volume is mounted
+// DefaultVolumePaths defines the default paths where the app data volume is mounted
 // inside the container. The first entry is the primary path used for backups.
-var AppVolumeMountTargets = []string{"/storage", "/rails/storage"}
+var DefaultVolumePaths = []string{"/storage", "/rails/storage"}
 
 type Application struct {
 	namespace    *Namespace
@@ -347,10 +347,11 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	shortContainerID := resp.ID[:12]
 
 	if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
-		AppName: a.Settings.Name,
-		Target:  shortContainerID,
-		Host:    a.Settings.Host,
-		TLS:     a.Settings.TLSEnabled(),
+		AppName:         a.Settings.Name,
+		Target:          a.Settings.DeployTarget(shortContainerID),
+		Host:            a.Settings.Host,
+		TLS:             a.Settings.TLSEnabled(),
+		HealthCheckPath: a.Settings.HealthCheckPath,
 	}); err != nil {
 		a.namespace.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 		if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
@@ -378,7 +379,7 @@ func (a *Application) verifyHTTP(ctx context.Context) error {
 	}
 
 	client := &http.Client{Timeout: httpVerifyTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+HealthCheckPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+a.Settings.EffectiveHealthCheckPath(), nil)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
@@ -419,7 +420,7 @@ func (a *Application) removeContainersExcept(ctx context.Context, keep string) e
 
 func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 	var mounts []mount.Mount
-	for _, target := range AppVolumeMountTargets {
+	for _, target := range a.Settings.EffectiveVolumePaths() {
 		mounts = append(mounts, mount.Mount{
 			Type:   mount.TypeVolume,
 			Source: vol.Name(),
