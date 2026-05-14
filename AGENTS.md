@@ -5,7 +5,7 @@
 Once is a CLI/TUI tool for installing and managing web applications from Docker
 images. It's designed to make self-hosting as easy as possible.
 
-Once uses a proxy server (github.com/woodcox/kamal-proxy) to route traffic to
+Once uses a proxy server (github.com/basecamp/kamal-proxy) to route traffic to
 the application containers, which allows it to provide zero-downtime restarts
 and upgrades, automatic SSL, and multiple applications running on a single
 server. A single instance of Once may deploy one proxy container, along with
