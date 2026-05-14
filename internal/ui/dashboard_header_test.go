@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/basecamp/once/internal/system"
+	"github.com/woodcox/once/internal/system"
 )
 
 func TestDashboardHeader_NarrowTerminalHidden(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/basecamp/once/internal/docker"
-	"github.com/basecamp/once/internal/metrics"
+	"github.com/woodcox/once/internal/docker"
+	"github.com/woodcox/once/internal/metrics"
 )
 
 func TestDashboardPanelViewRunningApp(t *testing.T) {
@@ -131,7 +131,7 @@ func testPanel(running bool) DashboardPanel {
 		Settings: docker.ApplicationSettings{
 			Name:  "test-app",
 			Host:  "app.example.com",
-			Image: "ghcr.io/basecamp/test-app:latest",
+			Image: "ghcr.io/woodcox/test-app:latest",
 		},
 	}
 	scraper := metrics.NewMetricsScraper(metrics.ScraperSettings{})

@@ -1,4 +1,4 @@
-module github.com/basecamp/once
+module github.com/woodcox/once
 
 go 1.26.1
 

@@ -15,8 +15,8 @@ func TestInstallScriptHandler_ValidImageRefs(t *testing.T) {
 	valid := []string{
 		"nginx",
 		"nginx:latest",
-		"ghcr.io/basecamp/once-campfire",
-		"ghcr.io/basecamp/fizzy:main",
+		"ghcr.io/woodcox/once-campfire",
+		"ghcr.io/woodcox/fizzy:main",
 		"registry.example.com:5000/my/image:v1.2.3",
 		"ubuntu@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}

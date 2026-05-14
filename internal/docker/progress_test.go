@@ -8,7 +8,7 @@ import (
 )
 
 func TestPullProgressTracker(t *testing.T) {
-	events := `{"status":"Pulling from basecamp/once-campfire","id":"latest"}
+	events := `{"status":"Pulling from woodcox/once-campfire","id":"latest"}
 {"status":"Pulling fs layer","id":"layer1"}
 {"status":"Pulling fs layer","id":"layer2"}
 {"status":"Downloading","progressDetail":{"current":0,"total":1000},"id":"layer1"}
@@ -41,7 +41,7 @@ func TestPullProgressTracker(t *testing.T) {
 }
 
 func TestPullProgressTrackerWithCachedLayers(t *testing.T) {
-	events := `{"status":"Pulling from basecamp/once-campfire","id":"latest"}
+	events := `{"status":"Pulling from woodcox/once-campfire","id":"latest"}
 {"status":"Pulling fs layer","id":"layer1"}
 {"status":"Already exists","id":"layer1"}
 `

@@ -21,7 +21,7 @@ func TestInstallAppList_SelectKnownApp(t *testing.T) {
 	msg := cmd()
 	selected, ok := msg.(InstallAppSelectedMsg)
 	require.True(t, ok, "expected InstallAppSelectedMsg, got %T", msg)
-	assert.Equal(t, "ghcr.io/basecamp/once-campfire", selected.ImageRef)
+	assert.Equal(t, "ghcr.io/woodcox/once-campfire", selected.ImageRef)
 }
 
 func TestInstallAppList_SelectOther(t *testing.T) {
@@ -54,7 +54,7 @@ func TestInstallAppList_NavigateAndSelect(t *testing.T) {
 	msg := cmd()
 	selected, ok := msg.(InstallAppSelectedMsg)
 	require.True(t, ok, "expected InstallAppSelectedMsg, got %T", msg)
-	assert.Equal(t, "ghcr.io/basecamp/fizzy", selected.ImageRef)
+	assert.Equal(t, "ghcr.io/woodcox/fizzy", selected.ImageRef)
 }
 
 func TestInstallAppList_View(t *testing.T) {
@@ -71,17 +71,17 @@ func TestInstallAppList_View(t *testing.T) {
 func TestExpandAlias(t *testing.T) {
 	ref, ok := expandAlias("campfire")
 	assert.True(t, ok)
-	assert.Equal(t, "ghcr.io/basecamp/once-campfire", ref)
+	assert.Equal(t, "ghcr.io/woodcox/once-campfire", ref)
 
 	ref, ok = expandAlias("fizzy")
 	assert.True(t, ok)
-	assert.Equal(t, "ghcr.io/basecamp/fizzy", ref)
+	assert.Equal(t, "ghcr.io/woodcox/fizzy", ref)
 
 	ref, ok = expandAlias("writebook")
 	assert.True(t, ok)
-	assert.Equal(t, "ghcr.io/basecamp/writebook", ref)
+	assert.Equal(t, "ghcr.io/woodcox/writebook", ref)
 
-	ref, ok = expandAlias("ghcr.io/basecamp/once-campfire:latest")
+	ref, ok = expandAlias("ghcr.io/woodcox/once-campfire:latest")
 	assert.False(t, ok)
-	assert.Equal(t, "ghcr.io/basecamp/once-campfire:latest", ref)
+	assert.Equal(t, "ghcr.io/woodcox/once-campfire:latest", ref)
 }

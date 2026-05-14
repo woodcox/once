@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/basecamp/once/internal/docker"
+	"github.com/woodcox/once/internal/docker"
 )
 
 type settingsFlags struct {
@@ -16,7 +16,7 @@ type settingsFlags struct {
 	env             []string
 	smtpServer      string
 	smtpPort        string
-	smtpUsername     string
+	smtpUsername    string
 	smtpPassword    string
 	smtpFrom        string
 	cpus            int

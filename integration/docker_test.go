@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/basecamp/once/internal/docker"
+	"github.com/woodcox/once/internal/docker"
 )
 
 func TestDockerDeployment(t *testing.T) {
@@ -44,7 +44,7 @@ func TestDockerDeployment(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "campfire",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "campfire.localhost",
 	})
 
@@ -70,7 +70,7 @@ func TestRestoreState(t *testing.T) {
 
 	app := deployApp(t, ctx, ns1, docker.ApplicationSettings{
 		Name:  "testapp",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "testapp.localhost",
 	})
 
@@ -117,7 +117,7 @@ func TestGaplessDeployment(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "gapless",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "gapless.localhost",
 	})
 
@@ -201,7 +201,7 @@ func TestLargeLabelData(t *testing.T) {
 
 	deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "largelabel",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "largelabel.localhost",
 		EnvVars: map[string]string{
 			"LARGE_VALUE": largeValue,
@@ -229,7 +229,7 @@ func TestStartStop(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "startstop",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "startstop.localhost",
 	})
 
@@ -262,7 +262,7 @@ func TestLongAppName(t *testing.T) {
 
 	deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  longName,
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "longname.localhost",
 	})
 
@@ -287,7 +287,7 @@ func TestContainerLogConfig(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "logtest",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "logtest.localhost",
 	})
 
@@ -309,7 +309,7 @@ func TestBackup(t *testing.T) {
 	require.NoError(t, ns.EnsureNetwork(ctx))
 	require.NoError(t, ns.Proxy().Boot(ctx, getProxyPorts(t)))
 
-	imageName := "ghcr.io/basecamp/once-campfire:main"
+	imageName := "ghcr.io/woodcox/once-campfire:main"
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "backupapp",
 		Image: imageName,
@@ -360,7 +360,7 @@ func TestRestore(t *testing.T) {
 	require.NoError(t, ns1.EnsureNetwork(ctx))
 	require.NoError(t, ns1.Proxy().Boot(ctx, getProxyPorts(t)))
 
-	imageName := "ghcr.io/basecamp/once-campfire:main"
+	imageName := "ghcr.io/woodcox/once-campfire:main"
 	app := deployApp(t, ctx, ns1, docker.ApplicationSettings{
 		Name:  "restoreapp",
 		Image: imageName,
@@ -445,7 +445,7 @@ func TestRestoreHostnameConflictFails(t *testing.T) {
 	require.NoError(t, ns.EnsureNetwork(ctx))
 	require.NoError(t, ns.Proxy().Boot(ctx, getProxyPorts(t)))
 
-	imageName := "ghcr.io/basecamp/once-campfire:main"
+	imageName := "ghcr.io/woodcox/once-campfire:main"
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "existingapp",
 		Image: imageName,
@@ -477,7 +477,7 @@ func TestBackupHookBehavior(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "hooktest",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "hooktest.localhost",
 	})
 
@@ -527,7 +527,7 @@ func TestBackupStoppedContainer(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "stoppedapp",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "stoppedapp.localhost",
 	})
 
@@ -619,7 +619,7 @@ func TestRemoveApplication(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "removeapp",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "removeapp.localhost",
 	})
 
@@ -647,7 +647,7 @@ func TestVerifyHTTPOrRemoveAllowsRedeployWithSameHost(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "first",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "reuse.invalid",
 	})
 
@@ -659,7 +659,7 @@ func TestVerifyHTTPOrRemoveAllowsRedeployWithSameHost(t *testing.T) {
 
 	deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "second",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "reuse.invalid",
 	})
 }
@@ -677,7 +677,7 @@ func TestRemoveApplicationWithData(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "removeapp",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "removeapp.localhost",
 	})
 
@@ -705,7 +705,7 @@ func TestDeployWithSettings(t *testing.T) {
 
 	settings := docker.ApplicationSettings{
 		Name:       "settingsapp",
-		Image:      "ghcr.io/basecamp/once-campfire:main",
+		Image:      "ghcr.io/woodcox/once-campfire:main",
 		Host:       "settingsapp.localhost",
 		DisableTLS: true,
 		EnvVars:    map[string]string{"CUSTOM_VAR": "custom_value", "ANOTHER": "thing"},
@@ -764,7 +764,7 @@ func TestUpdatePreservesSettings(t *testing.T) {
 	// Deploy with full settings
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:    "updateapp",
-		Image:   "ghcr.io/basecamp/once-campfire:main",
+		Image:   "ghcr.io/woodcox/once-campfire:main",
 		Host:    "update.localhost",
 		EnvVars: map[string]string{"MY_VAR": "my_value"},
 		SMTP: docker.SMTPSettings{
@@ -823,7 +823,7 @@ func TestUpdateChangeHost(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "hostchangeapp",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "old.localhost",
 	})
 
@@ -849,13 +849,13 @@ func TestUpdateHostCollision(t *testing.T) {
 
 	deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "app1",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "host1.localhost",
 	})
 
 	app2 := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:  "app2",
-		Image: "ghcr.io/basecamp/once-campfire:main",
+		Image: "ghcr.io/woodcox/once-campfire:main",
 		Host:  "host2.localhost",
 	})
 
@@ -878,7 +878,7 @@ func TestContainerResources(t *testing.T) {
 
 	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
 		Name:      "campfire",
-		Image:     "ghcr.io/basecamp/once-campfire:main",
+		Image:     "ghcr.io/woodcox/once-campfire:main",
 		Host:      "campfire.localhost",
 		Resources: docker.ContainerResources{CPUs: 1, MemoryMB: 1024},
 	})
@@ -1120,7 +1120,7 @@ func buildHookImage(t *testing.T, ctx context.Context, registryURL, name, hookSc
 	require.NoError(t, err)
 	defer c.Close()
 
-	dockerfile := `FROM ghcr.io/basecamp/once-campfire:main
+	dockerfile := `FROM ghcr.io/woodcox/once-campfire:main
 COPY post-restore /hooks/post-restore
 `
 
@@ -1260,7 +1260,7 @@ func buildAndPushImage(t *testing.T, ctx context.Context, tag, version string) {
 	require.NoError(t, err)
 	defer c.Close()
 
-	dockerfile := fmt.Sprintf("FROM ghcr.io/basecamp/once-campfire:main\nLABEL version=%s\n", version)
+	dockerfile := fmt.Sprintf("FROM ghcr.io/woodcox/once-campfire:main\nLABEL version=%s\n", version)
 
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)

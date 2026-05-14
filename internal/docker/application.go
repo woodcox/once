@@ -39,9 +39,9 @@ var (
 )
 
 const (
-	AutomaticTaskInterval = 24 * time.Hour
+	AutomaticTaskInterval  = 24 * time.Hour
 	DefaultHealthCheckPath = "/up"
-	httpVerifyTimeout     = 30 * time.Second
+	httpVerifyTimeout      = 30 * time.Second
 )
 
 // DefaultVolumePaths defines the default paths where the app data volume is mounted

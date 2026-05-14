@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/basecamp/once/internal/background"
+	"github.com/woodcox/once/internal/background"
 )
 
 type backgroundRunCommand struct {

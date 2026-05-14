@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/basecamp/once/internal/docker"
+	"github.com/woodcox/once/internal/docker"
 )
 
 func TestParseEnvVars(t *testing.T) {

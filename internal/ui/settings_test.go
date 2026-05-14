@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/basecamp/once/internal/docker"
+	"github.com/woodcox/once/internal/docker"
 )
 
 func TestSettings_InitialStateIsForm(t *testing.T) {
@@ -167,7 +167,7 @@ func testSettings() Settings {
 		Settings: docker.ApplicationSettings{
 			Name:  "test-app",
 			Host:  "app.example.com",
-			Image: "ghcr.io/basecamp/once-campfire:latest",
+			Image: "ghcr.io/woodcox/once-campfire:latest",
 		},
 	}
 

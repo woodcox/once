@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/basecamp/once/internal/command"
-	"github.com/basecamp/once/internal/logging"
+	"github.com/woodcox/once/internal/command"
+	"github.com/woodcox/once/internal/logging"
 )
 
 func main() {
