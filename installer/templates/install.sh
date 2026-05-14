@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO='basecamp/once'
+REPO='woodcox/once'
 INSTALL_DIR='/usr/local/bin'
 IMAGE_REF='{{ .ImageRef }}'
 RELEASE_JSON=''
