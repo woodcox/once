@@ -87,8 +87,16 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 		if s.HealthCheckPath == docker.DefaultHealthCheckPath {
 			s.HealthCheckPath = ""
 		}
-		s.TLSCertPath = f.TextField(advancedTLSCertPathField).Value()
-		s.TLSKeyPath = f.TextField(advancedTLSKeyPathField).Value()
+import (
+	"fmt"
+	"maps"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+		s.TLSCertPath = strings.TrimSpace(f.TextField(advancedTLSCertPathField).Value())
+		s.TLSKeyPath = strings.TrimSpace(f.TextField(advancedTLSKeyPathField).Value())
 		s.AppPort, _ = strconv.Atoi(f.TextField(advancedAppPortField).Value())
 		volumeStr := f.TextField(advancedVolumePathsField).Value()
 		s.VolumePaths = docker.ParseVolumePaths(volumeStr)
