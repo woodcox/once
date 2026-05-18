@@ -351,6 +351,8 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 		Target:          a.Settings.DeployTarget(shortContainerID),
 		Host:            a.Settings.Host,
 		TLS:             a.Settings.TLSEnabled(),
+		TLSCertPath:     a.Settings.TLSCertPath,
+		TLSKeyPath:      a.Settings.TLSKeyPath,
 		HealthCheckPath: a.Settings.HealthCheckPath,
 	}); err != nil {
 		a.namespace.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})

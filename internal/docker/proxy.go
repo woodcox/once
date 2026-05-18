@@ -58,6 +58,8 @@ type DeployOptions struct {
 	Target          string
 	Host            string
 	TLS             bool
+	TLSCertPath     string
+	TLSKeyPath      string
 	HealthCheckPath string
 }
 
@@ -225,6 +227,9 @@ func (p *Proxy) deployArgs(opts DeployOptions) []string {
 
 	if opts.TLS {
 		args = append(args, "--tls")
+		if opts.TLSCertPath != "" && opts.TLSKeyPath != "" {
+			args = append(args, "--tls-certificate-path", opts.TLSCertPath, "--tls-private-key-path", opts.TLSKeyPath)
+		}
 	}
 
 	if opts.HealthCheckPath != "" {

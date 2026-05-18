@@ -15,10 +15,12 @@ import (
 
 const (
 	advancedHealthCheckField  = 0
-	advancedAppPortField      = 1
-	advancedVolumePathsField  = 2
-	advancedSkipRailsEnvField = 3
-	advancedEnvStart          = 4
+	advancedTLSCertPathField  = 1
+	advancedTLSKeyPathField   = 2
+	advancedAppPortField      = 3
+	advancedVolumePathsField  = 4
+	advancedSkipRailsEnvField = 5
+	advancedEnvStart          = 6
 )
 
 type InstallAdvancedForm struct {
@@ -32,6 +34,12 @@ type InstallAdvancedForm struct {
 func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvancedForm {
 	healthCheckField := NewTextField(docker.DefaultHealthCheckPath)
 	healthCheckField.SetValue(settings.HealthCheckPath)
+
+	tlsCertPathField := NewTextField("/path/to/tailscale.crt")
+	tlsCertPathField.SetValue(settings.TLSCertPath)
+
+	tlsKeyPathField := NewTextField("/path/to/tailscale.key")
+	tlsKeyPathField.SetValue(settings.TLSKeyPath)
 
 	appPortField := NewTextField("3000")
 	appPortField.SetDigitsOnly(true)
@@ -48,6 +56,8 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 
 	items := []FormItem{
 		{Label: "Health check path", Field: healthCheckField},
+		{Label: "TLS cert path", Field: tlsCertPathField},
+		{Label: "TLS key path", Field: tlsKeyPathField},
 		{Label: "App port", Field: appPortField},
 		{Label: "Volume paths", Field: volumePathsField},
 		{Label: "Rails environment", Field: skipRailsEnvField},
@@ -77,6 +87,8 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 		if s.HealthCheckPath == docker.DefaultHealthCheckPath {
 			s.HealthCheckPath = ""
 		}
+		s.TLSCertPath = f.TextField(advancedTLSCertPathField).Value()
+		s.TLSKeyPath = f.TextField(advancedTLSKeyPathField).Value()
 		s.AppPort, _ = strconv.Atoi(f.TextField(advancedAppPortField).Value())
 		volumeStr := f.TextField(advancedVolumePathsField).Value()
 		s.VolumePaths = docker.ParseVolumePaths(volumeStr)
@@ -145,6 +157,8 @@ func (m InstallAdvancedForm) setFieldWidths() {
 	totalWidth := keyWidth + valueWidth + 1
 	fieldWidth := max(totalWidth-4, 1)
 	m.form.TextField(advancedHealthCheckField).SetWidth(fieldWidth)
+	m.form.TextField(advancedTLSCertPathField).SetWidth(fieldWidth)
+	m.form.TextField(advancedTLSKeyPathField).SetWidth(fieldWidth)
 	m.form.TextField(advancedAppPortField).SetWidth(fieldWidth)
 	m.form.TextField(advancedVolumePathsField).SetWidth(fieldWidth)
 
@@ -189,9 +203,9 @@ func (m InstallAdvancedForm) maxVisibleRows() int {
 	if m.height <= 0 {
 		return m.envRowCount()
 	}
-	// Title (2) + health check (3) + app port (3) + volume paths (3) + skip rails env (2) +
+	// Title (2) + health check (3) + TLS cert path (3) + TLS key path (3) + app port (3) + volume paths (3) + skip rails env (2) +
 	// gap (1) + env headers (2) + buttons (3) + button gap (1) + help (1)
-	available := m.height - 21
+	available := m.height - 27
 	rowHeight := 4
 	visible := available / rowHeight
 	return max(visible, 1)
@@ -209,6 +223,8 @@ func (m InstallAdvancedForm) renderContent() string {
 
 	var parts []string
 	parts = append(parts, renderTextField(advancedHealthCheckField, "Health check path")...)
+	parts = append(parts, renderTextField(advancedTLSCertPathField, "TLS cert path")...)
+	parts = append(parts, renderTextField(advancedTLSKeyPathField, "TLS key path")...)
 	parts = append(parts, renderTextField(advancedAppPortField, "App port")...)
 	parts = append(parts, renderTextField(advancedVolumePathsField, "Volume paths")...)
 

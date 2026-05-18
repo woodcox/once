@@ -42,6 +42,25 @@ func TestDeployArgs(t *testing.T) {
 		assert.Contains(t, args, "--tls")
 	})
 
+	t.Run("with TLS custom certificate paths", func(t *testing.T) {
+		args := proxy.deployArgs(DeployOptions{
+			AppName:     "chat",
+			Target:      "localhost:3000",
+			TLS:         true,
+			TLSCertPath: "/home/pi/ts.crt",
+			TLSKeyPath:  "/home/pi/ts.key",
+		})
+
+		assert.Equal(t, []string{
+			"kamal-proxy", "deploy", "chat",
+			"--target", "localhost:3000",
+			"--deploy-timeout", "120s",
+			"--tls",
+			"--tls-certificate-path", "/home/pi/ts.crt",
+			"--tls-private-key-path", "/home/pi/ts.key",
+		}, args)
+	})
+
 	t.Run("with host and TLS", func(t *testing.T) {
 		args := proxy.deployArgs(DeployOptions{
 			AppName: "chat",
