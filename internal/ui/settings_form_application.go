@@ -89,8 +89,11 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 		if s.HealthCheckPath == docker.DefaultHealthCheckPath {
 			s.HealthCheckPath = ""
 		}
-		s.TLSCertPath = f.TextField(appTLSCertPathField).Value()
-		s.TLSKeyPath = f.TextField(appTLSKeyPathField).Value()
+import (
+	"slices"
+	"strconv"
+	"strings"
+)
 		s.AppPort, _ = strconv.Atoi(f.TextField(appAppPortField).Value())
 
 		volumeStr := f.TextField(appVolumePathsField).Value()
