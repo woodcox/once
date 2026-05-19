@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -87,8 +88,8 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 		if s.HealthCheckPath == docker.DefaultHealthCheckPath {
 			s.HealthCheckPath = ""
 		}
-		s.TLSCertPath = f.TextField(advancedTLSCertPathField).Value()
-		s.TLSKeyPath = f.TextField(advancedTLSKeyPathField).Value()
+		s.TLSCertPath = strings.TrimSpace(f.TextField(advancedTLSCertPathField).Value())
+		s.TLSKeyPath = strings.TrimSpace(f.TextField(advancedTLSKeyPathField).Value())
 		s.AppPort, _ = strconv.Atoi(f.TextField(advancedAppPortField).Value())
 		volumeStr := f.TextField(advancedVolumePathsField).Value()
 		s.VolumePaths = docker.ParseVolumePaths(volumeStr)
