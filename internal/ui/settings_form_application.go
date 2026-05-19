@@ -3,6 +3,7 @@ package ui
 import (
 	"slices"
 	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -14,6 +15,8 @@ const (
 	appHostnameField
 	appTLSField
 	appHealthCheckPathField
+	appTLSCertPathField
+	appTLSKeyPathField
 	appAppPortField
 	appVolumePathsField
 	appSkipRailsEnvField
@@ -41,6 +44,12 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 	healthCheckField := NewTextField(docker.DefaultHealthCheckPath)
 	healthCheckField.SetValue(settings.HealthCheckPath)
 
+	tlsCertPathField := NewTextField("/path/to/tailscale.crt")
+	tlsCertPathField.SetValue(settings.TLSCertPath)
+
+	tlsKeyPathField := NewTextField("/path/to/tailscale.key")
+	tlsKeyPathField.SetValue(settings.TLSKeyPath)
+
 	appPortField := NewTextField("3000")
 	appPortField.SetDigitsOnly(true)
 	if settings.AppPort != 0 {
@@ -62,6 +71,8 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 				FormItem{Label: "Hostname", Field: hostnameField, Required: true},
 				FormItem{Label: "TLS", Field: tlsField},
 				FormItem{Label: "Health check path", Field: healthCheckField},
+				FormItem{Label: "TLS cert path", Field: tlsCertPathField},
+				FormItem{Label: "TLS key path", Field: tlsKeyPathField},
 				FormItem{Label: "App port", Field: appPortField},
 				FormItem{Label: "Volume paths", Field: volumePathsField},
 				FormItem{Label: "Rails environment", Field: skipRailsEnvField},
@@ -79,6 +90,8 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 		if s.HealthCheckPath == docker.DefaultHealthCheckPath {
 			s.HealthCheckPath = ""
 		}
+		s.TLSCertPath = strings.TrimSpace(f.TextField(advancedTLSCertPathField).Value())
+		s.TLSKeyPath = strings.TrimSpace(f.TextField(advancedTLSKeyPathField).Value())
 		s.AppPort, _ = strconv.Atoi(f.TextField(appAppPortField).Value())
 
 		volumeStr := f.TextField(appVolumePathsField).Value()

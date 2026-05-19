@@ -58,6 +58,8 @@ type DeployOptions struct {
 	Target          string
 	Host            string
 	TLS             bool
+	TLSCertPath     string
+	TLSKeyPath      string
 	HealthCheckPath string
 }
 
@@ -184,7 +186,11 @@ func (p *Proxy) Remove(ctx context.Context, appName string) error {
 }
 
 func (p *Proxy) Deploy(ctx context.Context, opts DeployOptions) error {
-	return p.Exec(ctx, p.deployArgs(opts))
+	args, err := p.deployArgs(opts)
+	if err != nil {
+		return err
+	}
+	return p.Exec(ctx, args)
 }
 
 func (p *Proxy) containerName() string {
@@ -216,7 +222,7 @@ func (p *Proxy) ensureRunning(ctx context.Context, info container.InspectRespons
 	return nil
 }
 
-func (p *Proxy) deployArgs(opts DeployOptions) []string {
+func (p *Proxy) deployArgs(opts DeployOptions) ([]string, error) {
 	args := []string{"kamal-proxy", "deploy", opts.AppName, "--target", opts.Target, "--deploy-timeout", deployTimeout}
 
 	if opts.Host != "" {
@@ -225,13 +231,19 @@ func (p *Proxy) deployArgs(opts DeployOptions) []string {
 
 	if opts.TLS {
 		args = append(args, "--tls")
+		if (opts.TLSCertPath != "") != (opts.TLSKeyPath != "") {
+			return nil, fmt.Errorf("both TLS certificate path and TLS key path must be provided together")
+		}
+		if opts.TLSCertPath != "" && opts.TLSKeyPath != "" {
+			args = append(args, "--tls-certificate-path", opts.TLSCertPath, "--tls-private-key-path", opts.TLSKeyPath)
+		}
 	}
 
 	if opts.HealthCheckPath != "" {
 		args = append(args, "--health-check-path", opts.HealthCheckPath)
 	}
 
-	return args
+	return args, nil
 }
 
 func (p *Proxy) LoadState(ctx context.Context) (*State, error) {

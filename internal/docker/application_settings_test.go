@@ -234,6 +234,8 @@ func TestNewFieldsMarshalRoundTrip(t *testing.T) {
 		Name:            "app",
 		Image:           "img:latest",
 		HealthCheckPath: "/healthz",
+		TLSCertPath:     "/certs/tailscale.crt",
+		TLSKeyPath:      "/certs/tailscale.key",
 		AppPort:         8080,
 		VolumePaths:     []string{"/data", "/config"},
 		SkipRailsEnv:    true,
@@ -241,6 +243,8 @@ func TestNewFieldsMarshalRoundTrip(t *testing.T) {
 	restored, err := UnmarshalApplicationSettings(original.Marshal())
 	require.NoError(t, err)
 	assert.Equal(t, "/healthz", restored.HealthCheckPath)
+	assert.Equal(t, "/certs/tailscale.crt", restored.TLSCertPath)
+	assert.Equal(t, "/certs/tailscale.key", restored.TLSKeyPath)
 	assert.Equal(t, 8080, restored.AppPort)
 	assert.Equal(t, []string{"/data", "/config"}, restored.VolumePaths)
 	assert.True(t, restored.SkipRailsEnv)
@@ -251,7 +255,18 @@ func TestNewFieldsOmittedWhenDefault(t *testing.T) {
 	settings := ApplicationSettings{Name: "app", Image: "img:latest"}
 	marshaled := settings.Marshal()
 	assert.NotContains(t, marshaled, "healthCheckPath")
+	assert.NotContains(t, marshaled, "tlsCertPath")
+	assert.NotContains(t, marshaled, "tlsKeyPath")
 	assert.NotContains(t, marshaled, "appPort")
 	assert.NotContains(t, marshaled, "volumePaths")
 	assert.NotContains(t, marshaled, "skipRailsEnv")
+}
+
+func TestTLScertPathsEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{Name: "app", TLSCertPath: "/a.crt", TLSKeyPath: "/a.key"}
+	differentCert := ApplicationSettings{Name: "app", TLSCertPath: "/b.crt", TLSKeyPath: "/a.key"}
+	assert.False(t, base.Equal(differentCert))
+
+	differentKey := ApplicationSettings{Name: "app", TLSCertPath: "/a.crt", TLSKeyPath: "/b.key"}
+	assert.False(t, base.Equal(differentKey))
 }

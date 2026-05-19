@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"errors"
 	"encoding/json"
 	"slices"
 	"strconv"
@@ -44,6 +45,8 @@ type ApplicationSettings struct {
 	Host            string             `json:"host"`
 	DisableTLS      bool               `json:"disableTLS"`
 	HealthCheckPath string             `json:"healthCheckPath,omitempty"`
+	TLSCertPath     string             `json:"tlsCertPath,omitempty"`
+	TLSKeyPath      string             `json:"tlsKeyPath,omitempty"`
 	AppPort         int                `json:"appPort,omitempty"`
 	VolumePaths     []string           `json:"volumePaths,omitempty"`
 	SkipRailsEnv    bool               `json:"skipRailsEnv,omitempty"`
@@ -69,6 +72,9 @@ func (s ApplicationSettings) Validate() error {
 	if s.Image == "" {
 		return ErrImageRequired
 	}
+	if (s.TLSCertPath == "") != (s.TLSKeyPath == "") {
++		return errors.New("tlsCertPath and tlsKeyPath must be provided together")
++	}
 	if s.Backup.AutoBackup && s.Backup.Path == "" {
 		return ErrAutoBackupWithoutPath
 	}
@@ -108,7 +114,7 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	if s.Name != other.Name || s.Image != other.Image || s.Host != other.Host || s.DisableTLS != other.DisableTLS {
 		return false
 	}
-	if s.HealthCheckPath != other.HealthCheckPath || s.AppPort != other.AppPort || s.SkipRailsEnv != other.SkipRailsEnv {
+	if s.HealthCheckPath != other.HealthCheckPath || s.TLSCertPath != other.TLSCertPath || s.TLSKeyPath != other.TLSKeyPath || s.AppPort != other.AppPort || s.SkipRailsEnv != other.SkipRailsEnv {
 		return false
 	}
 	if !slices.Equal(s.VolumePaths, other.VolumePaths) {

@@ -535,6 +535,8 @@ When you use your own domain on a publicly-reachable server, ONCE will set up SS
 
 If you're installing only on your local machine, you can use a localhost domain instead. You can still use a subdomain to support multiple applications (like chat.localhost). When you install an application in this way, it won't get the automatic SSL.
 
+If you're installing over Tailscale, use the machine's MagicDNS hostname (for example, pi.tailnet-name.ts.net). You can route multiple apps through ONCE by using paths on that hostname, or by using additional DNS names that resolve to the same machine.
+
 You can always change these settings later, too: look for them under Settings -> Application.
 `
 )
