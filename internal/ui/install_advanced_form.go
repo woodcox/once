@@ -15,11 +15,11 @@ import (
 )
 
 const (
-	advancedHealthCheckField  = 0
-	advancedTLSCertPathField  = 1
-	advancedTLSKeyPathField   = 2
-	advancedAppPortField      = 3
-	advancedVolumePathsField  = 4
+	advancedAppPortField      = 0
+	advancedHealthCheckField  = 1
+	advancedVolumePathsField  = 2
+	advancedTLSCertPathField  = 3
+	advancedTLSKeyPathField   = 4
 	advancedSkipRailsEnvField = 5
 	advancedEnvStart          = 6
 )
@@ -33,8 +33,19 @@ type InstallAdvancedForm struct {
 }
 
 func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvancedForm {
+	appPortField := NewTextField("3000")
+	appPortField.SetDigitsOnly(true)
+	if settings.AppPort != 0 {
+		appPortField.SetValue(strconv.Itoa(settings.AppPort))
+	}
+
 	healthCheckField := NewTextField(docker.DefaultHealthCheckPath)
 	healthCheckField.SetValue(settings.HealthCheckPath)
+
+	volumePathsField := NewTextField(docker.DefaultVolumePaths[0] + ", " + docker.DefaultVolumePaths[1])
+	if len(settings.VolumePaths) > 0 {
+		volumePathsField.SetValue(settings.VolumePathsString())
+	}
 
 	tlsCertPathField := NewTextField("/path/to/tailscale.crt")
 	tlsCertPathField.SetValue(settings.TLSCertPath)
@@ -42,25 +53,14 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 	tlsKeyPathField := NewTextField("/path/to/tailscale.key")
 	tlsKeyPathField.SetValue(settings.TLSKeyPath)
 
-	appPortField := NewTextField("3000")
-	appPortField.SetDigitsOnly(true)
-	if settings.AppPort != 0 {
-		appPortField.SetValue(strconv.Itoa(settings.AppPort))
-	}
-
-	volumePathsField := NewTextField(docker.DefaultVolumePaths[0] + ", " + docker.DefaultVolumePaths[1])
-	if len(settings.VolumePaths) > 0 {
-		volumePathsField.SetValue(settings.VolumePathsString())
-	}
-
 	skipRailsEnvField := NewCheckboxField("Skip SECRET_KEY_BASE, VAPID keys, DISABLE_SSL", settings.SkipRailsEnv)
 
 	items := []FormItem{
+		{Label: "App port", Field: appPortField},
 		{Label: "Health check path", Field: healthCheckField},
+		{Label: "Volume paths", Field: volumePathsField},
 		{Label: "TLS cert path", Field: tlsCertPathField},
 		{Label: "TLS key path", Field: tlsKeyPathField},
-		{Label: "App port", Field: appPortField},
-		{Label: "Volume paths", Field: volumePathsField},
 		{Label: "Rails environment", Field: skipRailsEnvField},
 	}
 
@@ -84,18 +84,18 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
 		s := settings
+		s.AppPort, _ = strconv.Atoi(f.TextField(advancedAppPortField).Value())
 		s.HealthCheckPath = f.TextField(advancedHealthCheckField).Value()
 		if s.HealthCheckPath == docker.DefaultHealthCheckPath {
 			s.HealthCheckPath = ""
 		}
-		s.TLSCertPath = strings.TrimSpace(f.TextField(advancedTLSCertPathField).Value())
-		s.TLSKeyPath = strings.TrimSpace(f.TextField(advancedTLSKeyPathField).Value())
-		s.AppPort, _ = strconv.Atoi(f.TextField(advancedAppPortField).Value())
 		volumeStr := f.TextField(advancedVolumePathsField).Value()
 		s.VolumePaths = docker.ParseVolumePaths(volumeStr)
 		if slices.Equal(s.VolumePaths, docker.DefaultVolumePaths) {
 			s.VolumePaths = nil
 		}
+		s.TLSCertPath = strings.TrimSpace(f.TextField(advancedTLSCertPathField).Value())
+		s.TLSKeyPath = strings.TrimSpace(f.TextField(advancedTLSKeyPathField).Value())
 		s.SkipRailsEnv = f.CheckboxField(advancedSkipRailsEnvField).Checked()
 		s.EnvVars = nil
 		for i := advancedEnvStart; i < f.ItemCount(); i += 2 {
@@ -157,11 +157,18 @@ func (m InstallAdvancedForm) setFieldWidths() {
 	keyWidth, valueWidth := m.columnWidths()
 	totalWidth := keyWidth + valueWidth + 1
 	fieldWidth := max(totalWidth-4, 1)
-	m.form.TextField(advancedHealthCheckField).SetWidth(fieldWidth)
-	m.form.TextField(advancedTLSCertPathField).SetWidth(fieldWidth)
-	m.form.TextField(advancedTLSKeyPathField).SetWidth(fieldWidth)
-	m.form.TextField(advancedAppPortField).SetWidth(fieldWidth)
+	halfWidth := max((totalWidth-1)/2-4, 1)
+
+	// App port + health check share the env var column widths
+	m.form.TextField(advancedAppPortField).SetWidth(max(keyWidth-4, 1))
+	m.form.TextField(advancedHealthCheckField).SetWidth(max(valueWidth-4, 1))
+
+	// Volume paths full width
 	m.form.TextField(advancedVolumePathsField).SetWidth(fieldWidth)
+
+	// TLS cert + key 50/50
+	m.form.TextField(advancedTLSCertPathField).SetWidth(halfWidth)
+	m.form.TextField(advancedTLSKeyPathField).SetWidth(halfWidth)
 
 	for i := advancedEnvStart; i < m.form.ItemCount(); i++ {
 		envIdx := i - advancedEnvStart
@@ -204,9 +211,9 @@ func (m InstallAdvancedForm) maxVisibleRows() int {
 	if m.height <= 0 {
 		return m.envRowCount()
 	}
-	// Title (2) + health check (3) + TLS cert path (3) + TLS key path (3) + app port (3) + volume paths (3) + skip rails env (2) +
-	// gap (1) + env headers (2) + buttons (3) + button gap (1) + help (1)
-	available := m.height - 27
+	// Title (2) + app port/health check row (3) + volume paths (3) + TLS row (3) +
+	// skip rails env (2) + gap (1) + env headers (2) + buttons (3) + button gap (1) + help (1)
+	available := m.height - 21
 	rowHeight := 4
 	visible := available / rowHeight
 	return max(visible, 1)
@@ -214,20 +221,38 @@ func (m InstallAdvancedForm) maxVisibleRows() int {
 
 func (m InstallAdvancedForm) renderContent() string {
 	focused := m.form.Focused()
-
-	renderTextField := func(idx int, labelText string) []string {
-		label := Styles.Label.Render(labelText)
-		inputStyle := Styles.Focus(Styles.Input, focused == idx)
-		field := mouse.Mark(fieldTarget(idx), inputStyle.Render(m.form.TextField(idx).View()))
-		return []string{label, field, ""}
-	}
+	keyWidth, valueWidth := m.columnWidths()
+	totalWidth := keyWidth + valueWidth + 1
+	halfWidth := (totalWidth - 1) / 2
 
 	var parts []string
-	parts = append(parts, renderTextField(advancedHealthCheckField, "Health check path")...)
-	parts = append(parts, renderTextField(advancedTLSCertPathField, "TLS cert path")...)
-	parts = append(parts, renderTextField(advancedTLSKeyPathField, "TLS key path")...)
-	parts = append(parts, renderTextField(advancedAppPortField, "App port")...)
-	parts = append(parts, renderTextField(advancedVolumePathsField, "Volume paths")...)
+
+	// Row 1: App port + Health check path (env var column widths)
+	appPortLabel := lipgloss.NewStyle().Width(keyWidth).Render(Styles.Label.Render("App port"))
+	healthCheckLabel := lipgloss.NewStyle().Width(valueWidth).Render(Styles.Label.Render("Health check path"))
+	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortLabel, " ", healthCheckLabel))
+
+	appPortStyle := Styles.Focus(Styles.Input, focused == advancedAppPortField)
+	healthCheckStyle := Styles.Focus(Styles.Input, focused == advancedHealthCheckField)
+	appPortView := mouse.Mark(fieldTarget(advancedAppPortField), appPortStyle.Render(m.form.TextField(advancedAppPortField).View()))
+	healthCheckView := mouse.Mark(fieldTarget(advancedHealthCheckField), healthCheckStyle.Render(m.form.TextField(advancedHealthCheckField).View()))
+	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortView, " ", healthCheckView), "")
+
+	// Row 2: Volume paths (full width)
+	parts = append(parts, Styles.Label.Render("Volume paths"))
+	volumeStyle := Styles.Focus(Styles.Input, focused == advancedVolumePathsField)
+	parts = append(parts, mouse.Mark(fieldTarget(advancedVolumePathsField), volumeStyle.Render(m.form.TextField(advancedVolumePathsField).View())), "")
+
+	// Row 3: TLS cert path + TLS key path (50/50)
+	tlsCertLabel := lipgloss.NewStyle().Width(halfWidth).Render(Styles.Label.Render("TLS cert path"))
+	tlsKeyLabel := lipgloss.NewStyle().Width(halfWidth).Render(Styles.Label.Render("TLS key path"))
+	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, tlsCertLabel, " ", tlsKeyLabel))
+
+	tlsCertStyle := Styles.Focus(Styles.Input, focused == advancedTLSCertPathField)
+	tlsKeyStyle := Styles.Focus(Styles.Input, focused == advancedTLSKeyPathField)
+	tlsCertView := mouse.Mark(fieldTarget(advancedTLSCertPathField), tlsCertStyle.Render(m.form.TextField(advancedTLSCertPathField).View()))
+	tlsKeyView := mouse.Mark(fieldTarget(advancedTLSKeyPathField), tlsKeyStyle.Render(m.form.TextField(advancedTLSKeyPathField).View()))
+	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, tlsCertView, " ", tlsKeyView), "")
 
 	// Skip Rails env checkbox
 	checkboxStyle := Styles.Focus(Styles.Input, focused == advancedSkipRailsEnvField)
@@ -235,7 +260,6 @@ func (m InstallAdvancedForm) renderContent() string {
 	parts = append(parts, checkbox, "")
 
 	// Env vars grid
-	keyWidth, valueWidth := m.columnWidths()
 	headerStyle := lipgloss.NewStyle().Bold(true)
 	keyHeader := headerStyle.Width(keyWidth).Render("Environment variables")
 	valueHeader := headerStyle.Width(valueWidth).Render("")
