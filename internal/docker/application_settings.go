@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"errors"
 	"encoding/json"
 	"slices"
 	"strconv"
@@ -71,6 +72,9 @@ func (s ApplicationSettings) Validate() error {
 	if s.Image == "" {
 		return ErrImageRequired
 	}
+	if (s.TLSCertPath == "") != (s.TLSKeyPath == "") {
++		return errors.New("tlsCertPath and tlsKeyPath must be provided together")
++	}
 	if s.Backup.AutoBackup && s.Backup.Path == "" {
 		return ErrAutoBackupWithoutPath
 	}
