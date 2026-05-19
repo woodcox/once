@@ -3,6 +3,7 @@ package ui
 import (
 	"slices"
 	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -89,6 +90,8 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 		if s.HealthCheckPath == docker.DefaultHealthCheckPath {
 			s.HealthCheckPath = ""
 		}
+		s.TLSCertPath = strings.TrimSpace(f.TextField(advancedTLSCertPathField).Value())
+		s.TLSKeyPath = strings.TrimSpace(f.TextField(advancedTLSKeyPathField).Value())
 		s.AppPort, _ = strconv.Atoi(f.TextField(appAppPortField).Value())
 
 		volumeStr := f.TextField(appVolumePathsField).Value()
