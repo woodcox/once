@@ -264,7 +264,7 @@ func (m InstallAdvancedForm) renderContent() string {
 	keyHeader := headerStyle.Width(keyWidth).Render("Environment variables")
 	valueHeader := headerStyle.Width(valueWidth).Render("")
 	header := lipgloss.JoinHorizontal(lipgloss.Top, keyHeader, " ", valueHeader)
-	parts = append(parts, header, "")
+	parts = append(parts, header)
 
 	maxVisible := m.maxVisibleRows()
 	rows := m.envRowCount()
