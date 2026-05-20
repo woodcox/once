@@ -230,13 +230,13 @@ func (m InstallAdvancedForm) renderContent() string {
 	// Row 1: App port + Health check path (env var column widths)
 	appPortLabel := lipgloss.NewStyle().Inherit(Styles.Label).Width(keyWidth).Render("App port")
     healthCheckLabel := lipgloss.NewStyle().Inherit(Styles.Label).Width(valueWidth).Render("Health check path")
-    parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortLabel, "  ", healthCheckLabel))
+    parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortLabel, "   ", healthCheckLabel))
 
 	appPortStyle := Styles.Focus(Styles.Input, focused == advancedAppPortField)
 	healthCheckStyle := Styles.Focus(Styles.Input, focused == advancedHealthCheckField)
 	appPortView := mouse.Mark(fieldTarget(advancedAppPortField), appPortStyle.Render(m.form.TextField(advancedAppPortField).View()))
 	healthCheckView := mouse.Mark(fieldTarget(advancedHealthCheckField), healthCheckStyle.Render(m.form.TextField(advancedHealthCheckField).View()))
-	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortView, "  ", healthCheckView), "")
+	parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortView, " ", healthCheckView), "")
 
 	// Row 2: Volume paths (full width)
 	parts = append(parts, Styles.Label.Render("Volume paths"))
