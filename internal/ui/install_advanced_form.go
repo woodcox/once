@@ -230,7 +230,7 @@ func (m InstallAdvancedForm) renderContent() string {
 	// Row 1: App port + Health check path (env var column widths)
 	appPortLabel := lipgloss.NewStyle().Inherit(Styles.Label).Width(keyWidth).Render("App port")
     healthCheckLabel := lipgloss.NewStyle().Inherit(Styles.Label).Width(valueWidth).Render("Health check path")
-    parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortLabel, "   ", healthCheckLabel))
+    parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, appPortLabel, "  ", healthCheckLabel))
 
 	appPortStyle := Styles.Focus(Styles.Input, focused == advancedAppPortField)
 	healthCheckStyle := Styles.Focus(Styles.Input, focused == advancedHealthCheckField)
@@ -246,7 +246,7 @@ func (m InstallAdvancedForm) renderContent() string {
 	// Row 3: TLS cert path + TLS key path (50/50)
 	tlsCertLabel := lipgloss.NewStyle().Inherit(Styles.Label).Width(halfWidth).Render("TLS cert path")
     tlsKeyLabel := lipgloss.NewStyle().Inherit(Styles.Label).Width(halfWidth).Render("TLS key path")
-    parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, tlsCertLabel, "   ", tlsKeyLabel))
+    parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, tlsCertLabel, "  ", tlsKeyLabel))
 
 	tlsCertStyle := Styles.Focus(Styles.Input, focused == advancedTLSCertPathField)
 	tlsKeyStyle := Styles.Focus(Styles.Input, focused == advancedTLSKeyPathField)
