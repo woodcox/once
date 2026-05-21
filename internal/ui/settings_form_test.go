@@ -59,6 +59,12 @@ func TestSettingsFormApplication_TabNavigation(t *testing.T) {
 	assert.Equal(t, 6, form.form.Focused(), "skip rails env")
 
 	applicationPressTab(&form)
+	assert.Equal(t, 7, form.form.Focused(), "tailscale")
+
+	applicationPressTab(&form)
+	assert.Equal(t, 8, form.form.Focused(), "tailscale auth key")
+
+	applicationPressTab(&form)
 	assert.Equal(t, 7, form.form.Focused(), "done button")
 
 	applicationPressTab(&form)
@@ -72,10 +78,10 @@ func TestSettingsFormApplication_ShiftTabNavigation(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 8, form.form.Focused(), "cancel button")
+	assert.Equal(t, 10, form.form.Focused(), "cancel button")
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 7, form.form.Focused(), "done button")
+	assert.Equal(t, 9, form.form.Focused(), "done button")
 }
 
 func TestSettingsFormApplication_SpaceTogglesTLS(t *testing.T) {
@@ -123,7 +129,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 		Host:  "app.example.com",
 	})
 
-	for range 7 {
+	for range 9 {
 		applicationPressTab(&form)
 	}
 
@@ -138,12 +144,13 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 	assert.Equal(t, "ghcr.io/basecamp/once-campfire:latest", submitMsg.Settings.Image)
 	assert.Equal(t, "app.example.com", submitMsg.Settings.Host)
 	assert.False(t, submitMsg.Settings.DisableTLS)
+	assert.False(t, submitMsg.Settings.Tailscale.Enabled)
 }
 
 func TestSettingsFormApplication_Cancel(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
-	for range 8 {
+	for range 10 {
 		applicationPressTab(&form)
 	}
 
@@ -625,4 +632,13 @@ func environmentTypeText(form *SettingsFormEnvironment, text string) {
 
 func environmentSendWindowSize(form *SettingsFormEnvironment, w, h int) {
 	updateSettingsForm(form, tea.WindowSizeMsg{Width: w, Height: h})
+}
+
+func TestSettingsFormApplication_InitialTailscaleSettings(t *testing.T) {
+	form := NewSettingsFormApplication(docker.ApplicationSettings{
+		Host:      "app.example.com",
+		Tailscale: docker.TailscaleSettings{Enabled: true, AuthKey: "tskey-auth"},
+	})
+	assert.True(t, form.form.CheckboxField(appTailscaleEnabledField).Checked())
+	assert.Equal(t, "tskey-auth", form.form.TextField(appTailscaleAuthKeyField).Value())
 }
