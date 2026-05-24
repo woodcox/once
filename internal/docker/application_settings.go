@@ -60,6 +60,7 @@ type ApplicationSettings struct {
 	Tailscale       TailscaleSettings  `json:"tailscale,omitempty"`
 }
 
+// It returns the parsed ApplicationSettings and any error encountered during JSON unmarshalling.
 func UnmarshalApplicationSettings(s string) (ApplicationSettings, error) {
 	var settings ApplicationSettings
 	err := json.Unmarshal([]byte(s), &settings)
@@ -173,7 +174,7 @@ func (s ApplicationSettings) BuildEnv(vol ApplicationVolumeSettings) []string {
 	return env
 }
 
-// Helpers
+// ParseVolumePaths splits s on commas, trims whitespace from each segment, and returns a slice of non-empty paths.
 
 func ParseVolumePaths(s string) []string {
 	var paths []string

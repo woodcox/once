@@ -25,6 +25,8 @@ type tailscaleServeCommand struct {
 	stateDir string
 }
 
+// newTailscaleServeCommand creates and returns a configured tailscaleServeCommand with a Cobra `serve HOST` command that exposes an installed ONCE app on the tailnet.
+// The returned command requires exactly one argument, runs within a Docker namespace, and registers flags: --hostname, --port (default 443), --auth-key, and --state-dir.
 func newTailscaleServeCommand() *tailscaleServeCommand {
 	t := &tailscaleServeCommand{}
 	t.cmd = &cobra.Command{

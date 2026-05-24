@@ -21,6 +21,13 @@ type InstallHostnameForm struct {
 	title    string
 }
 
+// NewInstallHostnameForm creates an InstallHostnameForm preconfigured for the install hostname screen.
+// 
+// The form contains a required hostname text field (default "app.example.com") whose placeholder is
+// derived from the imageRef when available, and a "Create a tailscale service" checkbox.
+// It wires up form actions: submit produces an InstallFormSubmitMsg containing ImageRef, the entered
+// hostname, and Tailscale settings; the "Advanced settings" action returns InstallAdvancedMsg with
+// ImageRef, the current hostname, and whether tailscale is enabled; cancel returns InstallHostnameBackMsg.
 func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 	hostnameField := NewTextField("app.example.com")
 	appName := docker.NameFromImageRef(imageRef)

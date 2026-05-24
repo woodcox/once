@@ -6,6 +6,8 @@ type tailscaleCommand struct {
 	cmd *cobra.Command
 }
 
+// newTailscaleCommand creates and initializes a tailscaleCommand with a Cobra root
+// command named "tailscale" and registers the serve subcommand.
 func newTailscaleCommand() *tailscaleCommand {
 	t := &tailscaleCommand{}
 	t.cmd = &cobra.Command{

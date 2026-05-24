@@ -18,6 +18,13 @@ type RootCommand struct {
 	installImageRef string
 }
 
+// NewRootCommand constructs and returns a RootCommand configured as the root Cobra command for the once CLI.
+// 
+// The command is named "once", suppresses default usage output, enables a hidden default completion command,
+// and runs the UI action within a restored Docker namespace and a log file when invoked. It registers a persistent
+// `--namespace` (`-n`) flag (defaulting to docker.DefaultNamespace), an `--install` flag for an image path, and
+// adds the bundled subcommands: background, backup, deploy, list, remove, restore, start, stop, teardown, tailscale,
+// update, self-update, and version.
 func NewRootCommand() *RootCommand {
 	r := &RootCommand{}
 	r.cmd = &cobra.Command{

@@ -7,6 +7,7 @@ import (
 	"github.com/woodcox/once/internal/logging"
 )
 
+// main is the program entry point. It configures logging to stderr, creates and executes the CLI root command, and exits with code 1 if command execution fails.
 func main() {
 	logging.SetupStderr()
 

@@ -53,6 +53,9 @@ type InstallActivity struct {
 	cancel        context.CancelFunc
 }
 
+// NewInstallActivity creates an InstallActivity configured to install the given imageRef into ns on hostname using the provided settings.
+// It initializes a cancellable context, a progress widget, buffered progress and done channels, and sets the initial stage to preparing.
+// The returned *InstallActivity is ready to be Init/Run by the UI.
 func NewInstallActivity(ns *docker.Namespace, imageRef, hostname string, settings docker.ApplicationSettings) *InstallActivity {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &InstallActivity{

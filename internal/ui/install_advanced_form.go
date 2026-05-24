@@ -30,6 +30,15 @@ type InstallAdvancedForm struct {
 	settings docker.ApplicationSettings
 }
 
+// NewInstallAdvancedForm creates an InstallAdvancedForm populated from the provided docker.ApplicationSettings.
+// 
+// The form includes fields for health check path, app port, volume paths, a Rails-environment skip checkbox,
+// a Tailscale auth key, and a dynamic, scrollable list of environment variable key/value pairs (one blank pair is
+// always appended for adding new entries). The form auto-appends an extra blank env-var row when the last key is
+// filled. Submitting the form collects and normalizes inputs into an updated docker.ApplicationSettings
+// (emptying the default health check path, parsing the app port, parsing volume paths and collapsing defaults to nil,
+// reading the Rails checkbox and Tailscale key, and building a sparse EnvVars map that skips empty keys) and
+// emits a SettingsSectionSubmitMsg; cancelling emits a SettingsSectionCancelMsg.
 func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvancedForm {
 	healthCheckField := NewTextField(docker.DefaultHealthCheckPath)
 	healthCheckField.SetValue(settings.HealthCheckPath)

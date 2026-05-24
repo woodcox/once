@@ -25,6 +25,10 @@ type SettingsFormApplication struct {
 	settingsFormBase
 }
 
+// NewSettingsFormApplication creates a SettingsFormApplication for editing application settings.
+// The form is populated from the provided docker.ApplicationSettings and includes fields for image,
+// hostname, TLS, health check path, app port, volume paths, Rails environment skip, and Tailscale options.
+// Submitting the form returns a SettingsSectionSubmitMsg with the updated settings; cancelling returns a SettingsSectionCancelMsg.
 func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFormApplication {
 	imageField := NewTextField("user/repo:tag")
 	imageField.SetValue(settings.Image)
