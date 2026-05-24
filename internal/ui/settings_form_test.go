@@ -65,10 +65,10 @@ func TestSettingsFormApplication_TabNavigation(t *testing.T) {
 	assert.Equal(t, 8, form.form.Focused(), "tailscale auth key")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 7, form.form.Focused(), "done button")
+	assert.Equal(t, 9, form.form.Focused(), "done button")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 8, form.form.Focused(), "cancel button")
+	assert.Equal(t, 10, form.form.Focused(), "cancel button")
 
 	applicationPressTab(&form)
 	assert.Equal(t, 0, form.form.Focused(), "wraps to image")
