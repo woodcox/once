@@ -227,7 +227,6 @@ func (a *Application) copyVolumeData(ctx context.Context, containerName string, 
 }
 
 func (a *Application) populateVolume(ctx context.Context, vol *ApplicationVolume, data []byte) error {
-	volumePaths := a.Settings.EffectiveVolumePaths()
 	containerName := fmt.Sprintf("%s-restore-temp", a.namespace.name)
 
 	resp, err := a.namespace.client.ContainerCreate(ctx,
@@ -241,7 +240,7 @@ func (a *Application) populateVolume(ctx context.Context, vol *ApplicationVolume
 				{
 					Type:   mount.TypeVolume,
 					Source: vol.Name(),
-					Target: volumePaths[0],
+					Target: "/data",
 				},
 			},
 		},
