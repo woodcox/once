@@ -351,7 +351,7 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 		Target:          a.Settings.DeployTarget(shortContainerID),
 		Host:            a.Settings.Host,
 		TLS:             a.Settings.TLSEnabled(),
-		HealthCheckPath: a.Settings.HealthCheckPath,
+		HealthCheckPath: a.Settings.EffectiveHealthCheckPath(),
 	}); err != nil {
 		a.namespace.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 		if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {

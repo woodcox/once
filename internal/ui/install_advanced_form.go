@@ -215,12 +215,12 @@ func (m InstallAdvancedForm) renderContent() string {
 	parts = append(parts, renderTextField(advancedHealthCheckField, "Health check path")...)
 	parts = append(parts, renderTextField(advancedAppPortField, "App port")...)
 	parts = append(parts, renderTextField(advancedVolumePathsField, "Volume paths")...)
-	parts = append(parts, renderTextField(advancedTailscaleAuthField, "Tailscale auth key")...)
 
 	// Skip Rails env checkbox
 	checkboxStyle := Styles.Focus(Styles.Input, focused == advancedSkipRailsEnvField)
 	checkbox := mouse.Mark(fieldTarget(advancedSkipRailsEnvField), checkboxStyle.Render(m.form.CheckboxField(advancedSkipRailsEnvField).View()))
 	parts = append(parts, checkbox, "")
+	parts = append(parts, renderTextField(advancedTailscaleAuthField, "Tailscale auth key")...)
 
 	// Env vars grid
 	keyWidth, valueWidth := m.columnWidths()

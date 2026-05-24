@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"tailscale.com/tsnet"
@@ -86,8 +87,12 @@ func (t *tailscaleServeCommand) run(ctx context.Context, ns *docker.Namespace, c
 			return fmt.Errorf("serving tailscale proxy: %w", err)
 		}
 	case <-sigCh:
+    	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    	defer cancel()
+    	if err := srv.Shutdown(shutdownCtx); err != nil && err != context.DeadlineExceeded {
+        	return fmt.Errorf("shutting down tailscale proxy: %w", err)
+    	}
 	}
-
-	_ = srv.Shutdown(ctx)
+	
 	return nil
 }
