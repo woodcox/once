@@ -10,8 +10,9 @@ import (
 type InstallHostnameBackMsg struct{}
 
 type InstallAdvancedMsg struct {
-	ImageRef string
-	Hostname string
+	ImageRef         string
+	Hostname         string
+	TailscaleEnabled bool
 }
 
 type InstallHostnameForm struct {
@@ -27,6 +28,8 @@ func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 		hostnameField.SetPlaceholder(appName + ".example.com")
 	}
 
+	tailscaleField := NewCheckboxField("Create a tailscale service", false)
+
 	m := InstallHostnameForm{
 		form: NewForm("Install",
 			FormItem{
@@ -34,6 +37,7 @@ func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 				Field:    hostnameField,
 				Required: true,
 			},
+			FormItem{Label: "Tailscale", Field: tailscaleField},
 		),
 		imageRef: imageRef,
 		title:    title,
@@ -44,13 +48,15 @@ func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 			return InstallFormSubmitMsg{
 				ImageRef: imageRef,
 				Hostname: f.TextField(0).Value(),
+				Settings: docker.ApplicationSettings{Tailscale: docker.TailscaleSettings{Enabled: f.CheckboxField(1).Checked()}},
 			}
 		}
 	})
 	m.form.SetActionButton("Advanced settings", func() tea.Msg {
 		return InstallAdvancedMsg{
-			ImageRef: imageRef,
-			Hostname: hostnameField.Value(),
+			ImageRef:         imageRef,
+			Hostname:         hostnameField.Value(),
+			TailscaleEnabled: tailscaleField.Checked(),
 		}
 	})
 

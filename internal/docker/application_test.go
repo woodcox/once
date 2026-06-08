@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -134,4 +135,43 @@ func TestURL(t *testing.T) {
 		app := newAppWithProxy("chat.localhost", false, &ProxySettings{HTTPPort: 9090})
 		assert.Equal(t, "http://chat.localhost:9090", app.URL())
 	})
+}
+
+func TestVerifyUsesTailscaleDNSWhenEnabled(t *testing.T) {
+	original := tailscaleDNSQuery
+	defer func() { tailscaleDNSQuery = original }()
+
+	var queriedHost string
+	tailscaleDNSQuery = func(ctx context.Context, host string) error {
+		queriedHost = host
+		return nil
+	}
+
+	app := &Application{Settings: ApplicationSettings{
+		Host:      "campfire.tailnet.ts.net",
+		Tailscale: TailscaleSettings{Enabled: true},
+	}}
+
+	err := app.verify(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, "campfire.tailnet.ts.net", queriedHost)
+}
+
+func TestVerifyTailscaleDNSFailure(t *testing.T) {
+	original := tailscaleDNSQuery
+	defer func() { tailscaleDNSQuery = original }()
+
+	tailscaleDNSQuery = func(ctx context.Context, host string) error {
+		return errors.New("not found")
+	}
+
+	app := &Application{Settings: ApplicationSettings{
+		Host:      "campfire.tailnet.ts.net",
+		Tailscale: TailscaleSettings{Enabled: true},
+	}}
+
+	err := app.verify(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTailscaleDNSFailed)
+	assert.Contains(t, err.Error(), "tailscale dns query")
 }
