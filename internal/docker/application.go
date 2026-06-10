@@ -44,9 +44,10 @@ var (
 )
 
 const (
-	AutomaticTaskInterval  = 24 * time.Hour
-	DefaultHealthCheckPath = "/up"
-	httpVerifyTimeout      = 30 * time.Second
+	AutomaticTaskInterval     = 24 * time.Hour
+	DefaultHealthCheckPath    = "/up"
+	httpVerifyTimeout         = 30 * time.Second
+	tailscaleDNSVerifyTimeout = 30 * time.Second
 )
 
 // DefaultVolumePaths defines the default paths where the app data volume is mounted
@@ -389,7 +390,10 @@ func (a *Application) verifyTailscaleDNS(ctx context.Context) error {
 		return nil
 	}
 
-	if err := tailscaleDNSQuery(ctx, a.Settings.Host); err != nil {
+	verifyCtx, cancel := context.WithTimeout(ctx, tailscaleDNSVerifyTimeout)
+	defer cancel()
+
+	if err := tailscaleDNSQuery(verifyCtx, a.Settings.Host); err != nil {
 		return fmt.Errorf("%w: checking MagicDNS with tailscale dns query: %w", ErrTailscaleDNSFailed, err)
 	}
 	return nil

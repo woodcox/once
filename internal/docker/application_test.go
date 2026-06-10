@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,6 +156,29 @@ func TestVerifyUsesTailscaleDNSWhenEnabled(t *testing.T) {
 	err := app.verify(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, "campfire.tailnet.ts.net", queriedHost)
+}
+
+func TestVerifyTailscaleDNSUsesTimeout(t *testing.T) {
+	original := tailscaleDNSQuery
+	defer func() { tailscaleDNSQuery = original }()
+
+	deadlineSeen := false
+	tailscaleDNSQuery = func(ctx context.Context, host string) error {
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		assert.WithinDuration(t, time.Now().Add(tailscaleDNSVerifyTimeout), deadline, time.Second)
+		deadlineSeen = true
+		return nil
+	}
+
+	app := &Application{Settings: ApplicationSettings{
+		Host:      "campfire.tailnet.ts.net",
+		Tailscale: TailscaleSettings{Enabled: true},
+	}}
+
+	err := app.verify(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, deadlineSeen)
 }
 
 func TestVerifyTailscaleDNSFailure(t *testing.T) {
