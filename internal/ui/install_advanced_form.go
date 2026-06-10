@@ -221,6 +221,7 @@ func (m InstallAdvancedForm) renderContent() string {
 	checkboxStyle := Styles.Focus(Styles.Input, focused == advancedSkipRailsEnvField)
 	checkbox := mouse.Mark(fieldTarget(advancedSkipRailsEnvField), checkboxStyle.Render(m.form.CheckboxField(advancedSkipRailsEnvField).View()))
 	parts = append(parts, checkbox, "")
+	parts = append(parts, renderTextField(advancedTailscaleAuthField, "Tailscale auth key")...)
 
 	// Env vars grid
 	keyWidth, valueWidth := m.columnWidths()

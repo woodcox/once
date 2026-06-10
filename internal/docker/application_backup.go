@@ -212,13 +212,14 @@ func (a *Application) copyVolumeData(ctx context.Context, containerName string, 
 		}()
 	}
 
-	reader, _, err := a.namespace.client.CopyFromContainer(ctx, containerName, DefaultVolumePaths[0])
+	volumePaths := a.Settings.EffectiveVolumePaths()
+	reader, _, err := a.namespace.client.CopyFromContainer(ctx, containerName, volumePaths[0])
 	if err != nil {
 		return fmt.Errorf("copying from container: %w", err)
 	}
 	defer reader.Close()
 
-	if err := copyTarEntriesWithPrefix(reader, tw, filepath.Base(DefaultVolumePaths[0]), BackupDataDir); err != nil {
+	if err := copyTarEntriesWithPrefix(reader, tw, filepath.Base(volumePaths[0]), BackupDataDir); err != nil {
 		return fmt.Errorf("copying volume contents: %w", err)
 	}
 

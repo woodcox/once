@@ -119,11 +119,11 @@ The `tailscale serve` command supports:
 Fundamentally, ONCE works with any web application that:
 
 - Is packaged as a Docker container
-- Serves HTTP on port 80
-- Has a healthcheck endpoint at `/up` that returns success
-- Keeps its persistent data in `/storage`
+- Serves HTTP (by default on port 80, configurable via advanced settings)
+- Has a healthcheck endpoint (by default at `/up`, configurable via advanced settings)
+- Keeps its persistent data (by default in `/storage`, configurable via advanced settings)
 
-Any application that does these things should work with ONCE.
+Any application that meets these requirements should work with ONCE. If your application uses different ports or paths, you can configure these in the advanced settings during installation or in Settings → Application.
 
 However, beyond this bare minimum, there are some additional scripts and environment variables that allow for better integration with the platform:
 
