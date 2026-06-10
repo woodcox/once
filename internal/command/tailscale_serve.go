@@ -74,10 +74,9 @@ func (t *tailscaleServeCommand) run(ctx context.Context, ns *docker.Namespace, c
 	defer ln.Close()
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Director = func(req *http.Request) {
-		req.URL.Scheme = target.Scheme
-		req.URL.Host = target.Host
-		req.Host = app.Settings.Host
+	proxy.Rewrite = func(r *httputil.ProxyRequest) {
+    	r.SetURL(target)
+    	r.Out.Host = app.Settings.Host
 	}
 	srv := &http.Server{Handler: proxy}
 
