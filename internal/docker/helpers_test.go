@@ -7,9 +7,9 @@ import (
 )
 
 func TestNameFromImageRef(t *testing.T) {
-	assert.Equal(t, "once-campfire", NameFromImageRef("ghcr.io/basecamp/once-campfire:main"))
-	assert.Equal(t, "once-campfire", NameFromImageRef("ghcr.io/basecamp/once-campfire"))
-	assert.Equal(t, "once-campfire", NameFromImageRef("ghcr.io/basecamp/once-campfire:latest"))
+	assert.Equal(t, "once-campfire", NameFromImageRef("ghcr.io/woodcox/once-campfire:main"))
+	assert.Equal(t, "once-campfire", NameFromImageRef("ghcr.io/woodcox/once-campfire"))
+	assert.Equal(t, "once-campfire", NameFromImageRef("ghcr.io/woodcox/once-campfire:latest"))
 }
 
 func TestIsLocalhost(t *testing.T) {

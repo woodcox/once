@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/basecamp/once/internal/fsutil"
+	"github.com/woodcox/once/internal/fsutil"
 )
 
 // ToLogFile switches logging to a file for the duration of fn, then restores

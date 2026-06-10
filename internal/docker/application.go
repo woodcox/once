@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -35,18 +36,23 @@ var (
 		msg:         "verification failed",
 		description: "The application couldn't be verified. Please check that you have a valid DNS record set up.",
 	}
+	ErrTailscaleDNSFailed = &describedError{
+		msg:         "tailscale dns verification failed",
+		description: "The application couldn't be verified with Tailscale MagicDNS. Make sure the Tailscale CLI is installed, logged in, and can resolve the hostname with tailscale dns query.",
+	}
 	ErrUnpauseFailed = errors.New("failed to unpause container after backup")
 )
 
 const (
-	AutomaticTaskInterval = 24 * time.Hour
-	HealthCheckPath       = "/up"
-	httpVerifyTimeout     = 30 * time.Second
+	AutomaticTaskInterval     = 24 * time.Hour
+	DefaultHealthCheckPath    = "/up"
+	httpVerifyTimeout         = 30 * time.Second
+	tailscaleDNSVerifyTimeout = 30 * time.Second
 )
 
-// AppVolumeMountTargets defines the paths where the app data volume is mounted
+// DefaultVolumePaths defines the default paths where the app data volume is mounted
 // inside the container. The first entry is the primary path used for backups.
-var AppVolumeMountTargets = []string{"/storage", "/rails/storage"}
+var DefaultVolumePaths = []string{"/storage", "/rails/storage"}
 
 type Application struct {
 	namespace    *Namespace
@@ -199,7 +205,7 @@ func (a *Application) Deploy(ctx context.Context, progress DeployProgressCallbac
 }
 
 func (a *Application) VerifyHTTPOrRemove(ctx context.Context) error {
-	if err := a.verifyHTTP(ctx); err != nil {
+	if err := a.verify(ctx); err != nil {
 		if cleanupErr := a.Remove(context.Background(), true); cleanupErr != nil {
 			slog.Error("Failed to clean up after verification failure", "app", a.Settings.Name, "error", cleanupErr)
 		}
@@ -347,10 +353,11 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	shortContainerID := resp.ID[:12]
 
 	if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
-		AppName: a.Settings.Name,
-		Target:  shortContainerID,
-		Host:    a.Settings.Host,
-		TLS:     a.Settings.TLSEnabled(),
+		AppName:         a.Settings.Name,
+		Target:          a.Settings.DeployTarget(shortContainerID),
+		Host:            a.Settings.Host,
+		TLS:             a.Settings.TLSEnabled(),
+		HealthCheckPath: a.Settings.EffectiveHealthCheckPath(),
 	}); err != nil {
 		a.namespace.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 		if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
@@ -371,6 +378,27 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	return nil
 }
 
+func (a *Application) verify(ctx context.Context) error {
+	if a.Settings.Tailscale.Enabled {
+		return a.verifyTailscaleDNS(ctx)
+	}
+	return a.verifyHTTP(ctx)
+}
+
+func (a *Application) verifyTailscaleDNS(ctx context.Context) error {
+	if a.Settings.Host == "" {
+		return nil
+	}
+
+	verifyCtx, cancel := context.WithTimeout(ctx, tailscaleDNSVerifyTimeout)
+	defer cancel()
+
+	if err := tailscaleDNSQuery(verifyCtx, a.Settings.Host); err != nil {
+		return fmt.Errorf("%w: checking MagicDNS with tailscale dns query: %w", ErrTailscaleDNSFailed, err)
+	}
+	return nil
+}
+
 func (a *Application) verifyHTTP(ctx context.Context) error {
 	url := a.URL()
 	if url == "" {
@@ -378,7 +406,7 @@ func (a *Application) verifyHTTP(ctx context.Context) error {
 	}
 
 	client := &http.Client{Timeout: httpVerifyTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+HealthCheckPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+a.Settings.EffectiveHealthCheckPath(), nil)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
@@ -419,7 +447,7 @@ func (a *Application) removeContainersExcept(ctx context.Context, keep string) e
 
 func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 	var mounts []mount.Mount
-	for _, target := range AppVolumeMountTargets {
+	for _, target := range a.Settings.EffectiveVolumePaths() {
 		mounts = append(mounts, mount.Mount{
 			Type:   mount.TypeVolume,
 			Source: vol.Name(),
@@ -437,4 +465,18 @@ func (a *Application) containerConfig(env []string) *container.Config {
 		},
 		Env: env,
 	}
+}
+
+// Helpers
+
+var tailscaleDNSQuery = func(ctx context.Context, host string) error {
+	cmd := exec.CommandContext(ctx, "tailscale", "dns", "query", "--json", host)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(output) > 0 {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return err
+	}
+	return nil
 }

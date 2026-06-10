@@ -73,7 +73,13 @@ ONCE will fetch, install, and boot the application, and then take you to the das
 
 There are various extra settings you can change on your applications.
 When you have an application selected on the dashboard, press `s` to view the settings menu, and choose an item from the menu to open that screen.
-From there you can set up a location for automatic backups, update your hostname, switch to using your own fork's image, set up an email provider and more.
+From there you can set up a location for automatic backups, update your hostname, switch to using your own fork's image, set up an email provider, and configure Tailscale options.
+
+For Tailscale specifically:
+
+- In the install flow, the hostname screen includes **Create a tailscale service**.
+- Advanced install settings include an optional **Tailscale auth key**.
+- After install, these are editable in **Settings → Application** as **Tailscale** and **Tailscale auth key**.
 
 You can also use the action menu, `a` to start and stop applications, or remove them completely.
 
@@ -86,16 +92,38 @@ If you find this distracting, or it causes problems in your environment, you can
 ONCE_REDUCED_MOTION=true once
 ```
 
+
+## CLI command reference
+
+Run `once --help` for the complete, current list. Common commands include:
+
+- `once` -- Launch the TUI dashboard.
+- `once deploy IMAGE HOST` -- Install a new app from an image to a hostname.
+- `once update HOST [IMAGE]` -- Update an app's settings and/or image.
+- `once start HOST` / `once stop HOST` -- Start or stop an installed app.
+- `once list` -- Show installed apps.
+- `once backup HOST` / `once restore BACKUP_FILE` -- Backup and restore app data/settings.
+- `once remove HOST` -- Remove an app.
+- `once teardown` -- Remove all apps and the proxy in the namespace.
+- `once tailscale serve HOST` -- Run a tsnet-backed Tailnet listener and reverse-proxy traffic to an installed app.
+
+The `tailscale serve` command supports:
+
+- `--hostname` -- Tailnet hostname for the tsnet service.
+- `--port` -- Tailnet listen port (default: `443`).
+- `--auth-key` -- Tailscale auth key for non-interactive login.
+- `--state-dir` -- Directory for persistent tsnet state.
+
 ## Making a ONCE-compatible application
 
 Fundamentally, ONCE works with any web application that:
 
 - Is packaged as a Docker container
-- Serves HTTP on port 80
-- Has a healthcheck endpoint at `/up` that returns success
-- Keeps its persistent data in `/storage`
+- Serves HTTP (by default on port 80, configurable via advanced settings)
+- Has a healthcheck endpoint (by default at `/up`, configurable via advanced settings)
+- Keeps its persistent data (by default in `/storage`, configurable via advanced settings)
 
-Any application that does these things should work with ONCE.
+Any application that meets these requirements should work with ONCE. If your application uses different ports or paths, you can configure these in the advanced settings during installation or in Settings → Application.
 
 However, beyond this bare minimum, there are some additional scripts and environment variables that allow for better integration with the platform:
 

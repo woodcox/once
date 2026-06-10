@@ -1,4 +1,4 @@
-module github.com/basecamp/once-installer
+module github.com/woodcox/once-installer
 
 go 1.26.1
 

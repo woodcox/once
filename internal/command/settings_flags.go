@@ -7,23 +7,27 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/basecamp/once/internal/docker"
+	"github.com/woodcox/once/internal/docker"
 )
 
 type settingsFlags struct {
-	host         string
-	disableTLS   bool
-	env          []string
-	smtpServer   string
-	smtpPort     string
-	smtpUsername string
-	smtpPassword string
-	smtpFrom     string
-	cpus         int
-	memory       int
-	autoUpdate   bool
-	backupPath   string
-	autoBackup   bool
+	host            string
+	disableTLS      bool
+	env             []string
+	smtpServer      string
+	smtpPort        string
+	smtpUsername    string
+	smtpPassword    string
+	smtpFrom        string
+	cpus            int
+	memory          int
+	autoUpdate      bool
+	backupPath      string
+	autoBackup      bool
+	healthCheckPath string
+	appPort         int
+	volumePaths     []string
+	skipRailsEnv    bool
 }
 
 func (f *settingsFlags) register(cmd *cobra.Command) {
@@ -40,6 +44,10 @@ func (f *settingsFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.autoUpdate, "auto-update", true, "automatically update the application")
 	cmd.Flags().StringVar(&f.backupPath, "backup-path", "", "path for backups")
 	cmd.Flags().BoolVar(&f.autoBackup, "auto-backup", false, "enable automatic backups")
+	cmd.Flags().StringVar(&f.healthCheckPath, "health-check-path", "", "health check path for the application")
+	cmd.Flags().IntVar(&f.appPort, "app-port", 0, "port the application listens on inside the container")
+	cmd.Flags().StringSliceVar(&f.volumePaths, "volume-paths", nil, "volume mount paths inside the container (comma-separated)")
+	cmd.Flags().BoolVar(&f.skipRailsEnv, "skip-rails-env", false, "skip injecting Rails-specific environment variables")
 }
 
 func (f *settingsFlags) buildSettings(image, host string) (docker.ApplicationSettings, error) {
@@ -73,6 +81,10 @@ func (f *settingsFlags) buildSettings(image, host string) (docker.ApplicationSet
 			Path:       f.backupPath,
 			AutoBackup: f.autoBackup,
 		},
+		HealthCheckPath: f.healthCheckPath,
+		AppPort:         f.appPort,
+		VolumePaths:     f.volumePaths,
+		SkipRailsEnv:    f.skipRailsEnv,
 	}
 
 	if err := s.Validate(); err != nil {
@@ -132,6 +144,18 @@ func (f *settingsFlags) applyChanges(cmd *cobra.Command, existing docker.Applica
 	}
 	if cmd.Flags().Changed("auto-backup") {
 		s.Backup.AutoBackup = f.autoBackup
+	}
+	if cmd.Flags().Changed("health-check-path") {
+		s.HealthCheckPath = f.healthCheckPath
+	}
+	if cmd.Flags().Changed("app-port") {
+		s.AppPort = f.appPort
+	}
+	if cmd.Flags().Changed("volume-paths") {
+		s.VolumePaths = f.volumePaths
+	}
+	if cmd.Flags().Changed("skip-rails-env") {
+		s.SkipRailsEnv = f.skipRailsEnv
 	}
 
 	if err := s.Validate(); err != nil {

@@ -11,7 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/basecamp/once/internal/docker"
+	"github.com/woodcox/once/internal/docker"
 )
 
 var installKeys = struct {
@@ -28,12 +28,14 @@ const (
 	installStateAppList   installState = iota // Screen 1: choose app
 	installStateImageForm                     // Screen 2: enter image ref
 	installStateHostname                      // Screen 3: enter hostname
+	installStateEnvVars                       // Screen 4: advanced settings
 	installStateActivity                      // Installing
 )
 
 type InstallFormSubmitMsg struct {
 	ImageRef string
 	Hostname string
+	Settings docker.ApplicationSettings
 }
 
 type Install struct {
@@ -44,6 +46,8 @@ type Install struct {
 	appList       InstallAppList
 	imageForm     InstallImageForm
 	hostnameForm  InstallHostnameForm
+	advancedForm  InstallAdvancedForm
+	pendingSubmit InstallFormSubmitMsg
 	activity      *InstallActivity
 	popupHelp     *PopupHelp
 	starfield     *Starfield
@@ -203,9 +207,40 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			return m, nil
 		}
 		m.state = installStateActivity
-		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname)
+		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname, msg.Settings)
 		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		return m, m.activity.Init()
+
+	case InstallAdvancedMsg:
+		if msg.Hostname == "" {
+			m.err = errors.New("hostname is required")
+			return m, nil
+		}
+		if m.namespace.HostInUse(msg.Hostname) {
+			m.err = docker.ErrHostnameInUse
+			return m, nil
+		}
+		m.pendingSubmit = InstallFormSubmitMsg{ImageRef: msg.ImageRef, Hostname: msg.Hostname, Settings: docker.ApplicationSettings{Tailscale: docker.TailscaleSettings{Enabled: msg.TailscaleEnabled}}}
+		m.advancedForm = NewInstallAdvancedForm(m.pendingSubmit.Settings)
+		m.state = installStateEnvVars
+		return m, m.initScreenWithSize()
+
+	case SettingsSectionSubmitMsg:
+		if m.state != installStateEnvVars {
+			break
+		}
+		m.state = installStateActivity
+		msg.Settings.Tailscale.Enabled = m.pendingSubmit.Settings.Tailscale.Enabled
+		m.activity = NewInstallActivity(m.namespace, m.pendingSubmit.ImageRef, m.pendingSubmit.Hostname, msg.Settings)
+		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, m.activity.Init()
+
+	case SettingsSectionCancelMsg:
+		if m.state != installStateEnvVars {
+			break
+		}
+		m.state = installStateHostname
+		return m, nil
 
 	case InstallActivityFailedMsg:
 		_ = m.namespace.Refresh(context.Background())
@@ -279,6 +314,8 @@ func (m Install) initCurrentScreen() tea.Cmd {
 		return m.imageForm.Init()
 	case installStateHostname:
 		return m.hostnameForm.Init()
+	case installStateEnvVars:
+		return m.advancedForm.Init()
 	}
 	return nil
 }
@@ -305,6 +342,10 @@ func (m *Install) updateCurrentScreen(msg tea.Msg) tea.Cmd {
 		var cmd tea.Cmd
 		m.hostnameForm, cmd = m.hostnameForm.Update(msg)
 		return cmd
+	case installStateEnvVars:
+		var cmd tea.Cmd
+		m.advancedForm, cmd = m.advancedForm.Update(msg)
+		return cmd
 	}
 	return nil
 }
@@ -317,6 +358,8 @@ func (m Install) viewCurrentScreen() string {
 		return m.imageForm.View()
 	case installStateHostname:
 		return m.hostnameForm.View()
+	case installStateEnvVars:
+		return m.advancedForm.View()
 	}
 	return ""
 }
@@ -337,6 +380,9 @@ func (m Install) handleBack() (Install, tea.Cmd) {
 			return m, m.imageForm.Init()
 		}
 		m.state = installStateAppList
+		return m, nil
+	case installStateEnvVars:
+		m.state = installStateHostname
 		return m, nil
 	}
 	return m, nil

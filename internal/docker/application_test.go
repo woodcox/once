@@ -2,9 +2,11 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +26,7 @@ func TestVerifyHTTP_Success(t *testing.T) {
 
 	err := app.verifyHTTP(context.Background())
 	assert.NoError(t, err)
-	assert.Equal(t, HealthCheckPath, requestPath)
+	assert.Equal(t, DefaultHealthCheckPath, requestPath)
 }
 
 func TestVerifyHTTP_RedirectToSuccess(t *testing.T) {
@@ -134,4 +136,66 @@ func TestURL(t *testing.T) {
 		app := newAppWithProxy("chat.localhost", false, &ProxySettings{HTTPPort: 9090})
 		assert.Equal(t, "http://chat.localhost:9090", app.URL())
 	})
+}
+
+func TestVerifyUsesTailscaleDNSWhenEnabled(t *testing.T) {
+	original := tailscaleDNSQuery
+	defer func() { tailscaleDNSQuery = original }()
+
+	var queriedHost string
+	tailscaleDNSQuery = func(ctx context.Context, host string) error {
+		queriedHost = host
+		return nil
+	}
+
+	app := &Application{Settings: ApplicationSettings{
+		Host:      "campfire.tailnet.ts.net",
+		Tailscale: TailscaleSettings{Enabled: true},
+	}}
+
+	err := app.verify(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, "campfire.tailnet.ts.net", queriedHost)
+}
+
+func TestVerifyTailscaleDNSUsesTimeout(t *testing.T) {
+	original := tailscaleDNSQuery
+	defer func() { tailscaleDNSQuery = original }()
+
+	deadlineSeen := false
+	tailscaleDNSQuery = func(ctx context.Context, host string) error {
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		assert.WithinDuration(t, time.Now().Add(tailscaleDNSVerifyTimeout), deadline, time.Second)
+		deadlineSeen = true
+		return nil
+	}
+
+	app := &Application{Settings: ApplicationSettings{
+		Host:      "campfire.tailnet.ts.net",
+		Tailscale: TailscaleSettings{Enabled: true},
+	}}
+
+	err := app.verify(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, deadlineSeen)
+}
+
+func TestVerifyTailscaleDNSFailure(t *testing.T) {
+	original := tailscaleDNSQuery
+	defer func() { tailscaleDNSQuery = original }()
+
+	tailscaleDNSQuery = func(ctx context.Context, host string) error {
+		return errors.New("not found")
+	}
+
+	app := &Application{Settings: ApplicationSettings{
+		Host:      "campfire.tailnet.ts.net",
+		Tailscale: TailscaleSettings{Enabled: true},
+	}}
+
+	err := app.verify(context.Background())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrTailscaleDNSFailed)
+	assert.Contains(t, err.Error(), "tailscale dns query")
 }

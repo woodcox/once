@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/basecamp/once/internal/docker"
-	"github.com/basecamp/once/internal/logging"
-	"github.com/basecamp/once/internal/ui"
+	"github.com/woodcox/once/internal/docker"
+	"github.com/woodcox/once/internal/logging"
+	"github.com/woodcox/once/internal/ui"
 )
 
 type RootCommand struct {
@@ -46,6 +46,7 @@ func NewRootCommand() *RootCommand {
 	r.cmd.AddCommand(newStartCommand().cmd)
 	r.cmd.AddCommand(newStopCommand().cmd)
 	r.cmd.AddCommand(newTeardownCommand().cmd)
+	r.cmd.AddCommand(newTailscaleCommand().cmd)
 	r.cmd.AddCommand(newUpdateCommand().cmd)
 	r.cmd.AddCommand(newSelfUpdateCommand().cmd)
 	r.cmd.AddCommand(newVersionCommand().cmd)

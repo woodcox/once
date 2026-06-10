@@ -2,7 +2,9 @@ package docker
 
 import (
 	"encoding/json"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 type SMTPSettings struct {
@@ -36,16 +38,26 @@ type BackupSettings struct {
 	AutoBackup bool   `json:"autoBackup,omitempty"`
 }
 
+type TailscaleSettings struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	AuthKey string `json:"authKey,omitempty"`
+}
+
 type ApplicationSettings struct {
-	Name       string             `json:"name"`
-	Image      string             `json:"image"`
-	Host       string             `json:"host"`
-	DisableTLS bool               `json:"disableTLS"`
-	EnvVars    map[string]string  `json:"env"`
-	SMTP       SMTPSettings       `json:"smtp"`
-	Resources  ContainerResources `json:"resources"`
-	AutoUpdate bool               `json:"autoUpdate"`
-	Backup     BackupSettings     `json:"backup"`
+	Name            string             `json:"name"`
+	Image           string             `json:"image"`
+	Host            string             `json:"host"`
+	DisableTLS      bool               `json:"disableTLS"`
+	HealthCheckPath string             `json:"healthCheckPath,omitempty"`
+	AppPort         int                `json:"appPort,omitempty"`
+	VolumePaths     []string           `json:"volumePaths,omitempty"`
+	SkipRailsEnv    bool               `json:"skipRailsEnv,omitempty"`
+	EnvVars         map[string]string  `json:"env"`
+	SMTP            SMTPSettings       `json:"smtp"`
+	Resources       ContainerResources `json:"resources"`
+	AutoUpdate      bool               `json:"autoUpdate"`
+	Backup          BackupSettings     `json:"backup"`
+	Tailscale       TailscaleSettings  `json:"tailscale,omitempty"`
 }
 
 func UnmarshalApplicationSettings(s string) (ApplicationSettings, error) {
@@ -73,8 +85,39 @@ func (s ApplicationSettings) TLSEnabled() bool {
 	return s.Host != "" && !s.DisableTLS && !IsLocalhost(s.Host)
 }
 
+func (s ApplicationSettings) EffectiveHealthCheckPath() string {
+	if s.HealthCheckPath != "" {
+		return s.HealthCheckPath
+	}
+	return DefaultHealthCheckPath
+}
+
+func (s ApplicationSettings) DeployTarget(containerID string) string {
+	if s.AppPort != 0 {
+		return containerID + ":" + strconv.Itoa(s.AppPort)
+	}
+	return containerID
+}
+
+func (s ApplicationSettings) EffectiveVolumePaths() []string {
+	if len(s.VolumePaths) > 0 {
+		return s.VolumePaths
+	}
+	return DefaultVolumePaths
+}
+
+func (s ApplicationSettings) VolumePathsString() string {
+	return strings.Join(s.EffectiveVolumePaths(), ", ")
+}
+
 func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	if s.Name != other.Name || s.Image != other.Image || s.Host != other.Host || s.DisableTLS != other.DisableTLS {
+		return false
+	}
+	if s.HealthCheckPath != other.HealthCheckPath || s.AppPort != other.AppPort || s.SkipRailsEnv != other.SkipRailsEnv {
+		return false
+	}
+	if !slices.Equal(s.VolumePaths, other.VolumePaths) {
 		return false
 	}
 	if s.Resources != other.Resources {
@@ -89,6 +132,9 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	if s.Backup != other.Backup {
 		return false
 	}
+	if s.Tailscale != other.Tailscale {
+		return false
+	}
 	if len(s.EnvVars) != len(other.EnvVars) {
 		return false
 	}
@@ -101,14 +147,17 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 }
 
 func (s ApplicationSettings) BuildEnv(vol ApplicationVolumeSettings) []string {
-	env := []string{
-		"SECRET_KEY_BASE=" + vol.SecretKeyBase,
-		"VAPID_PUBLIC_KEY=" + vol.VAPIDPublicKey,
-		"VAPID_PRIVATE_KEY=" + vol.VAPIDPrivateKey,
-	}
+	var env []string
 
-	if !s.TLSEnabled() {
-		env = append(env, "DISABLE_SSL=true")
+	if !s.SkipRailsEnv {
+		env = append(env,
+			"SECRET_KEY_BASE="+vol.SecretKeyBase,
+			"VAPID_PUBLIC_KEY="+vol.VAPIDPublicKey,
+			"VAPID_PRIVATE_KEY="+vol.VAPIDPrivateKey,
+		)
+		if !s.TLSEnabled() {
+			env = append(env, "DISABLE_SSL=true")
+		}
 	}
 
 	if s.Resources.CPUs > 0 {
@@ -122,4 +171,17 @@ func (s ApplicationSettings) BuildEnv(vol ApplicationVolumeSettings) []string {
 	}
 
 	return env
+}
+
+// Helpers
+
+func ParseVolumePaths(s string) []string {
+	var paths []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
 }

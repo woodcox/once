@@ -7,7 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/basecamp/once/internal/system"
+	"github.com/woodcox/once/internal/system"
 )
 
 const (

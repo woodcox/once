@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	githubReleasesURL = "https://api.github.com/repos/basecamp/once/releases/latest"
+	githubReleasesURL = "https://api.github.com/repos/woodcox/once/releases/latest"
 	httpTimeout       = 30 * time.Second
 	updateTempFile    = ".once-update-tmp"
 )

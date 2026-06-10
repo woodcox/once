@@ -1,5 +1,5 @@
 service: once-installer
-image: basecamp/once-installer
+image: woodcox/once-installer
 
 servers:
   - once-installer-101
