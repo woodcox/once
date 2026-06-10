@@ -13,6 +13,7 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 
 	hostnameFormTypeText(&form, "chat.example.com")
 	hostnameFormPressTab(&form)
+	hostnameFormPressTab(&form)
 	form, cmd := form.Update(keyPressMsg("enter"))
 	require.NotNil(t, cmd)
 
@@ -21,12 +22,14 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 	require.True(t, ok, "expected InstallFormSubmitMsg, got %T", msg)
 	assert.Equal(t, "ghcr.io/basecamp/once-campfire", submit.ImageRef)
 	assert.Equal(t, "chat.example.com", submit.Hostname)
+	assert.False(t, submit.Settings.Tailscale.Enabled)
 }
 
 func TestInstallHostnameForm_Cancel(t *testing.T) {
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
-	// Tab to submit, tab to action, tab to cancel
+	// Tab to tailscale, submit, action, cancel
+	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
@@ -43,7 +46,8 @@ func TestInstallHostnameForm_AdvancedSettings(t *testing.T) {
 
 	hostnameFormTypeText(&form, "chat.example.com")
 
-	// Tab to submit, tab to action button
+	// Tab to tailscale, submit, action button
+	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	form, cmd := form.Update(keyPressMsg("enter"))
@@ -54,12 +58,14 @@ func TestInstallHostnameForm_AdvancedSettings(t *testing.T) {
 	require.True(t, ok, "expected InstallAdvancedMsg, got %T", msg)
 	assert.Equal(t, "ghcr.io/basecamp/once-campfire", advMsg.ImageRef)
 	assert.Equal(t, "chat.example.com", advMsg.Hostname)
+	assert.False(t, advMsg.TailscaleEnabled)
 }
 
 func TestInstallHostnameForm_RequiresHostname(t *testing.T) {
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
-	// Tab to submit button, then press enter with empty hostname
+	// Tab to tailscale then submit button, then press enter with empty hostname
+	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	form, _ = form.Update(keyPressMsg("enter"))
 	assert.True(t, form.form.HasError())
@@ -93,4 +99,18 @@ func hostnameFormTypeText(form *InstallHostnameForm, text string) {
 
 func hostnameFormPressTab(form *InstallHostnameForm) {
 	*form, _ = form.Update(keyPressMsg("tab"))
+}
+
+func TestInstallHostnameForm_SubmitWithTailscaleEnabled(t *testing.T) {
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "")
+	hostnameFormTypeText(&form, "chat.example.com")
+	hostnameFormPressTab(&form)
+	form, _ = form.Update(keyPressMsg(" "))
+	hostnameFormPressTab(&form)
+	form, cmd := form.Update(keyPressMsg("enter"))
+	require.NotNil(t, cmd)
+	msg := cmd()
+	submit, ok := msg.(InstallFormSubmitMsg)
+	require.True(t, ok)
+	assert.True(t, submit.Settings.Tailscale.Enabled)
 }

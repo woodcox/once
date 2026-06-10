@@ -35,6 +35,7 @@ const (
 type InstallFormSubmitMsg struct {
 	ImageRef string
 	Hostname string
+	Settings docker.ApplicationSettings
 }
 
 type Install struct {
@@ -206,7 +207,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			return m, nil
 		}
 		m.state = installStateActivity
-		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname, docker.ApplicationSettings{})
+		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname, msg.Settings)
 		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		return m, m.activity.Init()
 
@@ -219,8 +220,8 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.err = docker.ErrHostnameInUse
 			return m, nil
 		}
-		m.pendingSubmit = InstallFormSubmitMsg(msg)
-		m.advancedForm = NewInstallAdvancedForm(docker.ApplicationSettings{})
+		m.pendingSubmit = InstallFormSubmitMsg{ImageRef: msg.ImageRef, Hostname: msg.Hostname, Settings: docker.ApplicationSettings{Tailscale: docker.TailscaleSettings{Enabled: msg.TailscaleEnabled}}}
+		m.advancedForm = NewInstallAdvancedForm(m.pendingSubmit.Settings)
 		m.state = installStateEnvVars
 		return m, m.initScreenWithSize()
 
@@ -229,6 +230,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			break
 		}
 		m.state = installStateActivity
+		msg.Settings.Tailscale.Enabled = m.pendingSubmit.Settings.Tailscale.Enabled
 		m.activity = NewInstallActivity(m.namespace, m.pendingSubmit.ImageRef, m.pendingSubmit.Hostname, msg.Settings)
 		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		return m, m.activity.Init()

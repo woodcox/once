@@ -38,6 +38,11 @@ type BackupSettings struct {
 	AutoBackup bool   `json:"autoBackup,omitempty"`
 }
 
+type TailscaleSettings struct {
+	Enabled bool   `json:"enabled,omitempty"`
+	AuthKey string `json:"authKey,omitempty"`
+}
+
 type ApplicationSettings struct {
 	Name            string             `json:"name"`
 	Image           string             `json:"image"`
@@ -52,6 +57,7 @@ type ApplicationSettings struct {
 	Resources       ContainerResources `json:"resources"`
 	AutoUpdate      bool               `json:"autoUpdate"`
 	Backup          BackupSettings     `json:"backup"`
+	Tailscale       TailscaleSettings  `json:"tailscale,omitempty"`
 }
 
 func UnmarshalApplicationSettings(s string) (ApplicationSettings, error) {
@@ -124,6 +130,9 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 		return false
 	}
 	if s.Backup != other.Backup {
+		return false
+	}
+	if s.Tailscale != other.Tailscale {
 		return false
 	}
 	if len(s.EnvVars) != len(other.EnvVars) {

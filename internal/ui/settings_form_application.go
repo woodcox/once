@@ -17,6 +17,8 @@ const (
 	appAppPortField
 	appVolumePathsField
 	appSkipRailsEnvField
+	appTailscaleEnabledField
+	appTailscaleAuthKeyField
 )
 
 type SettingsFormApplication struct {
@@ -53,6 +55,9 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 	}
 
 	skipRailsEnvField := NewCheckboxField("Skip SECRET_KEY_BASE, VAPID keys, DISABLE_SSL", settings.SkipRailsEnv)
+	tailscaleEnabledField := NewCheckboxField("Create a tailscale service", settings.Tailscale.Enabled)
+	tailscaleAuthKeyField := NewTextField("tskey-...")
+	tailscaleAuthKeyField.SetValue(settings.Tailscale.AuthKey)
 
 	m := SettingsFormApplication{
 		settingsFormBase: settingsFormBase{
@@ -65,6 +70,8 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 				FormItem{Label: "App port", Field: appPortField},
 				FormItem{Label: "Volume paths", Field: volumePathsField},
 				FormItem{Label: "Rails environment", Field: skipRailsEnvField},
+				FormItem{Label: "Tailscale", Field: tailscaleEnabledField},
+				FormItem{Label: "Tailscale auth key", Field: tailscaleAuthKeyField},
 			),
 		},
 	}
@@ -88,6 +95,8 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 		}
 
 		s.SkipRailsEnv = f.CheckboxField(appSkipRailsEnvField).Checked()
+		s.Tailscale.Enabled = f.CheckboxField(appTailscaleEnabledField).Checked()
+		s.Tailscale.AuthKey = f.TextField(appTailscaleAuthKeyField).Value()
 
 		return func() tea.Msg { return SettingsSectionSubmitMsg{Settings: s} }
 	})

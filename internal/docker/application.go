@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -35,13 +36,18 @@ var (
 		msg:         "verification failed",
 		description: "The application couldn't be verified. Please check that you have a valid DNS record set up.",
 	}
+	ErrTailscaleDNSFailed = &describedError{
+		msg:         "tailscale dns verification failed",
+		description: "The application couldn't be verified with Tailscale MagicDNS. Make sure the Tailscale CLI is installed, logged in, and can resolve the hostname with tailscale dns query.",
+	}
 	ErrUnpauseFailed = errors.New("failed to unpause container after backup")
 )
 
 const (
-	AutomaticTaskInterval  = 24 * time.Hour
-	DefaultHealthCheckPath = "/up"
-	httpVerifyTimeout      = 30 * time.Second
+	AutomaticTaskInterval     = 24 * time.Hour
+	DefaultHealthCheckPath    = "/up"
+	httpVerifyTimeout         = 30 * time.Second
+	tailscaleDNSVerifyTimeout = 30 * time.Second
 )
 
 // DefaultVolumePaths defines the default paths where the app data volume is mounted
@@ -199,7 +205,7 @@ func (a *Application) Deploy(ctx context.Context, progress DeployProgressCallbac
 }
 
 func (a *Application) VerifyHTTPOrRemove(ctx context.Context) error {
-	if err := a.verifyHTTP(ctx); err != nil {
+	if err := a.verify(ctx); err != nil {
 		if cleanupErr := a.Remove(context.Background(), true); cleanupErr != nil {
 			slog.Error("Failed to clean up after verification failure", "app", a.Settings.Name, "error", cleanupErr)
 		}
@@ -372,6 +378,27 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	return nil
 }
 
+func (a *Application) verify(ctx context.Context) error {
+	if a.Settings.Tailscale.Enabled {
+		return a.verifyTailscaleDNS(ctx)
+	}
+	return a.verifyHTTP(ctx)
+}
+
+func (a *Application) verifyTailscaleDNS(ctx context.Context) error {
+	if a.Settings.Host == "" {
+		return nil
+	}
+
+	verifyCtx, cancel := context.WithTimeout(ctx, tailscaleDNSVerifyTimeout)
+	defer cancel()
+
+	if err := tailscaleDNSQuery(verifyCtx, a.Settings.Host); err != nil {
+		return fmt.Errorf("%w: checking MagicDNS with tailscale dns query: %w", ErrTailscaleDNSFailed, err)
+	}
+	return nil
+}
+
 func (a *Application) verifyHTTP(ctx context.Context) error {
 	url := a.URL()
 	if url == "" {
@@ -438,4 +465,18 @@ func (a *Application) containerConfig(env []string) *container.Config {
 		},
 		Env: env,
 	}
+}
+
+// Helpers
+
+var tailscaleDNSQuery = func(ctx context.Context, host string) error {
+	cmd := exec.CommandContext(ctx, "tailscale", "dns", "query", "--json", host)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(output) > 0 {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		return err
+	}
+	return nil
 }

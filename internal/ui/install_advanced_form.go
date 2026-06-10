@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	advancedHealthCheckField  = 0
-	advancedAppPortField      = 1
-	advancedVolumePathsField  = 2
-	advancedSkipRailsEnvField = 3
-	advancedEnvStart          = 4
+	advancedHealthCheckField   = 0
+	advancedAppPortField       = 1
+	advancedVolumePathsField   = 2
+	advancedSkipRailsEnvField  = 3
+	advancedTailscaleAuthField = 4
+	advancedEnvStart           = 5
 )
 
 type InstallAdvancedForm struct {
@@ -51,6 +52,7 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 		{Label: "App port", Field: appPortField},
 		{Label: "Volume paths", Field: volumePathsField},
 		{Label: "Rails environment", Field: skipRailsEnvField},
+		{Label: "Tailscale auth key", Field: NewTextField("tskey-...")},
 	}
 
 	keys := slices.Sorted(maps.Keys(settings.EnvVars))
@@ -84,6 +86,7 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 			s.VolumePaths = nil
 		}
 		s.SkipRailsEnv = f.CheckboxField(advancedSkipRailsEnvField).Checked()
+		s.Tailscale.AuthKey = f.TextField(advancedTailscaleAuthField).Value()
 		s.EnvVars = nil
 		for i := advancedEnvStart; i < f.ItemCount(); i += 2 {
 			k := f.TextField(i).Value()
@@ -147,6 +150,7 @@ func (m InstallAdvancedForm) setFieldWidths() {
 	m.form.TextField(advancedHealthCheckField).SetWidth(fieldWidth)
 	m.form.TextField(advancedAppPortField).SetWidth(fieldWidth)
 	m.form.TextField(advancedVolumePathsField).SetWidth(fieldWidth)
+	m.form.TextField(advancedTailscaleAuthField).SetWidth(fieldWidth)
 
 	for i := advancedEnvStart; i < m.form.ItemCount(); i++ {
 		envIdx := i - advancedEnvStart
@@ -191,7 +195,7 @@ func (m InstallAdvancedForm) maxVisibleRows() int {
 	}
 	// Title (2) + health check (3) + app port (3) + volume paths (3) + skip rails env (2) +
 	// gap (1) + env headers (2) + buttons (3) + button gap (1) + help (1)
-	available := m.height - 21
+	available := m.height - 24
 	rowHeight := 4
 	visible := available / rowHeight
 	return max(visible, 1)
@@ -211,6 +215,7 @@ func (m InstallAdvancedForm) renderContent() string {
 	parts = append(parts, renderTextField(advancedHealthCheckField, "Health check path")...)
 	parts = append(parts, renderTextField(advancedAppPortField, "App port")...)
 	parts = append(parts, renderTextField(advancedVolumePathsField, "Volume paths")...)
+	parts = append(parts, renderTextField(advancedTailscaleAuthField, "Tailscale auth key")...)
 
 	// Skip Rails env checkbox
 	checkboxStyle := Styles.Focus(Styles.Input, focused == advancedSkipRailsEnvField)
