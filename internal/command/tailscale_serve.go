@@ -17,6 +17,8 @@ import (
 	"github.com/woodcox/once/internal/docker"
 )
 
+const tailscaleServeShutdownTimeout = 10 * time.Second
+
 type tailscaleServeCommand struct {
 	cmd *cobra.Command
 
@@ -49,12 +51,17 @@ func (t *tailscaleServeCommand) run(ctx context.Context, ns *docker.Namespace, c
 		return fmt.Errorf("no application found at host %q", args[0])
 	}
 
-	target, err := url.Parse(app.URL())
+	target, err := appProxyURL(ns)
 	if err != nil {
-		return fmt.Errorf("parsing application URL %q: %w", app.URL(), err)
+		return err
 	}
 
-	ts := &tsnet.Server{Hostname: t.hostname, AuthKey: t.authKey, Dir: t.stateDir}
+	authKey := t.authKey
+	if authKey == "" {
+		authKey = app.Settings.Tailscale.AuthKey
+	}
+
+	ts := &tsnet.Server{Hostname: t.hostname, AuthKey: authKey, Dir: t.stateDir}
 	if ts.Hostname == "" {
 		ts.Hostname = "once-" + app.Settings.Name
 	}
@@ -67,6 +74,11 @@ func (t *tailscaleServeCommand) run(ctx context.Context, ns *docker.Namespace, c
 	defer ln.Close()
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.Host = app.Settings.Host
+	}
 	srv := &http.Server{Handler: proxy}
 
 	errCh := make(chan error, 1)
@@ -78,7 +90,7 @@ func (t *tailscaleServeCommand) run(ctx context.Context, ns *docker.Namespace, c
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Serving %s via tailnet hostname %s on port %d\n", app.URL(), ts.Hostname, t.port)
+	fmt.Fprintf(cmd.OutOrStdout(), "Serving %s via tailnet hostname %s on port %d\n", app.Settings.Host, ts.Hostname, t.port)
 	fmt.Fprintln(cmd.OutOrStdout(), "Press Ctrl+C to stop")
 
 	select {
@@ -87,12 +99,27 @@ func (t *tailscaleServeCommand) run(ctx context.Context, ns *docker.Namespace, c
 			return fmt.Errorf("serving tailscale proxy: %w", err)
 		}
 	case <-sigCh:
-    	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    	defer cancel()
-    	if err := srv.Shutdown(shutdownCtx); err != nil && err != context.DeadlineExceeded {
-        	return fmt.Errorf("shutting down tailscale proxy: %w", err)
-    	}
 	}
-	
+
+	if err := shutdownTailscaleProxy(srv.Shutdown); err != nil {
+		return fmt.Errorf("shutting down tailscale proxy: %w", err)
+	}
 	return nil
+}
+
+// Helpers
+
+func shutdownTailscaleProxy(shutdown func(context.Context) error) error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), tailscaleServeShutdownTimeout)
+	defer cancel()
+
+	return shutdown(shutdownCtx)
+}
+
+func appProxyURL(ns *docker.Namespace) (*url.URL, error) {
+	proxy := ns.Proxy()
+	if proxy.Settings == nil {
+		return nil, fmt.Errorf("proxy settings unavailable")
+	}
+	return &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", proxy.Settings.HTTPPort)}, nil
 }

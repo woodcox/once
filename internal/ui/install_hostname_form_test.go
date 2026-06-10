@@ -28,7 +28,7 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 func TestInstallHostnameForm_Cancel(t *testing.T) {
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
-	// Tab to submit, tailscale, action, cancel
+	// Tab to tailscale, submit, action, cancel
 	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)

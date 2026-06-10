@@ -10,8 +10,8 @@ import (
 type InstallHostnameBackMsg struct{}
 
 type InstallAdvancedMsg struct {
-	ImageRef string
-	Hostname string
+	ImageRef         string
+	Hostname         string
 	TailscaleEnabled bool
 }
 

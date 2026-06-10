@@ -22,6 +22,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.3
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	tailscale.com v1.98.3
 )
 
 require (
@@ -39,7 +40,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.12 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/containerd/log v0.1.0 // indirect
 	github.com/creachadair/msync v0.7.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa // indirect
