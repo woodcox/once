@@ -315,3 +315,119 @@ func TestAutoUpdateAndBackupMarshalRoundTrip(t *testing.T) {
 	assert.True(t, restored.Backup.AutoBackup)
 	assert.True(t, original.Equal(restored))
 }
+
+func TestEffectiveHealthCheckPath(t *testing.T) {
+	assert.Equal(t, HealthCheckPath, ApplicationSettings{}.EffectiveHealthCheckPath())
+	assert.Equal(t, "/healthz", ApplicationSettings{HealthCheckPath: "/healthz"}.EffectiveHealthCheckPath())
+}
+
+func TestEffectiveAppPort(t *testing.T) {
+	assert.Equal(t, DefaultAppPort, ApplicationSettings{}.EffectiveAppPort())
+	assert.Equal(t, 5006, ApplicationSettings{AppPort: 5006}.EffectiveAppPort())
+}
+
+func TestDeployTarget(t *testing.T) {
+	assert.Equal(t, "abc123", ApplicationSettings{}.DeployTarget("abc123"))
+	assert.Equal(t, "abc123:5006", ApplicationSettings{AppPort: 5006}.DeployTarget("abc123"))
+}
+
+func TestEffectiveVolumePaths(t *testing.T) {
+	assert.Equal(t, AppVolumeMountTargets, ApplicationSettings{}.EffectiveVolumePaths())
+	assert.Equal(t, "/storage, /rails/storage", ApplicationSettings{}.VolumePathsString())
+
+	custom := ApplicationSettings{VolumePaths: []string{"/data"}}
+	assert.Equal(t, []string{"/data"}, custom.EffectiveVolumePaths())
+	assert.Equal(t, "/data", custom.VolumePathsString())
+}
+
+func TestParseVolumePaths(t *testing.T) {
+	assert.Equal(t, []string{"/data", "/config"}, ParseVolumePaths(" /data , /config "))
+	assert.Equal(t, []string{"/data"}, ParseVolumePaths("/data,,  ,"))
+	assert.Nil(t, ParseVolumePaths(""))
+}
+
+func TestAdvancedSettingsValidate(t *testing.T) {
+	base := ApplicationSettings{Name: "app", Image: "img:latest"}
+
+	t.Run("default app port and volume paths", func(t *testing.T) {
+		assert.NoError(t, base.Validate())
+	})
+
+	t.Run("custom app port", func(t *testing.T) {
+		s := base
+		s.AppPort = 5006
+		assert.NoError(t, s.Validate())
+	})
+
+	t.Run("negative app port", func(t *testing.T) {
+		s := base
+		s.AppPort = -1
+		assert.ErrorIs(t, s.Validate(), ErrInvalidAppPort)
+	})
+
+	t.Run("out of range app port", func(t *testing.T) {
+		s := base
+		s.AppPort = 65536
+		assert.ErrorIs(t, s.Validate(), ErrInvalidAppPort)
+	})
+
+	t.Run("relative volume path", func(t *testing.T) {
+		s := base
+		s.VolumePaths = []string{"data"}
+		assert.ErrorIs(t, s.Validate(), ErrInvalidVolumePath)
+	})
+
+	t.Run("absolute volume paths", func(t *testing.T) {
+		s := base
+		s.VolumePaths = []string{"/data", "/config"}
+		assert.NoError(t, s.Validate())
+	})
+}
+
+func TestAdvancedSettingsEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{
+		Name:            "app",
+		HealthCheckPath: "/healthz",
+		AppPort:         5006,
+		VolumePaths:     []string{"/data"},
+		SkipRailsEnv:    true,
+	}
+
+	assert.True(t, base.Equal(base))
+
+	healthCheck := base
+	healthCheck.HealthCheckPath = HealthCheckPath
+	assert.False(t, base.Equal(healthCheck))
+
+	appPort := base
+	appPort.AppPort = DefaultAppPort
+	assert.False(t, base.Equal(appPort))
+
+	volumePaths := base
+	volumePaths.VolumePaths = []string{"/data", "/config"}
+	assert.False(t, base.Equal(volumePaths))
+
+	skipRailsEnv := base
+	skipRailsEnv.SkipRailsEnv = false
+	assert.False(t, base.Equal(skipRailsEnv))
+}
+
+func TestAdvancedSettingsMarshalRoundTrip(t *testing.T) {
+	original := ApplicationSettings{
+		Name:            "app",
+		Image:           "img:latest",
+		HealthCheckPath: "/healthz",
+		AppPort:         5006,
+		VolumePaths:     []string{"/data"},
+		SkipRailsEnv:    true,
+	}
+
+	restored, err := UnmarshalApplicationSettings(original.Marshal())
+	require.NoError(t, err)
+
+	assert.Equal(t, "/healthz", restored.HealthCheckPath)
+	assert.Equal(t, 5006, restored.AppPort)
+	assert.Equal(t, []string{"/data"}, restored.VolumePaths)
+	assert.True(t, restored.SkipRailsEnv)
+	assert.True(t, original.Equal(restored))
+}

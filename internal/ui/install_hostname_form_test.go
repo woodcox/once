@@ -26,7 +26,8 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 func TestInstallHostnameForm_Cancel(t *testing.T) {
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
-	// Tab to submit, tab to cancel
+	// Tab past submit and the advanced settings action to reach cancel
+	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	form, cmd := form.Update(keyPressMsg("enter"))
@@ -35,6 +36,22 @@ func TestInstallHostnameForm_Cancel(t *testing.T) {
 	msg := cmd()
 	_, ok := msg.(InstallHostnameBackMsg)
 	assert.True(t, ok, "expected InstallHostnameBackMsg, got %T", msg)
+}
+
+func TestInstallHostnameForm_AdvancedSettings(t *testing.T) {
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
+	hostnameFormTypeText(&form, "app.example.com")
+
+	hostnameFormPressTab(&form)
+	hostnameFormPressTab(&form)
+	form, cmd := form.Update(keyPressMsg("enter"))
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	advanced, ok := msg.(InstallAdvancedMsg)
+	require.True(t, ok, "expected InstallAdvancedMsg, got %T", msg)
+	assert.Equal(t, "ghcr.io/basecamp/once-campfire:latest", advanced.ImageRef)
+	assert.Equal(t, "app.example.com", advanced.Hostname)
 }
 
 func TestInstallHostnameForm_RequiresHostname(t *testing.T) {

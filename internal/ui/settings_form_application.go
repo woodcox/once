@@ -1,6 +1,10 @@
 package ui
 
 import (
+	"slices"
+	"strconv"
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/basecamp/once/internal/docker"
@@ -10,6 +14,10 @@ const (
 	appImageField = iota
 	appHostnameField
 	appTLSField
+	appHealthCheckPathField
+	appAppPortField
+	appVolumePathsField
+	appSkipRailsEnvField
 )
 
 type SettingsFormApplication struct {
@@ -31,12 +39,32 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 		return false, ""
 	})
 
+	healthCheckField := NewTextField(docker.HealthCheckPath)
+	healthCheckField.SetValue(settings.HealthCheckPath)
+
+	appPortField := NewTextField(strconv.Itoa(docker.DefaultAppPort))
+	appPortField.SetDigitsOnly(true)
+	if settings.AppPort != 0 {
+		appPortField.SetValue(strconv.Itoa(settings.AppPort))
+	}
+
+	volumePathsField := NewTextField(strings.Join(docker.AppVolumeMountTargets, ", "))
+	if len(settings.VolumePaths) > 0 {
+		volumePathsField.SetValue(settings.VolumePathsString())
+	}
+
+	skipRailsEnvField := NewCheckboxField("Skip Rails environment variables", settings.SkipRailsEnv)
+
 	m := SettingsFormApplication{
 		title: "Application",
 		form: NewForm("Done",
 			FormItem{Label: "Image", Field: imageField, Required: true},
 			FormItem{Label: "Hostname", Field: hostnameField, Required: true},
 			FormItem{Label: "TLS", Field: tlsField},
+			FormItem{Label: "Health check path", Field: healthCheckField},
+			FormItem{Label: "App port", Field: appPortField},
+			FormItem{Label: "Volume paths", Field: volumePathsField},
+			FormItem{Label: "Rails environment", Field: skipRailsEnvField},
 		),
 	}
 
@@ -45,6 +73,21 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 		s.Image = f.TextField(appImageField).Value()
 		s.Host = f.TextField(appHostnameField).Value()
 		s.DisableTLS = !f.CheckboxField(appTLSField).Checked()
+
+		s.HealthCheckPath = f.TextField(appHealthCheckPathField).Value()
+		if s.HealthCheckPath == docker.HealthCheckPath {
+			s.HealthCheckPath = ""
+		}
+
+		s.AppPort, _ = strconv.Atoi(f.TextField(appAppPortField).Value())
+
+		s.VolumePaths = docker.ParseVolumePaths(f.TextField(appVolumePathsField).Value())
+		if slices.Equal(s.VolumePaths, docker.AppVolumeMountTargets) {
+			s.VolumePaths = nil
+		}
+
+		s.SkipRailsEnv = f.CheckboxField(appSkipRailsEnvField).Checked()
+
 		return func() tea.Msg { return SettingsSectionSubmitMsg{Settings: s} }
 	})
 	m.form.OnCancel(func(f *Form) tea.Cmd {

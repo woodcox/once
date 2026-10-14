@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -95,17 +97,21 @@ type BackupSettings struct {
 }
 
 type ApplicationSettings struct {
-	Name       string             `json:"name"`
-	Image      string             `json:"image"`
-	Host       string             `json:"host"`
-	DisableTLS bool               `json:"disableTLS"`
-	EnvVars    map[string]string  `json:"env"`
-	SMTP       SMTPSettings       `json:"smtp"`
-	Resources  ContainerResources `json:"resources"`
-	AutoUpdate bool               `json:"autoUpdate"`
-	Backup     BackupSettings     `json:"backup"`
-	Keys       Keys               `json:"keys"`
-	Registry   RegistrySettings   `json:"registry"`
+	Name            string             `json:"name"`
+	Image           string             `json:"image"`
+	Host            string             `json:"host"`
+	DisableTLS      bool               `json:"disableTLS"`
+	HealthCheckPath string             `json:"healthCheckPath,omitempty"`
+	AppPort         int                `json:"appPort,omitempty"`
+	VolumePaths     []string           `json:"volumePaths,omitempty"`
+	SkipRailsEnv    bool               `json:"skipRailsEnv,omitempty"`
+	EnvVars         map[string]string  `json:"env"`
+	SMTP            SMTPSettings       `json:"smtp"`
+	Resources       ContainerResources `json:"resources"`
+	AutoUpdate      bool               `json:"autoUpdate"`
+	Backup          BackupSettings     `json:"backup"`
+	Keys            Keys               `json:"keys"`
+	Registry        RegistrySettings   `json:"registry"`
 }
 
 func UnmarshalApplicationSettings(s string) (ApplicationSettings, error) {
@@ -123,6 +129,14 @@ func (s ApplicationSettings) Validate() error {
 	if s.Image == "" {
 		return ErrImageRequired
 	}
+	if s.AppPort < 0 || s.AppPort > 65535 {
+		return ErrInvalidAppPort
+	}
+	for _, path := range s.VolumePaths {
+		if !strings.HasPrefix(path, "/") {
+			return ErrInvalidVolumePath
+		}
+	}
 	if s.Backup.AutoBackup && s.Backup.Path == "" {
 		return ErrAutoBackupWithoutPath
 	}
@@ -139,8 +153,55 @@ func (s ApplicationSettings) TLSEnabled() bool {
 	return s.Host != "" && !s.DisableTLS && !IsLocalhost(s.Host)
 }
 
+// EffectiveHealthCheckPath returns the path used to verify the application is
+// serving, falling back to the conventional health check path.
+func (s ApplicationSettings) EffectiveHealthCheckPath() string {
+	if s.HealthCheckPath != "" {
+		return s.HealthCheckPath
+	}
+	return HealthCheckPath
+}
+
+// EffectiveAppPort returns the port the application listens on inside its
+// container, falling back to the conventional application port.
+func (s ApplicationSettings) EffectiveAppPort() int {
+	if s.AppPort != 0 {
+		return s.AppPort
+	}
+	return DefaultAppPort
+}
+
+// DeployTarget returns the value to register with kamal-proxy for the given
+// container: the container id alone when the app uses the default port, or a
+// container id and port pair otherwise.
+func (s ApplicationSettings) DeployTarget(containerID string) string {
+	if s.AppPort != 0 {
+		return containerID + ":" + strconv.Itoa(s.AppPort)
+	}
+	return containerID
+}
+
+// EffectiveVolumePaths returns the in-container paths where the application's
+// data volume is mounted.
+func (s ApplicationSettings) EffectiveVolumePaths() []string {
+	if len(s.VolumePaths) > 0 {
+		return s.VolumePaths
+	}
+	return AppVolumeMountTargets
+}
+
+func (s ApplicationSettings) VolumePathsString() string {
+	return strings.Join(s.EffectiveVolumePaths(), ", ")
+}
+
 func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	if s.Name != other.Name || s.Image != other.Image || s.Host != other.Host || s.DisableTLS != other.DisableTLS {
+		return false
+	}
+	if s.HealthCheckPath != other.HealthCheckPath || s.AppPort != other.AppPort || s.SkipRailsEnv != other.SkipRailsEnv {
+		return false
+	}
+	if !slices.Equal(s.VolumePaths, other.VolumePaths) {
 		return false
 	}
 	if s.Resources != other.Resources {
@@ -173,6 +234,17 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 }
 
 // Helpers
+
+func ParseVolumePaths(s string) []string {
+	var paths []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
 
 func generateSecretKeyBase() (string, error) {
 	bytes := make([]byte, 32)

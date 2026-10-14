@@ -254,3 +254,75 @@ func TestBuildEnvExcludesRegistryCredentials(t *testing.T) {
 		assert.NotContains(t, e, "registry-pass")
 	}
 }
+
+func TestVerifyHTTP_UsesCustomHealthCheckPath(t *testing.T) {
+	var requestPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	app := &Application{
+		Settings: ApplicationSettings{
+			Host:            server.Listener.Addr().String(),
+			DisableTLS:      true,
+			HealthCheckPath: "/healthz",
+		},
+	}
+
+	require.NoError(t, app.verifyHTTP(context.Background()))
+	assert.Equal(t, "/healthz", requestPath)
+}
+
+func TestBuildEnvSkipsRailsEnv(t *testing.T) {
+	settings := ApplicationSettings{
+		Keys: Keys{
+			SecretKeyBase:   "test-secret-key",
+			VAPIDPublicKey:  "test-vapid-public",
+			VAPIDPrivateKey: "test-vapid-private",
+		},
+		SkipRailsEnv: true,
+	}
+
+	env := (&Application{Settings: settings}).BuildEnv()
+
+	for _, e := range env {
+		assert.NotContains(t, e, "SECRET_KEY_BASE=")
+		assert.NotContains(t, e, "VAPID_PUBLIC_KEY=")
+		assert.NotContains(t, e, "VAPID_PRIVATE_KEY=")
+		assert.NotContains(t, e, "DISABLE_SSL=")
+	}
+}
+
+func TestBuildEnvIncludesRailsEnvByDefault(t *testing.T) {
+	settings := ApplicationSettings{Keys: Keys{SecretKeyBase: "test-secret-key"}}
+
+	env := (&Application{Settings: settings}).BuildEnv()
+
+	assert.Contains(t, env, "SECRET_KEY_BASE=test-secret-key")
+}
+
+func TestVolumeMountsUseConfiguredPaths(t *testing.T) {
+	vol := &ApplicationVolume{name: "once-app-myapp"}
+
+	t.Run("defaults", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{Name: "myapp"}}
+		mounts := app.volumeMounts(vol)
+
+		targets := make([]string, 0, len(mounts))
+		for _, m := range mounts {
+			targets = append(targets, m.Target)
+		}
+		assert.Equal(t, AppVolumeMountTargets, targets)
+	})
+
+	t.Run("custom paths", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{Name: "myapp", VolumePaths: []string{"/data"}}}
+		mounts := app.volumeMounts(vol)
+
+		require.Len(t, mounts, 1)
+		assert.Equal(t, "/data", mounts[0].Target)
+		assert.Equal(t, "once-app-myapp", mounts[0].Source)
+	})
+}

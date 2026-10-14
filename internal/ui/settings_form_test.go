@@ -38,32 +38,31 @@ func TestSettingsFormApplication_InitialState_Localhost(t *testing.T) {
 
 func TestSettingsFormApplication_TabNavigation(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
-	assert.Equal(t, 0, form.form.Focused())
+	assert.Equal(t, appImageField, form.form.Focused())
+
+	for i := appHostnameField; i < form.form.ItemCount(); i++ {
+		applicationPressTab(&form)
+		assert.Equal(t, i, form.form.Focused())
+	}
 
 	applicationPressTab(&form)
-	assert.Equal(t, 1, form.form.Focused(), "hostname")
+	assert.Equal(t, form.form.ItemCount(), form.form.Focused(), "done button")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 2, form.form.Focused(), "tls")
+	assert.Equal(t, form.form.ItemCount()+1, form.form.Focused(), "cancel button")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 3, form.form.Focused(), "done button")
-
-	applicationPressTab(&form)
-	assert.Equal(t, 4, form.form.Focused(), "cancel button")
-
-	applicationPressTab(&form)
-	assert.Equal(t, 0, form.form.Focused(), "wraps to image")
+	assert.Equal(t, appImageField, form.form.Focused(), "wraps to image")
 }
 
 func TestSettingsFormApplication_ShiftTabNavigation(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 4, form.form.Focused(), "cancel button")
+	assert.Equal(t, form.form.ItemCount()+1, form.form.Focused(), "cancel button")
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 3, form.form.Focused(), "done button")
+	assert.Equal(t, form.form.ItemCount(), form.form.Focused(), "done button")
 }
 
 func TestSettingsFormApplication_SpaceTogglesTLS(t *testing.T) {
@@ -111,9 +110,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 		Host:  "app.example.com",
 	})
 
-	for range 3 {
-		applicationPressTab(&form)
-	}
+	applicationTabToSubmit(&form)
 
 	var cmd tea.Cmd
 	result, cmd := form.Update(keyPressMsg("enter"))
@@ -131,9 +128,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 func TestSettingsFormApplication_Cancel(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
-	for range 4 {
-		applicationPressTab(&form)
-	}
+	applicationTabToCancel(&form)
 
 	result, cmd := form.Update(keyPressMsg("enter"))
 	form = result.(SettingsFormApplication)
@@ -483,6 +478,18 @@ func applicationPressShiftTab(form *SettingsFormApplication) {
 
 func applicationPressSpace(form *SettingsFormApplication) {
 	updateSettingsForm(form, keyPressMsg(" "))
+}
+
+func applicationTabToSubmit(form *SettingsFormApplication) {
+	for form.form.Focused() != form.form.ItemCount() {
+		applicationPressTab(form)
+	}
+}
+
+func applicationTabToCancel(form *SettingsFormApplication) {
+	for form.form.Focused() != form.form.ItemCount()+1 {
+		applicationPressTab(form)
+	}
 }
 
 func emailPressTab(form *SettingsFormEmail) {

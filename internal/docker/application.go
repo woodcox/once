@@ -28,6 +28,8 @@ var (
 	ErrBackupPathRelative    = errors.New("backup path must be absolute")
 	ErrBackupFileExists      = errors.New("backup file already exists")
 	ErrAutoBackupWithoutPath = errors.New("auto-backup requires a backup path")
+	ErrInvalidAppPort        = errors.New("app port must be between 1 and 65535")
+	ErrInvalidVolumePath     = errors.New("volume paths must be absolute")
 	ErrSetupFailed           = errors.New("setup failed")
 	ErrPullFailed            = &describedError{
 		msg:         "pull failed",
@@ -50,11 +52,13 @@ var (
 const (
 	AutomaticTaskInterval = 24 * time.Hour
 	HealthCheckPath       = "/up"
+	DefaultAppPort        = 80
 	httpVerifyTimeout     = 30 * time.Second
 )
 
-// AppVolumeMountTargets defines the paths where the app data volume is mounted
-// inside the container. The first entry is the primary path used for backups.
+// AppVolumeMountTargets defines the default paths where the app data volume is
+// mounted inside the container. The first entry is the primary path used for
+// backups. Applications can override these via their volume path settings.
 var AppVolumeMountTargets = []string{"/storage", "/rails/storage"}
 
 type Application struct {
@@ -380,7 +384,7 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 
 	if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
 		AppName: a.Settings.Name,
-		Target:  shortContainerID,
+		Target:  a.Settings.DeployTarget(shortContainerID),
 		Host:    a.Settings.Host,
 		TLS:     a.Settings.TLSEnabled(),
 	}); err != nil {
@@ -424,7 +428,7 @@ func (a *Application) verifyHTTP(ctx context.Context) error {
 	}
 
 	client := &http.Client{Timeout: httpVerifyTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+HealthCheckPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+a.Settings.EffectiveHealthCheckPath(), nil)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
@@ -465,7 +469,7 @@ func (a *Application) removeContainersExcept(ctx context.Context, keep string) e
 
 func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 	var mounts []mount.Mount
-	for _, target := range AppVolumeMountTargets {
+	for _, target := range a.Settings.EffectiveVolumePaths() {
 		mounts = append(mounts, mount.Mount{
 			Type:   mount.TypeVolume,
 			Source: vol.Name(),
@@ -478,14 +482,18 @@ func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 func (a *Application) BuildEnv() []string {
 	s := a.Settings
 
-	env := []string{
-		"SECRET_KEY_BASE=" + s.Keys.SecretKeyBase,
-		"VAPID_PUBLIC_KEY=" + s.Keys.VAPIDPublicKey,
-		"VAPID_PRIVATE_KEY=" + s.Keys.VAPIDPrivateKey,
-	}
+	var env []string
 
-	if !s.TLSEnabled() {
-		env = append(env, "DISABLE_SSL=true")
+	if !s.SkipRailsEnv {
+		env = append(env,
+			"SECRET_KEY_BASE="+s.Keys.SecretKeyBase,
+			"VAPID_PUBLIC_KEY="+s.Keys.VAPIDPublicKey,
+			"VAPID_PRIVATE_KEY="+s.Keys.VAPIDPrivateKey,
+		)
+
+		if !s.TLSEnabled() {
+			env = append(env, "DISABLE_SSL=true")
+		}
 	}
 
 	if s.Resources.CPUs > 0 {

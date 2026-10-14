@@ -222,13 +222,14 @@ func (a *Application) copyVolumeData(ctx context.Context, containerName string, 
 		}()
 	}
 
-	res, err := a.namespace.client.CopyFromContainer(ctx, containerName, client.CopyFromContainerOptions{SourcePath: AppVolumeMountTargets[0]})
+	volumePaths := a.Settings.EffectiveVolumePaths()
+	res, err := a.namespace.client.CopyFromContainer(ctx, containerName, client.CopyFromContainerOptions{SourcePath: volumePaths[0]})
 	if err != nil {
 		return fmt.Errorf("copying from container: %w", err)
 	}
 	defer res.Content.Close()
 
-	if err := copyTarEntriesWithPrefix(res.Content, tw, filepath.Base(AppVolumeMountTargets[0]), BackupDataDir); err != nil {
+	if err := copyTarEntriesWithPrefix(res.Content, tw, filepath.Base(volumePaths[0]), BackupDataDir); err != nil {
 		return fmt.Errorf("copying volume contents: %w", err)
 	}
 

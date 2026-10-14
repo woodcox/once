@@ -451,6 +451,37 @@ func TestBlockWidthEmpty(t *testing.T) {
 	assert.Equal(t, 0, blockWidth(nil))
 }
 
+func TestInstall_AdvancedSettingsFlow(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	assert.Equal(t, installStateHostname, m.state)
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "app.example.com"})
+	assert.Equal(t, installStateAdvanced, m.state)
+
+	m, _ = updateInstall(m, SettingsSectionCancelMsg{})
+	assert.Equal(t, installStateHostname, m.state)
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "app.example.com"})
+	m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: docker.ApplicationSettings{AppPort: 5006, HealthCheckPath: "/healthz"}})
+
+	require.Equal(t, installStateActivity, m.state)
+	require.NotNil(t, m.activity)
+	assert.Equal(t, 5006, m.activity.settings.AppPort)
+	assert.Equal(t, "/healthz", m.activity.settings.HealthCheckPath)
+}
+
+func TestInstall_AdvancedMsgRequiresHostname(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: ""})
+
+	assert.Equal(t, installStateHostname, m.state)
+	assert.ErrorIs(t, m.err, docker.ErrHostRequired)
+}
+
 // Helpers
 
 func newTestInstall() Install {
