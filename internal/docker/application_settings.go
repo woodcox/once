@@ -133,7 +133,7 @@ type ApplicationSettings struct {
 	AppPort         int                `json:"appPort,omitempty"`
 	VolumePaths     []string           `json:"volumePaths,omitempty"`
 	SkipRailsEnv    bool               `json:"skipRailsEnv,omitempty"`
-	Tailscale       TailscaleSettings  `json:"tailscale,omitempty"`
+	Tailscale       TailscaleSettings  `json:"tailscale"`
 	EnvVars         map[string]string  `json:"env"`
 	SMTP            SMTPSettings       `json:"smtp"`
 	Resources       ContainerResources `json:"resources"`
@@ -364,7 +364,7 @@ func SanitizeDNSLabel(s string) string {
 
 func ParseVolumePaths(s string) []string {
 	var paths []string
-	for _, p := range strings.Split(s, ",") {
+	for p := range strings.SplitSeq(s, ",") {
 		p = strings.TrimSpace(p)
 		if p != "" {
 			paths = append(paths, p)

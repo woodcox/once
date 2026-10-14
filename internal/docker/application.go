@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -543,9 +544,7 @@ func (a *Application) containerConfig(env []string) *container.Config {
 
 	// Every deploy recreates the container, so docktail labels can simply be
 	// merged in here.
-	for k, v := range a.Settings.DocktailLabels() {
-		labels[k] = v
-	}
+	maps.Copy(labels, a.Settings.DocktailLabels())
 
 	return &container.Config{
 		Image:  a.Settings.Image,
