@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 
@@ -62,6 +63,10 @@ func (u *updateCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 
 	oldSettings := app.Settings
 	app.Settings = settings
+
+	for _, warning := range app.DocktailWarnings(ctx) {
+		slog.Warn("Docktail prerequisite", "app", app.Settings.Name, "warning", warning)
+	}
 
 	return runWithProgress("Updating "+currentHost, func(progress docker.DeployProgressCallback) error {
 		if err := app.Deploy(ctx, progress); err != nil {

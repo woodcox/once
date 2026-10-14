@@ -38,6 +38,10 @@ type InstallActivityFailedMsg struct {
 	Err error
 }
 
+type installWarningMsg struct {
+	warnings []string
+}
+
 type InstallActivity struct {
 	namespace     *docker.Namespace
 	imageRef      string
@@ -48,7 +52,9 @@ type InstallActivity struct {
 	stage         installStage
 	percentage    int
 	progress      Progress
+	warnings      []string
 	progressChan  chan installProgressMsg
+	warningChan   chan installWarningMsg
 	doneChan      chan installDoneMsg
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -65,6 +71,7 @@ func NewInstallActivity(ns *docker.Namespace, imageRef, hostname string, registr
 		stage:        stagePreparing,
 		progress:     NewProgress(0, Colors.Primary),
 		progressChan: make(chan installProgressMsg, 10),
+		warningChan:  make(chan installWarningMsg, 10),
 		doneChan:     make(chan installDoneMsg, 1),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -90,6 +97,10 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 		default:
 			m.progress = m.progress.SetPercent(-1)
 		}
+		return m.waitForProgress()
+
+	case installWarningMsg:
+		m.warnings = append(m.warnings, msg.warnings...)
 		return m.waitForProgress()
 
 	case installDoneMsg:
@@ -124,7 +135,16 @@ func (m *InstallActivity) View() string {
 
 	progressView := Styles.CenteredLine(m.width, m.progress.View())
 
-	return lipgloss.JoinVertical(lipgloss.Left, statusLine, progressView)
+	parts := []string{statusLine, progressView}
+
+	// Prerequisite problems reported by docktail mode are advisory: the
+	// install carries on, but the user should know.
+	warningStyle := lipgloss.NewStyle().Foreground(Colors.Warning)
+	for _, warning := range m.warnings {
+		parts = append(parts, Styles.CenteredLine(m.width, warningStyle.Render(warning)))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m *InstallActivity) Cancel() {
@@ -149,6 +169,8 @@ func (m *InstallActivity) waitForProgress() tea.Cmd {
 			if ok {
 				return progress
 			}
+		case warning := <-m.warningChan:
+			return warning
 		case done := <-m.doneChan:
 			return done
 		}
@@ -187,6 +209,11 @@ func (m *InstallActivity) runInstall(ctx context.Context) {
 	settings.Registry = m.registry
 
 	app := docker.NewApplication(m.namespace, settings)
+
+	for _, warning := range app.DocktailWarnings(ctx) {
+		slog.Warn("Docktail prerequisite", "app", appName, "warning", warning)
+		m.warningChan <- installWarningMsg{warnings: []string{warning}}
+	}
 
 	progress := func(p docker.DeployProgress) {
 		switch p.Stage {

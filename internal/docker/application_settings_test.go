@@ -431,3 +431,209 @@ func TestAdvancedSettingsMarshalRoundTrip(t *testing.T) {
 	assert.True(t, restored.SkipRailsEnv)
 	assert.True(t, original.Equal(restored))
 }
+
+func TestSanitizeDNSLabel(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"budget", "budget"},
+		{"example-app", "example-app"},
+		{"My App", "my-app"},
+		{"  Budget  ", "budget"},
+		{"app_name.v2", "app-name-v2"},
+		{"a///b", "a-b"},
+		{"---leading", "leading"},
+		{"trailing---", "trailing"},
+		{"", ""},
+		{"///", ""},
+		{"Ünïcodé", "n-cod"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			assert.Equal(t, tt.want, SanitizeDNSLabel(tt.in))
+		})
+	}
+}
+
+func TestDocktailEnabled(t *testing.T) {
+	assert.False(t, ApplicationSettings{}.DocktailEnabled())
+	assert.False(t, ApplicationSettings{Tailscale: TailscaleSettings{Enabled: true}}.DocktailEnabled())
+	assert.False(t, ApplicationSettings{Tailscale: TailscaleSettings{Mode: DocktailMode}}.DocktailEnabled())
+	assert.True(t, ApplicationSettings{Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}.DocktailEnabled())
+}
+
+func TestEffectiveServiceName(t *testing.T) {
+	assert.Equal(t, "my-app", ApplicationSettings{Name: "My App"}.EffectiveServiceName())
+	assert.Equal(t, "example", ApplicationSettings{Name: "my-app", Tailscale: TailscaleSettings{Service: "Example"}}.EffectiveServiceName())
+}
+
+func TestEffectiveTailscalePort(t *testing.T) {
+	assert.Equal(t, DefaultAppPort, ApplicationSettings{}.EffectiveTailscalePort())
+	assert.Equal(t, 5006, ApplicationSettings{AppPort: 5006}.EffectiveTailscalePort())
+	assert.Equal(t, 8080, ApplicationSettings{AppPort: 5006, Tailscale: TailscaleSettings{Port: 8080}}.EffectiveTailscalePort())
+}
+
+func TestDocktailLabels(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings ApplicationSettings
+		want     map[string]string
+	}{
+		{
+			name:     "disabled",
+			settings: ApplicationSettings{Name: "budget"},
+			want:     nil,
+		},
+		{
+			name:     "enabled with an empty mode",
+			settings: ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true}},
+			want:     nil,
+		},
+		{
+			name:     "unknown mode",
+			settings: ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: "funnel"}},
+			want:     nil,
+		},
+		{
+			name: "defaults derived from the application",
+			settings: ApplicationSettings{
+				Name:      "budget",
+				AppPort:   5006,
+				Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode},
+			},
+			want: map[string]string{
+				"docktail.service.enable": "true",
+				"docktail.service.name":   "budget",
+				"docktail.service.port":   "5006",
+			},
+		},
+		{
+			name: "every override",
+			settings: ApplicationSettings{
+				Name:    "budget",
+				AppPort: 5006,
+				Tailscale: TailscaleSettings{
+					Enabled:     true,
+					Mode:        DocktailMode,
+					Service:     "Example App",
+					Port:        3000,
+					ServicePort: 8443,
+					Path:        "/budget",
+					Tags:        "tag:server,tag:app",
+				},
+			},
+			want: map[string]string{
+				"docktail.service.enable":       "true",
+				"docktail.service.name":         "example-app",
+				"docktail.service.port":         "3000",
+				"docktail.service.service-port": "8443",
+				"docktail.service.path":         "/budget",
+				"docktail.tags":                 "tag:server,tag:app",
+			},
+		},
+		{
+			name: "conventional optional values are omitted",
+			settings: ApplicationSettings{
+				Name:      "budget",
+				Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 80, Path: "/"},
+			},
+			want: map[string]string{
+				"docktail.service.enable": "true",
+				"docktail.service.name":   "budget",
+				"docktail.service.port":   "80",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.settings.DocktailLabels())
+		})
+	}
+}
+
+func TestDocktailLabelsMarshalRoundTrip(t *testing.T) {
+	original := ApplicationSettings{
+		Name:      "budget",
+		Image:     "example/app:latest",
+		AppPort:   5006,
+		Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, Service: "budget", Tags: "tag:app"},
+	}
+
+	restored, err := UnmarshalApplicationSettings(original.Marshal())
+	require.NoError(t, err)
+
+	assert.Equal(t, original.Tailscale, restored.Tailscale)
+	assert.Equal(t, original.DocktailLabels(), restored.DocktailLabels())
+	assert.True(t, original.Equal(restored))
+}
+
+func TestTailscaleSettingsEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+
+	disabled := base
+	disabled.Tailscale.Enabled = false
+	assert.False(t, base.Equal(disabled))
+
+	renamed := base
+	renamed.Tailscale.Service = "other"
+	assert.False(t, base.Equal(renamed))
+
+	assert.True(t, base.Equal(base))
+}
+
+func TestValidateTailscale(t *testing.T) {
+	base := ApplicationSettings{Name: "budget", Image: "img:latest"}
+
+	t.Run("disabled", func(t *testing.T) {
+		assert.NoError(t, base.ValidateTailscale())
+	})
+
+	t.Run("enabled with a mode", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode}
+		assert.NoError(t, s.ValidateTailscale())
+	})
+
+	t.Run("enabled without a mode", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailMode)
+	})
+
+	t.Run("unsupported mode", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: "tsnet"}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailMode)
+	})
+
+	t.Run("service name sanitizes to nothing", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Service: "///"}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrDocktailServiceRequired)
+	})
+
+	t.Run("app name sanitizes to nothing", func(t *testing.T) {
+		s := base
+		s.Name = "///"
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrDocktailServiceRequired)
+	})
+
+	t.Run("ports out of range", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Port: 70000}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailPort)
+
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: -1}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailPort)
+	})
+
+	t.Run("valid ports", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Port: 5006, ServicePort: 443}
+		assert.NoError(t, s.ValidateTailscale())
+	})
+}

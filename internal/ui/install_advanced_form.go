@@ -19,6 +19,13 @@ const (
 	advancedAppPortField
 	advancedVolumePathsField
 	advancedSkipRailsEnvField
+	advancedDocktailEnabledField
+	advancedDocktailModeField
+	advancedDocktailServiceField
+	advancedDocktailPortField
+	advancedDocktailServicePortField
+	advancedDocktailPathField
+	advancedDocktailTagsField
 	advancedEnvStart
 )
 
@@ -46,12 +53,44 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 	}
 
 	skipRailsEnvField := NewCheckboxField("Skip Rails environment variables", settings.SkipRailsEnv)
+	docktailEnabledField := NewCheckboxField("Publish as a Tailscale Service", settings.DocktailEnabled())
+
+	docktailModeField := NewTextField(docker.DocktailMode)
+	docktailModeField.SetValue(settings.Tailscale.Mode)
+
+	docktailServiceField := NewTextField("defaults to the app name")
+	docktailServiceField.SetValue(settings.Tailscale.Service)
+
+	docktailPortField := NewTextField("app port")
+	docktailPortField.SetDigitsOnly(true)
+	if settings.Tailscale.Port != 0 {
+		docktailPortField.SetValue(strconv.Itoa(settings.Tailscale.Port))
+	}
+
+	docktailServicePortField := NewTextField("443")
+	docktailServicePortField.SetDigitsOnly(true)
+	if settings.Tailscale.ServicePort != 0 {
+		docktailServicePortField.SetValue(strconv.Itoa(settings.Tailscale.ServicePort))
+	}
+
+	docktailPathField := NewTextField("/")
+	docktailPathField.SetValue(settings.Tailscale.Path)
+
+	docktailTagsField := NewTextField("tag:container")
+	docktailTagsField.SetValue(settings.Tailscale.Tags)
 
 	items := []FormItem{
 		{Label: "Health check path", Field: healthCheckField},
 		{Label: "App port", Field: appPortField},
 		{Label: "Volume paths", Field: volumePathsField},
 		{Label: "Rails environment", Field: skipRailsEnvField},
+		{Label: "Tailscale Service", Field: docktailEnabledField},
+		{Label: "Docktail mode", Field: docktailModeField},
+		{Label: "Service name", Field: docktailServiceField},
+		{Label: "Backend port", Field: docktailPortField},
+		{Label: "Service port", Field: docktailServicePortField},
+		{Label: "Service path", Field: docktailPathField},
+		{Label: "Service tags", Field: docktailTagsField},
 	}
 
 	keys := slices.Sorted(maps.Keys(settings.EnvVars))
@@ -88,6 +127,17 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 		}
 
 		s.SkipRailsEnv = f.CheckboxField(advancedSkipRailsEnvField).Checked()
+
+		s.Tailscale.Enabled = f.CheckboxField(advancedDocktailEnabledField).Checked()
+		s.Tailscale.Mode = f.TextField(advancedDocktailModeField).Value()
+		if s.Tailscale.Enabled && s.Tailscale.Mode == "" {
+			s.Tailscale.Mode = docker.DocktailMode
+		}
+		s.Tailscale.Service = f.TextField(advancedDocktailServiceField).Value()
+		s.Tailscale.Port, _ = strconv.Atoi(f.TextField(advancedDocktailPortField).Value())
+		s.Tailscale.ServicePort, _ = strconv.Atoi(f.TextField(advancedDocktailServicePortField).Value())
+		s.Tailscale.Path = f.TextField(advancedDocktailPathField).Value()
+		s.Tailscale.Tags = f.TextField(advancedDocktailTagsField).Value()
 
 		s.EnvVars = nil
 		for i := advancedEnvStart; i < f.ItemCount(); i += 2 {
@@ -150,8 +200,11 @@ func (m InstallAdvancedForm) setFieldWidths() {
 	keyWidth, valueWidth := m.columnWidths()
 	fieldWidth := max(keyWidth+valueWidth-3, 1)
 
-	for _, idx := range []int{advancedHealthCheckField, advancedAppPortField, advancedVolumePathsField} {
-		m.form.TextField(idx).SetWidth(fieldWidth)
+	for i := range advancedEnvStart {
+		if i == advancedSkipRailsEnvField || i == advancedDocktailEnabledField {
+			continue
+		}
+		m.form.TextField(i).SetWidth(fieldWidth)
 	}
 
 	for i := advancedEnvStart; i < m.form.ItemCount(); i++ {
@@ -194,34 +247,51 @@ func (m InstallAdvancedForm) maxVisibleRows() int {
 	if m.height <= 0 {
 		return m.envRowCount()
 	}
-	// Title (2) + four labeled fields (12) + env header (2) + buttons (3) + help (1)
-	available := m.height - 20
+	// Title (2) + fixed fields and checkboxes (30) + env header (2) +
+	// buttons (3) + help (1)
+	available := m.height - 38
 	rowHeight := 4 // bordered input (3) + gap (1)
 	return max(available/rowHeight, 1)
 }
 
 func (m InstallAdvancedForm) renderContent() string {
-	focused := m.form.Focused()
-
 	var parts []string
+
 	parts = append(parts, m.renderField(advancedHealthCheckField, "Health check path")...)
 	parts = append(parts, m.renderField(advancedAppPortField, "App port")...)
 	parts = append(parts, m.renderField(advancedVolumePathsField, "Volume paths")...)
-
-	checkboxStyle := Styles.Focus(Styles.Input, focused == advancedSkipRailsEnvField)
-	checkbox := mouse.Mark(fieldTarget(advancedSkipRailsEnvField), checkboxStyle.Render(m.form.CheckboxField(advancedSkipRailsEnvField).View()))
-	parts = append(parts, Styles.Label.Render("Rails environment"), checkbox, "")
+	parts = append(parts, m.renderCheckbox(advancedSkipRailsEnvField, "Rails environment")...)
 
 	parts = append(parts, m.renderEnvGrid()...)
+	parts = append(parts, m.renderDocktailSection()...)
 	parts = append(parts, m.renderButtons())
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func (m InstallAdvancedForm) renderDocktailSection() []string {
+	parts := []string{lipgloss.NewStyle().Bold(true).Render("Tailscale Service")}
+
+	parts = append(parts, m.renderCheckbox(advancedDocktailEnabledField, "Publish as a Tailscale Service")...)
+	parts = append(parts, m.renderField(advancedDocktailModeField, "Docktail mode")...)
+	parts = append(parts, m.renderField(advancedDocktailServiceField, "Service name")...)
+	parts = append(parts, m.renderField(advancedDocktailPortField, "Backend port")...)
+	parts = append(parts, m.renderField(advancedDocktailServicePortField, "Service port")...)
+	parts = append(parts, m.renderField(advancedDocktailPathField, "Service path")...)
+
+	return append(parts, m.renderField(advancedDocktailTagsField, "Service tags")...)
 }
 
 func (m InstallAdvancedForm) renderField(idx int, label string) []string {
 	inputStyle := Styles.Focus(Styles.Input, m.form.Focused() == idx)
 	field := mouse.Mark(fieldTarget(idx), inputStyle.Render(m.form.Field(idx).View()))
 	return []string{Styles.Label.Render(label), field, ""}
+}
+
+func (m InstallAdvancedForm) renderCheckbox(idx int, label string) []string {
+	checkboxStyle := Styles.Focus(Styles.Input, m.form.Focused() == idx)
+	checkbox := mouse.Mark(fieldTarget(idx), checkboxStyle.Render(m.form.CheckboxField(idx).View()))
+	return []string{Styles.Label.Render(label), checkbox, ""}
 }
 
 func (m InstallAdvancedForm) renderEnvGrid() []string {

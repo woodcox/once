@@ -326,3 +326,29 @@ func TestVolumeMountsUseConfiguredPaths(t *testing.T) {
 		assert.Equal(t, "once-app-myapp", mounts[0].Source)
 	})
 }
+
+func TestContainerConfigMergesDocktailLabels(t *testing.T) {
+	settings := ApplicationSettings{
+		Name:      "budget",
+		Image:     "example/app:latest",
+		AppPort:   5006,
+		Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode},
+	}
+
+	config := (&Application{Settings: settings}).containerConfig([]string{"FOO=bar"})
+
+	assert.Equal(t, settings.Marshal(), config.Labels[labelKey])
+	assert.Equal(t, "true", config.Labels[docktailLabelEnable])
+	assert.Equal(t, "budget", config.Labels[docktailLabelName])
+	assert.Equal(t, "5006", config.Labels[docktailLabelPort])
+	assert.Equal(t, []string{"FOO=bar"}, config.Env)
+}
+
+func TestContainerConfigWithoutDocktailLabels(t *testing.T) {
+	settings := ApplicationSettings{Name: "budget", Image: "img:latest"}
+
+	config := (&Application{Settings: settings}).containerConfig(nil)
+
+	assert.Equal(t, settings.Marshal(), config.Labels[labelKey])
+	assert.Len(t, config.Labels, 1)
+}

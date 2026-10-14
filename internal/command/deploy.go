@@ -61,6 +61,10 @@ func (d *deployCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 
 	app := docker.NewApplication(ns, settings)
 
+	for _, warning := range app.DocktailWarnings(ctx) {
+		slog.Warn("Docktail prerequisite", "app", name, "warning", warning)
+	}
+
 	return runWithProgress("Deploying "+host, func(progress docker.DeployProgressCallback) error {
 		if err := app.Deploy(ctx, progress); err != nil {
 			if cleanupErr := app.Destroy(context.Background(), true); cleanupErr != nil {

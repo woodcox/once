@@ -251,6 +251,10 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		if m.state != installStateAdvanced {
 			break
 		}
+		if err := msg.Settings.ValidateTailscale(); err != nil {
+			m.err = err
+			return m, nil
+		}
 		m.state = installStateActivity
 		m.activity = NewInstallActivity(m.namespace, m.pendingImage, m.pendingHost, m.registry, msg.Settings)
 		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})

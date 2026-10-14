@@ -96,6 +96,34 @@ type BackupSettings struct {
 	AutoBackup bool   `json:"autoBackup,omitempty"`
 }
 
+// DocktailMode is the only supported value for TailscaleSettings.Mode. An
+// empty mode means the feature is off.
+const DocktailMode = "docktail"
+
+// Docktail label keys, as understood by https://docktail.org.
+const (
+	docktailLabelEnable      = "docktail.service.enable"
+	docktailLabelName        = "docktail.service.name"
+	docktailLabelPort        = "docktail.service.port"
+	docktailLabelServicePort = "docktail.service.service-port"
+	docktailLabelPath        = "docktail.service.path"
+	docktailLabelTags        = "docktail.tags"
+)
+
+// TailscaleSettings configures exposure of an application as a native
+// Tailscale Service. Only docktail label mode is supported: ONCE sets
+// `docktail.*` labels on the app container and the host's docktail container
+// advertises it to tailscaled.
+type TailscaleSettings struct {
+	Enabled     bool   `json:"enabled,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	Service     string `json:"service,omitempty"`
+	Port        int    `json:"port,omitempty"`
+	ServicePort int    `json:"servicePort,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Tags        string `json:"tags,omitempty"`
+}
+
 type ApplicationSettings struct {
 	Name            string             `json:"name"`
 	Image           string             `json:"image"`
@@ -105,6 +133,7 @@ type ApplicationSettings struct {
 	AppPort         int                `json:"appPort,omitempty"`
 	VolumePaths     []string           `json:"volumePaths,omitempty"`
 	SkipRailsEnv    bool               `json:"skipRailsEnv,omitempty"`
+	Tailscale       TailscaleSettings  `json:"tailscale,omitempty"`
 	EnvVars         map[string]string  `json:"env"`
 	SMTP            SMTPSettings       `json:"smtp"`
 	Resources       ContainerResources `json:"resources"`
@@ -145,6 +174,28 @@ func (s ApplicationSettings) Validate() error {
 	}
 	if s.Registry.Username != "" && s.Registry.Password == "" {
 		return ErrRegistryUsernameWithoutPassword
+	}
+	return s.ValidateTailscale()
+}
+
+// ValidateTailscale checks the docktail settings on their own, so that they
+// can be validated before the rest of the application is known (during
+// install, for example, where the image and generated name aren't set yet).
+func (s ApplicationSettings) ValidateTailscale() error {
+	if s.Tailscale.Port < 0 || s.Tailscale.Port > 65535 {
+		return ErrInvalidDocktailPort
+	}
+	if s.Tailscale.ServicePort < 0 || s.Tailscale.ServicePort > 65535 {
+		return ErrInvalidDocktailPort
+	}
+	if !s.Tailscale.Enabled {
+		return nil
+	}
+	if s.Tailscale.Mode != DocktailMode {
+		return ErrInvalidDocktailMode
+	}
+	if s.EffectiveServiceName() == "" && (s.Tailscale.Service != "" || s.Name != "") {
+		return ErrDocktailServiceRequired
 	}
 	return nil
 }
@@ -194,6 +245,57 @@ func (s ApplicationSettings) VolumePathsString() string {
 	return strings.Join(s.EffectiveVolumePaths(), ", ")
 }
 
+// DocktailEnabled reports whether this app should be advertised as a native
+// Tailscale Service via docktail labels.
+func (s ApplicationSettings) DocktailEnabled() bool {
+	return s.Tailscale.Enabled && s.Tailscale.Mode == DocktailMode
+}
+
+// EffectiveServiceName returns the Tailscale Service name, defaulting to the
+// application name, reduced to a tailnet-legal DNS label.
+func (s ApplicationSettings) EffectiveServiceName() string {
+	if s.Tailscale.Service != "" {
+		return SanitizeDNSLabel(s.Tailscale.Service)
+	}
+	return SanitizeDNSLabel(s.Name)
+}
+
+// EffectiveTailscalePort returns the container port docktail should proxy to,
+// defaulting to the application's own port.
+func (s ApplicationSettings) EffectiveTailscalePort() int {
+	if s.Tailscale.Port != 0 {
+		return s.Tailscale.Port
+	}
+	return s.EffectiveAppPort()
+}
+
+// DocktailLabels returns the `docktail.*` labels to place on the app
+// container, or nil when docktail mode is off. Optional labels are omitted so
+// that docktail's own defaults apply.
+func (s ApplicationSettings) DocktailLabels() map[string]string {
+	if !s.DocktailEnabled() {
+		return nil
+	}
+
+	labels := map[string]string{
+		docktailLabelEnable: "true",
+		docktailLabelName:   s.EffectiveServiceName(),
+		docktailLabelPort:   strconv.Itoa(s.EffectiveTailscalePort()),
+	}
+
+	if s.Tailscale.ServicePort != 0 && s.Tailscale.ServicePort != 80 {
+		labels[docktailLabelServicePort] = strconv.Itoa(s.Tailscale.ServicePort)
+	}
+	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" {
+		labels[docktailLabelPath] = s.Tailscale.Path
+	}
+	if s.Tailscale.Tags != "" {
+		labels[docktailLabelTags] = s.Tailscale.Tags
+	}
+
+	return labels
+}
+
 func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	if s.Name != other.Name || s.Image != other.Image || s.Host != other.Host || s.DisableTLS != other.DisableTLS {
 		return false
@@ -202,6 +304,9 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 		return false
 	}
 	if !slices.Equal(s.VolumePaths, other.VolumePaths) {
+		return false
+	}
+	if s.Tailscale != other.Tailscale {
 		return false
 	}
 	if s.Resources != other.Resources {
@@ -234,6 +339,28 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 }
 
 // Helpers
+
+// SanitizeDNSLabel reduces an arbitrary string to a lowercase DNS label
+// suitable for use as a Tailscale Service name. Runs of invalid characters
+// collapse to a single hyphen, and leading/trailing hyphens are dropped.
+func SanitizeDNSLabel(s string) string {
+	var b strings.Builder
+	pendingHyphen := false
+
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if pendingHyphen && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			pendingHyphen = false
+			b.WriteRune(r)
+			continue
+		}
+		pendingHyphen = true
+	}
+
+	return b.String()
+}
 
 func ParseVolumePaths(s string) []string {
 	var paths []string

@@ -19,19 +19,22 @@ import (
 )
 
 var (
-	ErrApplicationExists     = errors.New("application already exists")
-	ErrHostnameInUse         = errors.New("hostname already in use")
-	ErrHostRequired          = errors.New("host is required")
-	ErrInvalidBackup         = errors.New("invalid backup archive")
-	ErrImageRequired         = errors.New("image is required")
-	ErrApplicationNotRunning = errors.New("the application is not running")
-	ErrBackupPathRelative    = errors.New("backup path must be absolute")
-	ErrBackupFileExists      = errors.New("backup file already exists")
-	ErrAutoBackupWithoutPath = errors.New("auto-backup requires a backup path")
-	ErrInvalidAppPort        = errors.New("app port must be between 1 and 65535")
-	ErrInvalidVolumePath     = errors.New("volume paths must be absolute")
-	ErrSetupFailed           = errors.New("setup failed")
-	ErrPullFailed            = &describedError{
+	ErrApplicationExists       = errors.New("application already exists")
+	ErrHostnameInUse           = errors.New("hostname already in use")
+	ErrHostRequired            = errors.New("host is required")
+	ErrInvalidBackup           = errors.New("invalid backup archive")
+	ErrImageRequired           = errors.New("image is required")
+	ErrApplicationNotRunning   = errors.New("the application is not running")
+	ErrBackupPathRelative      = errors.New("backup path must be absolute")
+	ErrBackupFileExists        = errors.New("backup file already exists")
+	ErrAutoBackupWithoutPath   = errors.New("auto-backup requires a backup path")
+	ErrInvalidAppPort          = errors.New("app port must be between 1 and 65535")
+	ErrInvalidVolumePath       = errors.New("volume paths must be absolute")
+	ErrInvalidDocktailPort     = errors.New("docktail ports must be between 1 and 65535")
+	ErrInvalidDocktailMode     = errors.New("unsupported docktail mode")
+	ErrDocktailServiceRequired = errors.New("a Tailscale service name is required when docktail mode is enabled")
+	ErrSetupFailed             = errors.New("setup failed")
+	ErrPullFailed              = &describedError{
 		msg:         "pull failed",
 		description: "Failed to download the application image. Check that the image name is correct and try again.",
 	}
@@ -47,6 +50,14 @@ var (
 	ErrUnpauseFailed                   = errors.New("failed to unpause container after backup")
 	ErrRegistryPasswordWithoutUsername = errors.New("registry password requires a username")
 	ErrRegistryUsernameWithoutPassword = errors.New("registry username requires a password")
+	ErrDocktailVerifyFailed            = &describedError{
+		msg:         "tailscale service not advertised",
+		description: "The application is running, but docktail hasn't advertised it as a Tailscale Service. Check that the docktail container is running, and that the service name matches the Service defined in your Tailscale admin console.",
+	}
+	ErrTailscaleCLIMissing = &describedError{
+		msg:         "tailscale CLI not found",
+		description: "Couldn't run the tailscale CLI to verify the Tailscale Service. Install Tailscale on this host, or turn docktail mode off for this application.",
+	}
 )
 
 const (
@@ -238,7 +249,7 @@ func (a *Application) UpdateSettings(ctx context.Context, settings ApplicationSe
 }
 
 func (a *Application) VerifyHTTPOrRemove(ctx context.Context) error {
-	if err := a.verifyHTTP(ctx); err != nil {
+	if err := a.verify(ctx); err != nil {
 		if cleanupErr := a.Remove(context.Background(), true); cleanupErr != nil {
 			slog.Error("Failed to clean up after verification failure", "app", a.Settings.Name, "error", cleanupErr)
 		}
@@ -383,10 +394,11 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	shortContainerID := resp.ID[:12]
 
 	if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
-		AppName: a.Settings.Name,
-		Target:  a.Settings.DeployTarget(shortContainerID),
-		Host:    a.Settings.Host,
-		TLS:     a.Settings.TLSEnabled(),
+		AppName:         a.Settings.Name,
+		Target:          a.Settings.DeployTarget(shortContainerID),
+		Host:            a.Settings.Host,
+		TLS:             a.Settings.TLSEnabled(),
+		HealthCheckPath: a.Settings.HealthCheckPath,
 	}); err != nil {
 		a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 		if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
@@ -419,6 +431,17 @@ func (a *Application) ensureKeys(vol *ApplicationVolume) error {
 
 	a.Settings.Keys = keys
 	return nil
+}
+
+// verify checks that the deployed application is actually reachable. Apps
+// exposed as Tailscale Services are verified against Tailscale rather than
+// over HTTP, since docktail advertises them on the tailnet directly.
+func (a *Application) verify(ctx context.Context) error {
+	if a.Settings.DocktailEnabled() {
+		return a.verifyDocktail(ctx)
+	}
+
+	return a.verifyHTTP(ctx)
 }
 
 func (a *Application) verifyHTTP(ctx context.Context) error {
@@ -514,11 +537,19 @@ func (a *Application) BuildEnv() []string {
 }
 
 func (a *Application) containerConfig(env []string) *container.Config {
+	labels := map[string]string{
+		labelKey: a.Settings.Marshal(),
+	}
+
+	// Every deploy recreates the container, so docktail labels can simply be
+	// merged in here.
+	for k, v := range a.Settings.DocktailLabels() {
+		labels[k] = v
+	}
+
 	return &container.Config{
-		Image: a.Settings.Image,
-		Labels: map[string]string{
-			labelKey: a.Settings.Marshal(),
-		},
-		Env: env,
+		Image:  a.Settings.Image,
+		Labels: labels,
+		Env:    env,
 	}
 }

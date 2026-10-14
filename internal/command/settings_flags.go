@@ -30,6 +30,13 @@ type settingsFlags struct {
 	volumePaths     []string
 	skipRailsEnv    bool
 
+	docktail            bool
+	docktailService     string
+	docktailPort        int
+	docktailServicePort int
+	docktailPath        string
+	docktailTags        string
+
 	registryUsername      string
 	registryPassword      string
 	registryPasswordStdin bool
@@ -53,6 +60,12 @@ func (f *settingsFlags) register(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&f.appPort, "app-port", 0, "port the application listens on inside its container")
 	cmd.Flags().StringSliceVar(&f.volumePaths, "volume-paths", nil, "paths where the application's data volume is mounted (comma-separated)")
 	cmd.Flags().BoolVar(&f.skipRailsEnv, "skip-rails-env", false, "skip injecting the Rails-specific environment variables")
+	cmd.Flags().BoolVar(&f.docktail, "docktail", false, "expose the application as a Tailscale Service via docktail")
+	cmd.Flags().StringVar(&f.docktailService, "docktail-service", "", "Tailscale Service name (defaults to the application name)")
+	cmd.Flags().IntVar(&f.docktailPort, "docktail-port", 0, "container port docktail should proxy to (defaults to the app port)")
+	cmd.Flags().IntVar(&f.docktailServicePort, "docktail-service-port", 0, "port Tailscale should listen on (defaults to 443)")
+	cmd.Flags().StringVar(&f.docktailPath, "docktail-path", "", "URL path to serve the application under (defaults to /)")
+	cmd.Flags().StringVar(&f.docktailTags, "docktail-tags", "", "comma-separated Tailscale Service tags")
 	cmd.Flags().StringVar(&f.registryUsername, "registry-username", "", "registry username for pulling the application image")
 	cmd.Flags().StringVar(&f.registryPassword, "registry-password", "", "registry password for pulling the application image")
 	cmd.Flags().BoolVar(&f.registryPasswordStdin, "registry-password-stdin", false, "read the registry password from stdin")
@@ -94,6 +107,18 @@ func (f *settingsFlags) buildSettings(cmd *cobra.Command, image, host string) (d
 		AppPort:         f.appPort,
 		VolumePaths:     f.volumePaths,
 		SkipRailsEnv:    f.skipRailsEnv,
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     f.docktail,
+			Service:     f.docktailService,
+			Port:        f.docktailPort,
+			ServicePort: f.docktailServicePort,
+			Path:        f.docktailPath,
+			Tags:        f.docktailTags,
+		},
+	}
+
+	if f.docktail {
+		s.Tailscale.Mode = docker.DocktailMode
 	}
 
 	if f.registryUsername != "" || f.registryPassword != "" || f.registryPasswordStdin {
@@ -181,6 +206,29 @@ func (f *settingsFlags) applyChanges(cmd *cobra.Command, existing docker.Applica
 	}
 	if cmd.Flags().Changed("skip-rails-env") {
 		s.SkipRailsEnv = f.skipRailsEnv
+	}
+	if cmd.Flags().Changed("docktail") {
+		s.Tailscale.Enabled = f.docktail
+		if f.docktail {
+			s.Tailscale.Mode = docker.DocktailMode
+		} else {
+			s.Tailscale.Mode = ""
+		}
+	}
+	if cmd.Flags().Changed("docktail-service") {
+		s.Tailscale.Service = f.docktailService
+	}
+	if cmd.Flags().Changed("docktail-port") {
+		s.Tailscale.Port = f.docktailPort
+	}
+	if cmd.Flags().Changed("docktail-service-port") {
+		s.Tailscale.ServicePort = f.docktailServicePort
+	}
+	if cmd.Flags().Changed("docktail-path") {
+		s.Tailscale.Path = f.docktailPath
+	}
+	if cmd.Flags().Changed("docktail-tags") {
+		s.Tailscale.Tags = f.docktailTags
 	}
 	usernameChanged := cmd.Flags().Changed("registry-username")
 	passwordChanged := cmd.Flags().Changed("registry-password") || cmd.Flags().Changed("registry-password-stdin")

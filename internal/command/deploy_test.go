@@ -140,3 +140,108 @@ func TestBuildSettingsRegistry(t *testing.T) {
 		assert.Error(t, cmd.ValidateFlagGroups())
 	})
 }
+
+func TestBuildSettingsAdvancedFlags(t *testing.T) {
+	cmd := &cobra.Command{}
+	f := &settingsFlags{}
+	f.register(cmd)
+
+	require.NoError(t, cmd.Flags().Set("health-check-path", "/healthz"))
+	require.NoError(t, cmd.Flags().Set("app-port", "5006"))
+	require.NoError(t, cmd.Flags().Set("volume-paths", "/data,/config"))
+	require.NoError(t, cmd.Flags().Set("skip-rails-env", "true"))
+
+	s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
+	require.NoError(t, err)
+
+	assert.Equal(t, "/healthz", s.HealthCheckPath)
+	assert.Equal(t, 5006, s.AppPort)
+	assert.Equal(t, []string{"/data", "/config"}, s.VolumePaths)
+	assert.True(t, s.SkipRailsEnv)
+}
+
+func TestBuildSettingsDocktailFlags(t *testing.T) {
+	cmd := &cobra.Command{}
+	f := &settingsFlags{}
+	f.register(cmd)
+
+	require.NoError(t, cmd.Flags().Set("docktail", "true"))
+	require.NoError(t, cmd.Flags().Set("docktail-service", "Budget"))
+	require.NoError(t, cmd.Flags().Set("docktail-port", "5006"))
+	require.NoError(t, cmd.Flags().Set("docktail-service-port", "443"))
+	require.NoError(t, cmd.Flags().Set("docktail-path", "/budget"))
+	require.NoError(t, cmd.Flags().Set("docktail-tags", "tag:server"))
+
+	s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
+	require.NoError(t, err)
+
+	assert.True(t, s.DocktailEnabled())
+	assert.Equal(t, docker.DocktailMode, s.Tailscale.Mode)
+	assert.Equal(t, "budget", s.EffectiveServiceName())
+	assert.Equal(t, 5006, s.EffectiveTailscalePort())
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":       "true",
+		"docktail.service.name":         "budget",
+		"docktail.service.port":         "5006",
+		"docktail.service.service-port": "443",
+		"docktail.service.path":         "/budget",
+		"docktail.tags":                 "tag:server",
+	}, s.DocktailLabels())
+}
+
+func TestApplyChangesDocktailFlags(t *testing.T) {
+	newCmd := func() (*cobra.Command, *settingsFlags) {
+		cmd := &cobra.Command{}
+		f := &settingsFlags{}
+		f.register(cmd)
+		return cmd, f
+	}
+
+	existing := docker.ApplicationSettings{
+		Name:      "budget",
+		Image:     "image:latest",
+		Tailscale: docker.TailscaleSettings{Enabled: true, Mode: docker.DocktailMode, Service: "budget"},
+	}
+
+	t.Run("untouched flags keep the stored settings", func(t *testing.T) {
+		cmd, f := newCmd()
+
+		s, err := f.applyChanges(cmd, existing, existing.Image)
+		require.NoError(t, err)
+
+		assert.Equal(t, existing.Tailscale, s.Tailscale)
+	})
+
+	t.Run("enabling sets the mode", func(t *testing.T) {
+		cmd, f := newCmd()
+		require.NoError(t, cmd.Flags().Set("docktail", "true"))
+
+		plain := docker.ApplicationSettings{Name: "budget", Image: "image:latest"}
+		s, err := f.applyChanges(cmd, plain, plain.Image)
+		require.NoError(t, err)
+
+		assert.True(t, s.DocktailEnabled())
+	})
+
+	t.Run("disabling clears the mode", func(t *testing.T) {
+		cmd, f := newCmd()
+		require.NoError(t, cmd.Flags().Set("docktail", "false"))
+
+		s, err := f.applyChanges(cmd, existing, existing.Image)
+		require.NoError(t, err)
+
+		assert.False(t, s.Tailscale.Enabled)
+		assert.Empty(t, s.Tailscale.Mode)
+	})
+
+	t.Run("service override", func(t *testing.T) {
+		cmd, f := newCmd()
+		require.NoError(t, cmd.Flags().Set("docktail-service", "Other"))
+
+		s, err := f.applyChanges(cmd, existing, existing.Image)
+		require.NoError(t, err)
+
+		assert.Equal(t, "Other", s.Tailscale.Service)
+		assert.True(t, s.DocktailEnabled(), "the stored mode is preserved")
+	})
+}

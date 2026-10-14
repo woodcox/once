@@ -138,6 +138,50 @@ func TestSettingsFormApplication_Cancel(t *testing.T) {
 	assert.True(t, ok, "expected SettingsSectionCancelMsg, got %T", msg)
 }
 
+func TestSettingsFormApplication_DocktailRoundTrip(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:    "budget",
+		Image:   "example/app:latest",
+		Host:    "budget.example.com",
+		AppPort: 5006,
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			Port:        3000,
+			ServicePort: 8443,
+			Path:        "/budget",
+			Tags:        "tag:server",
+		},
+	}
+
+	form := NewSettingsFormApplication(original)
+
+	assert.True(t, form.form.CheckboxField(appDocktailEnabledField).Checked())
+	assert.Equal(t, "budget", form.form.TextField(appDocktailServiceField).Value())
+	assert.Equal(t, "3000", form.form.TextField(appDocktailPortField).Value())
+	assert.Equal(t, "8443", form.form.TextField(appDocktailServicePortField).Value())
+	assert.Equal(t, "/budget", form.form.TextField(appDocktailPathField).Value())
+	assert.Equal(t, "tag:server", form.form.TextField(appDocktailTagsField).Value())
+
+	assert.True(t, original.Equal(applicationSubmit(t, &form)))
+}
+
+func TestSettingsFormApplication_EnablingDocktailDefaultsTheMode(t *testing.T) {
+	form := NewSettingsFormApplication(docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+	})
+
+	form.form.CheckboxField(appDocktailEnabledField).Toggle()
+
+	settings := applicationSubmit(t, &form)
+	assert.True(t, settings.DocktailEnabled())
+	assert.Equal(t, docker.DocktailMode, settings.Tailscale.Mode)
+	assert.Equal(t, "budget", settings.EffectiveServiceName())
+}
+
 func TestSettingsFormEmail_InitialState(t *testing.T) {
 	settings := docker.ApplicationSettings{
 		SMTP: docker.SMTPSettings{
@@ -490,6 +534,20 @@ func applicationTabToCancel(form *SettingsFormApplication) {
 	for form.form.Focused() != form.form.ItemCount()+1 {
 		applicationPressTab(form)
 	}
+}
+
+func applicationSubmit(t *testing.T, form *SettingsFormApplication) docker.ApplicationSettings {
+	t.Helper()
+
+	applicationTabToSubmit(form)
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	*form = result.(SettingsFormApplication)
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(SettingsSectionSubmitMsg)
+	require.True(t, ok, "expected SettingsSectionSubmitMsg, got %T", msg)
+	return msg.Settings
 }
 
 func emailPressTab(form *SettingsFormEmail) {
