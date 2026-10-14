@@ -476,82 +476,50 @@ func TestEffectiveTailscalePort(t *testing.T) {
 }
 
 func TestDocktailLabels(t *testing.T) {
-	tests := []struct {
-		name     string
-		settings ApplicationSettings
-		want     map[string]string
-	}{
-		{
-			name:     "disabled",
-			settings: ApplicationSettings{Name: "budget"},
-			want:     nil,
-		},
-		{
-			name:     "enabled with an empty mode",
-			settings: ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true}},
-			want:     nil,
-		},
-		{
-			name:     "unknown mode",
-			settings: ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: "funnel"}},
-			want:     nil,
-		},
-		{
-			name: "defaults derived from the application",
-			settings: ApplicationSettings{
-				Name:      "budget",
-				AppPort:   5006,
-				Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode},
-			},
-			want: map[string]string{
-				"docktail.service.enable": "true",
-				"docktail.service.name":   "budget",
-				"docktail.service.port":   "5006",
-			},
-		},
-		{
-			name: "every override",
-			settings: ApplicationSettings{
-				Name:    "budget",
-				AppPort: 5006,
-				Tailscale: TailscaleSettings{
-					Enabled:     true,
-					Mode:        DocktailMode,
-					Service:     "Example App",
-					Port:        3000,
-					ServicePort: 8443,
-					Path:        "/budget",
-					Tags:        "tag:server,tag:app",
-				},
-			},
-			want: map[string]string{
-				"docktail.service.enable":       "true",
-				"docktail.service.name":         "example-app",
-				"docktail.service.port":         "3000",
-				"docktail.service.service-port": "8443",
-				"docktail.service.path":         "/budget",
-				"docktail.tags":                 "tag:server,tag:app",
-			},
-		},
-		{
-			name: "conventional optional values are omitted",
-			settings: ApplicationSettings{
-				Name:      "budget",
-				Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 80, Path: "/"},
-			},
-			want: map[string]string{
-				"docktail.service.enable": "true",
-				"docktail.service.name":   "budget",
-				"docktail.service.port":   "80",
-			},
-		},
-	}
+	disabled := ApplicationSettings{Name: "budget"}
+	assert.Nil(t, disabled.DocktailLabels())
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.settings.DocktailLabels())
-		})
+	enabledWithoutMode := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true}}
+	assert.Nil(t, enabledWithoutMode.DocktailLabels())
+
+	unknownMode := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: "funnel"}}
+	assert.Nil(t, unknownMode.DocktailLabels())
+
+	derived := ApplicationSettings{Name: "budget", AppPort: 5006, Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "true",
+		"docktail.service.name":   "budget",
+		"docktail.service.port":   "5006",
+	}, derived.DocktailLabels())
+
+	overridden := ApplicationSettings{
+		Name:    "budget",
+		AppPort: 5006,
+		Tailscale: TailscaleSettings{
+			Enabled:     true,
+			Mode:        DocktailMode,
+			Service:     "Example App",
+			Port:        3000,
+			ServicePort: 8443,
+			Path:        "/budget",
+			Tags:        "tag:server,tag:app",
+		},
 	}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":       "true",
+		"docktail.service.name":         "example-app",
+		"docktail.service.port":         "3000",
+		"docktail.service.service-port": "8443",
+		"docktail.service.path":         "/budget",
+		"docktail.tags":                 "tag:server,tag:app",
+	}, overridden.DocktailLabels())
+
+	conventional := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 80, Path: "/"}}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "true",
+		"docktail.service.name":   "budget",
+		"docktail.service.port":   "80",
+	}, conventional.DocktailLabels())
 }
 
 func TestDocktailLabelsMarshalRoundTrip(t *testing.T) {
