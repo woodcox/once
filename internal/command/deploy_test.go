@@ -160,6 +160,43 @@ func TestBuildSettingsAdvancedFlags(t *testing.T) {
 	assert.True(t, s.SkipRailsEnv)
 }
 
+func TestBuildSettingsVolumePathsNormalized(t *testing.T) {
+	newCmd := func() (*cobra.Command, *settingsFlags) {
+		cmd := &cobra.Command{}
+		f := &settingsFlags{}
+		f.register(cmd)
+		return cmd, f
+	}
+
+	t.Run("space after the comma", func(t *testing.T) {
+		cmd, f := newCmd()
+		require.NoError(t, cmd.Flags().Set("volume-paths", "/data, /config"))
+
+		s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"/data", "/config"}, s.VolumePaths)
+	})
+
+	t.Run("empty element is dropped", func(t *testing.T) {
+		cmd, f := newCmd()
+		require.NoError(t, cmd.Flags().Set("volume-paths", "/data,"))
+
+		s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"/data"}, s.VolumePaths)
+	})
+
+	t.Run("applyChanges normalizes too", func(t *testing.T) {
+		cmd, f := newCmd()
+		require.NoError(t, cmd.Flags().Set("volume-paths", "/data, /config"))
+
+		existing := docker.ApplicationSettings{Name: "budget", Image: "image:latest"}
+		s, err := f.applyChanges(cmd, existing, existing.Image)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"/data", "/config"}, s.VolumePaths)
+	})
+}
+
 func TestBuildSettingsDocktailFlags(t *testing.T) {
 	cmd := &cobra.Command{}
 	f := &settingsFlags{}

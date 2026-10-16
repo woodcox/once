@@ -29,10 +29,12 @@ var (
 	ErrBackupPathRelative      = errors.New("backup path must be absolute")
 	ErrBackupFileExists        = errors.New("backup file already exists")
 	ErrAutoBackupWithoutPath   = errors.New("auto-backup requires a backup path")
-	ErrInvalidAppPort          = errors.New("app port must be between 1 and 65535")
+	ErrInvalidAppPort          = errors.New("app port must be between 0 and 65535")
 	ErrInvalidVolumePath       = errors.New("volume paths must be absolute")
-	ErrInvalidDocktailPort     = errors.New("docktail ports must be between 1 and 65535")
+	ErrInvalidHealthCheckPath  = errors.New("health check path must start with /")
+	ErrInvalidDocktailPort     = errors.New("docktail ports must be between 0 and 65535")
 	ErrInvalidDocktailMode     = errors.New("unsupported docktail mode")
+	ErrInvalidDocktailPath     = errors.New("docktail path must start with /")
 	ErrDocktailServiceRequired = errors.New("a Tailscale service name is required when docktail mode is enabled")
 	ErrSetupFailed             = errors.New("setup failed")
 	ErrPullFailed              = &describedError{
@@ -54,10 +56,6 @@ var (
 	ErrDocktailVerifyFailed            = &describedError{
 		msg:         "tailscale service not advertised",
 		description: "The application is running, but docktail hasn't advertised it as a Tailscale Service. Check that the docktail container is running, and that the service name matches the Service defined in your Tailscale admin console.",
-	}
-	ErrTailscaleCLIMissing = &describedError{
-		msg:         "tailscale CLI not found",
-		description: "Couldn't run the tailscale CLI to verify the Tailscale Service. Install Tailscale on this host, or turn docktail mode off for this application.",
 	}
 )
 

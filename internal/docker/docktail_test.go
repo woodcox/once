@@ -2,9 +2,12 @@ package docker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +37,10 @@ const serveStatusWithBudgetService = `{
 }`
 
 func TestParseTailscaleServeStatus(t *testing.T) {
+	statusForProxy := func(proxy string) string {
+		return `{"Services":{"svc:budget":{"Web":{"host.ts.net:443":{"Handlers":{"/":{"Proxy":"` + proxy + `"}}}}}}}`
+	}
+
 	tests := []struct {
 		name    string
 		data    string
@@ -75,6 +82,45 @@ func TestParseTailscaleServeStatus(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "port 8080 does not match port 80",
+			data:    statusForProxy("http://172.21.0.2:8080"),
+			service: "budget",
+			port:    80,
+			wantErr: true,
+		},
+		{
+			name:    "port 50061 does not match port 5006",
+			data:    statusForProxy("http://172.21.0.2:50061"),
+			service: "budget",
+			port:    5006,
+			wantErr: true,
+		},
+		{
+			name:    "explicit port matches exactly",
+			data:    statusForProxy("http://172.21.0.2:5006"),
+			service: "budget",
+			port:    5006,
+		},
+		{
+			name:    "portless http proxy matches port 80",
+			data:    statusForProxy("http://172.21.0.2"),
+			service: "budget",
+			port:    80,
+		},
+		{
+			name:    "portless https proxy matches port 443",
+			data:    statusForProxy("https://172.21.0.2"),
+			service: "budget",
+			port:    443,
+		},
+		{
+			name:    "portless http proxy does not match port 443",
+			data:    statusForProxy("http://172.21.0.2"),
+			service: "budget",
+			port:    443,
+			wantErr: true,
+		},
+		{
 			name:    "invalid json",
 			data:    `not json`,
 			service: "budget",
@@ -96,11 +142,44 @@ func TestParseTailscaleServeStatus(t *testing.T) {
 }
 
 func TestVerifyDocktail(t *testing.T) {
+	// Polling is exercised by the "appears on a later poll" case; the rest
+	// should give up immediately.
+	originalWindow, originalInterval := docktailVerifyWindow, docktailVerifyInterval
+	docktailVerifyWindow, docktailVerifyInterval = 0, time.Millisecond
+	t.Cleanup(func() {
+		docktailVerifyWindow, docktailVerifyInterval = originalWindow, originalInterval
+	})
+
 	stubTailscale := func(t *testing.T, output string) {
 		t.Helper()
 
 		path := filepath.Join(t.TempDir(), "tailscale")
 		require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\necho '"+output+"'\n"), 0o755))
+
+		original := tailscaleCommand
+		tailscaleCommand = path
+		t.Cleanup(func() { tailscaleCommand = original })
+	}
+
+	stubTailscaleSequence := func(t *testing.T, outputs ...string) {
+		t.Helper()
+
+		dir := t.TempDir()
+		counter := filepath.Join(dir, "calls")
+
+		var script strings.Builder
+		script.WriteString("#!/bin/sh\n")
+		script.WriteString("n=$(cat " + counter + " 2>/dev/null || echo 0)\n")
+		script.WriteString("echo $((n+1)) > " + counter + "\n")
+		script.WriteString("case $n in\n")
+		for i, output := range outputs {
+			fmt.Fprintf(&script, "%d) echo '%s' ;;\n", i, output)
+		}
+		script.WriteString("*) echo '{\"Services\":{}}' ;;\n")
+		script.WriteString("esac\n")
+
+		path := filepath.Join(dir, "tailscale")
+		require.NoError(t, os.WriteFile(path, []byte(script.String()), 0o755))
 
 		original := tailscaleCommand
 		tailscaleCommand = path
@@ -122,38 +201,42 @@ func TestVerifyDocktail(t *testing.T) {
 		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
 	})
 
-	t.Run("service absent", func(t *testing.T) {
+	t.Run("service absent warns instead of failing", func(t *testing.T) {
 		stubTailscale(t, `{"Services":{}}`)
 
-		err := newDocktailApp().verifyDocktail(context.Background())
-		assert.ErrorIs(t, err, ErrDocktailVerifyFailed)
-		assert.Contains(t, err.Error(), "svc:budget")
+		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
 	})
 
-	t.Run("target is the wrong port", func(t *testing.T) {
+	t.Run("target is the wrong port warns instead of failing", func(t *testing.T) {
 		stubTailscale(t, `{"Services":{"svc:budget":{"Web":{"host.ts.net:443":{"Handlers":{"/":{"Proxy":"http://172.21.0.2:80"}}}}}}}`)
 
-		err := newDocktailApp().verifyDocktail(context.Background())
-		assert.ErrorIs(t, err, ErrDocktailVerifyFailed)
-		assert.Contains(t, err.Error(), "port 5006")
+		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
 	})
 
-	t.Run("tailscale cli missing", func(t *testing.T) {
+	t.Run("missing tailscale cli warns instead of failing", func(t *testing.T) {
 		original := tailscaleCommand
 		tailscaleCommand = filepath.Join(t.TempDir(), "missing-tailscale")
 		t.Cleanup(func() { tailscaleCommand = original })
 
-		err := newDocktailApp().verifyDocktail(context.Background())
-		assert.ErrorIs(t, err, ErrTailscaleCLIMissing)
+		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
+	})
+
+	t.Run("service appears on a later poll", func(t *testing.T) {
+		docktailVerifyWindow = time.Second
+		docktailVerifyInterval = time.Millisecond
+		t.Cleanup(func() { docktailVerifyWindow = 0 })
+
+		stubTailscaleSequence(t, `{"Services":{}}`, serveStatusWithBudgetService)
+
+		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
 	})
 
 	t.Run("verify uses the tailscale path for docktail apps", func(t *testing.T) {
 		stubTailscale(t, `{"Services":{}}`)
 
-		// The host is unreachable over HTTP, so a failure to fall back to
-		// HTTP verification would surface as ErrVerificationFailed.
-		err := newDocktailApp().verify(context.Background())
-		assert.ErrorIs(t, err, ErrDocktailVerifyFailed)
+		// The host is unreachable over HTTP, so a fall back to HTTP
+		// verification would surface as ErrVerificationFailed.
+		require.NoError(t, newDocktailApp().verify(context.Background()))
 	})
 }
 

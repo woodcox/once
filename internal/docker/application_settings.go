@@ -161,6 +161,9 @@ func (s ApplicationSettings) Validate() error {
 	if s.AppPort < 0 || s.AppPort > 65535 {
 		return ErrInvalidAppPort
 	}
+	if s.HealthCheckPath != "" && !strings.HasPrefix(s.HealthCheckPath, "/") {
+		return ErrInvalidHealthCheckPath
+	}
 	for _, path := range s.VolumePaths {
 		if !strings.HasPrefix(path, "/") {
 			return ErrInvalidVolumePath
@@ -187,6 +190,9 @@ func (s ApplicationSettings) ValidateTailscale() error {
 	}
 	if s.Tailscale.ServicePort < 0 || s.Tailscale.ServicePort > 65535 {
 		return ErrInvalidDocktailPort
+	}
+	if s.Tailscale.Path != "" && !strings.HasPrefix(s.Tailscale.Path, "/") {
+		return ErrInvalidDocktailPath
 	}
 	if !s.Tailscale.Enabled {
 		return nil
@@ -269,6 +275,15 @@ func (s ApplicationSettings) EffectiveTailscalePort() int {
 	return s.EffectiveAppPort()
 }
 
+// EffectiveServicePort returns the port Tailscale should listen on, defaulting
+// to 443 so the Service is served over HTTPS.
+func (s ApplicationSettings) EffectiveServicePort() int {
+	if s.Tailscale.ServicePort != 0 {
+		return s.Tailscale.ServicePort
+	}
+	return 443
+}
+
 // DocktailLabels returns the `docktail.*` labels to place on the app
 // container, or nil when docktail mode is off. Optional labels are omitted so
 // that docktail's own defaults apply.
@@ -278,14 +293,12 @@ func (s ApplicationSettings) DocktailLabels() map[string]string {
 	}
 
 	labels := map[string]string{
-		docktailLabelEnable: "true",
-		docktailLabelName:   s.EffectiveServiceName(),
-		docktailLabelPort:   strconv.Itoa(s.EffectiveTailscalePort()),
+		docktailLabelEnable:      "true",
+		docktailLabelName:        s.EffectiveServiceName(),
+		docktailLabelPort:        strconv.Itoa(s.EffectiveTailscalePort()),
+		docktailLabelServicePort: strconv.Itoa(s.EffectiveServicePort()),
 	}
 
-	if s.Tailscale.ServicePort != 0 && s.Tailscale.ServicePort != 80 {
-		labels[docktailLabelServicePort] = strconv.Itoa(s.Tailscale.ServicePort)
-	}
 	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" {
 		labels[docktailLabelPath] = s.Tailscale.Path
 	}
@@ -340,9 +353,12 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 
 // Helpers
 
+const maxDNSLabelLength = 63
+
 // SanitizeDNSLabel reduces an arbitrary string to a lowercase DNS label
 // suitable for use as a Tailscale Service name. Runs of invalid characters
-// collapse to a single hyphen, and leading/trailing hyphens are dropped.
+// collapse to a single hyphen, leading/trailing hyphens are dropped, and the
+// result is capped at the 63-character DNS label limit.
 func SanitizeDNSLabel(s string) string {
 	var b strings.Builder
 	pendingHyphen := false
@@ -359,7 +375,12 @@ func SanitizeDNSLabel(s string) string {
 		pendingHyphen = true
 	}
 
-	return b.String()
+	label := b.String()
+	if len(label) > maxDNSLabelLength {
+		label = strings.TrimSuffix(label[:maxDNSLabelLength], "-")
+	}
+
+	return label
 }
 
 func ParseVolumePaths(s string) []string {

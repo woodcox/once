@@ -105,7 +105,7 @@ func (f *settingsFlags) buildSettings(cmd *cobra.Command, image, host string) (d
 		},
 		HealthCheckPath: f.healthCheckPath,
 		AppPort:         f.appPort,
-		VolumePaths:     f.volumePaths,
+		VolumePaths:     docker.ParseVolumePaths(strings.Join(f.volumePaths, ",")),
 		SkipRailsEnv:    f.skipRailsEnv,
 		Tailscale: docker.TailscaleSettings{
 			Enabled:     f.docktail,
@@ -202,7 +202,7 @@ func (f *settingsFlags) applyChanges(cmd *cobra.Command, existing docker.Applica
 		s.AppPort = f.appPort
 	}
 	if cmd.Flags().Changed("volume-paths") {
-		s.VolumePaths = f.volumePaths
+		s.VolumePaths = docker.ParseVolumePaths(strings.Join(f.volumePaths, ","))
 	}
 	if cmd.Flags().Changed("skip-rails-env") {
 		s.SkipRailsEnv = f.skipRailsEnv

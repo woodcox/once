@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -19,22 +21,55 @@ const tailscaleCommandTimeout = 10 * time.Second
 // tailscaleCommand is a variable so tests can substitute a stub.
 var tailscaleCommand = "tailscale"
 
+// Docktail reconciles in the background (it watches Docker events), so a
+// Service may not be advertised the moment an install finishes. These bound
+// how long ONCE waits, and are variables so tests can shrink them.
+var (
+	docktailVerifyWindow   = 30 * time.Second
+	docktailVerifyInterval = 2 * time.Second
+)
+
 // verifyDocktail checks that docktail has advertised this app as a Tailscale
 // Service by inspecting the host's serve configuration. Reading serve status
 // needs no root, which is what makes this check possible from here.
+//
+// Docktail is asynchronous, and a Service can even be waiting for approval in
+// the Tailscale admin console, so ONCE polls for a bounded window. If the
+// Service never appears it warns and returns nil: the container is healthy and
+// serving locally through the proxy, and ONCE can't fix an external system's
+// state.
 func (a *Application) verifyDocktail(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, tailscaleCommandTimeout)
-	defer cancel()
+	name := a.Settings.EffectiveServiceName()
+	port := a.Settings.EffectiveTailscalePort()
 
-	out, err := exec.CommandContext(ctx, tailscaleCommand, "serve", "status", "--json").Output()
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
-			return ErrTailscaleCLIMissing
+	deadline := time.Now().Add(docktailVerifyWindow)
+
+	for {
+		out, err := tailscaleServeStatusOutput(ctx)
+		switch {
+		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
+			a.warnDocktailVerification("the tailscale CLI isn't installed on this host, so ONCE can't confirm the Tailscale Service was advertised")
+			return nil
+		case err != nil:
+			a.warnDocktailVerification(fmt.Sprintf("couldn't read Tailscale serve status: %v", err))
+			return nil
+		case parseTailscaleServeStatus(out, name, port) == nil:
+			return nil
 		}
-		return fmt.Errorf("%w: running %s serve status: %w", ErrDocktailVerifyFailed, tailscaleCommand, err)
+
+		if time.Now().After(deadline) {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(docktailVerifyInterval):
+		}
 	}
 
-	return parseTailscaleServeStatus(out, a.Settings.EffectiveServiceName(), a.Settings.EffectiveTailscalePort())
+	a.warnDocktailVerification(fmt.Sprintf("the Tailscale Service svc:%s isn't advertised on port %d yet; docktail may still be reconciling, or the Service may be awaiting approval in your Tailscale admin console", name, port))
+	return nil
 }
 
 // DocktailWarnings reports host-level problems that would stop this app from
@@ -60,6 +95,10 @@ func (a *Application) DocktailWarnings(ctx context.Context) []string {
 }
 
 // Private
+
+func (a *Application) warnDocktailVerification(warning string) {
+	slog.Warn("Docktail verification", "app", a.Settings.Name, "warning", warning)
+}
 
 func (n *Namespace) runningDocktailContainer(ctx context.Context) (bool, error) {
 	containers, err := n.client.ContainerList(ctx, client.ContainerListOptions{All: true})
@@ -123,7 +162,7 @@ func parseTailscaleServeStatus(data []byte, serviceName string, port int) error 
 		return fmt.Errorf("%w: parsing tailscale serve status: %w", ErrDocktailVerifyFailed, err)
 	}
 
-	target := ":" + strconv.Itoa(port)
+	targetPort := strconv.Itoa(port)
 
 	for name, advertised := range status.Services {
 		if normalizeServiceName(name) != normalizeServiceName(service) {
@@ -132,7 +171,7 @@ func parseTailscaleServeStatus(data []byte, serviceName string, port int) error 
 
 		for _, web := range advertised.Web {
 			for _, handler := range web.Handlers {
-				if strings.Contains(handler.Proxy, target) {
+				if proxyMatchesPort(handler.Proxy, targetPort) {
 					return nil
 				}
 			}
@@ -145,6 +184,29 @@ func parseTailscaleServeStatus(data []byte, serviceName string, port int) error 
 }
 
 // Helpers
+
+func tailscaleServeStatusOutput(ctx context.Context) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, tailscaleCommandTimeout)
+	defer cancel()
+
+	return exec.CommandContext(ctx, tailscaleCommand, "serve", "status", "--json").Output()
+}
+
+// proxyMatchesPort reports whether a serve handler's proxy URL targets the
+// given port. A portless proxy uses the scheme's default port.
+func proxyMatchesPort(proxy, port string) bool {
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return false
+	}
+	if u.Port() != "" {
+		return u.Port() == port
+	}
+	if u.Scheme == "https" {
+		return port == "443"
+	}
+	return port == "80"
+}
 
 func normalizeServiceName(name string) string {
 	return strings.ToLower(strings.TrimPrefix(name, "svc:"))

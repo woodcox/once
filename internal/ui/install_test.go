@@ -482,6 +482,48 @@ func TestInstall_AdvancedMsgRequiresHostname(t *testing.T) {
 	assert.ErrorIs(t, m.err, docker.ErrHostRequired)
 }
 
+func TestInstall_AdvancedSubmitValidatesSettings(t *testing.T) {
+	newAdvanced := func(t *testing.T) Install {
+		t.Helper()
+
+		m := newTestInstall()
+		m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+		m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+		m, _ = updateInstall(m, InstallAdvancedMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "app.example.com"})
+		require.Equal(t, installStateAdvanced, m.state)
+
+		return m
+	}
+
+	t.Run("app port out of range is rejected before installing", func(t *testing.T) {
+		m := newAdvanced(t)
+
+		m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: docker.ApplicationSettings{AppPort: 65536}})
+
+		assert.Equal(t, installStateAdvanced, m.state)
+		assert.ErrorIs(t, m.err, docker.ErrInvalidAppPort)
+	})
+
+	t.Run("relative volume path is rejected before installing", func(t *testing.T) {
+		m := newAdvanced(t)
+
+		m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: docker.ApplicationSettings{VolumePaths: []string{"data"}}})
+
+		assert.Equal(t, installStateAdvanced, m.state)
+		assert.ErrorIs(t, m.err, docker.ErrInvalidVolumePath)
+	})
+
+	t.Run("docktail mode without a name yet is accepted", func(t *testing.T) {
+		m := newAdvanced(t)
+
+		settings := docker.ApplicationSettings{Tailscale: docker.TailscaleSettings{Enabled: true, Mode: docker.DocktailMode}}
+		m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: settings})
+
+		require.Equal(t, installStateActivity, m.state)
+		assert.Nil(t, m.err)
+	})
+}
+
 // Helpers
 
 func newTestInstall() Install {

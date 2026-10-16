@@ -251,7 +251,10 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		if m.state != installStateAdvanced {
 			break
 		}
-		if err := msg.Settings.ValidateTailscale(); err != nil {
+		settings := msg.Settings
+		settings.Image = m.pendingImage
+		settings.Host = m.pendingHost
+		if err := settings.Validate(); err != nil {
 			m.err = err
 			return m, nil
 		}

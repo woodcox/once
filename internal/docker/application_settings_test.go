@@ -2,6 +2,7 @@ package docker
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -382,6 +383,18 @@ func TestAdvancedSettingsValidate(t *testing.T) {
 		s.VolumePaths = []string{"/data", "/config"}
 		assert.NoError(t, s.Validate())
 	})
+
+	t.Run("relative health check path", func(t *testing.T) {
+		s := base
+		s.HealthCheckPath = "health"
+		assert.ErrorIs(t, s.Validate(), ErrInvalidHealthCheckPath)
+	})
+
+	t.Run("absolute health check path", func(t *testing.T) {
+		s := base
+		s.HealthCheckPath = "/healthz"
+		assert.NoError(t, s.Validate())
+	})
 }
 
 func TestAdvancedSettingsEqualDiffers(t *testing.T) {
@@ -457,6 +470,11 @@ func TestSanitizeDNSLabel(t *testing.T) {
 	}
 }
 
+func TestSanitizeDNSLabelTruncation(t *testing.T) {
+	assert.Equal(t, strings.Repeat("a", 63), SanitizeDNSLabel(strings.Repeat("a", 70)))
+	assert.Equal(t, strings.Repeat("a", 62), SanitizeDNSLabel(strings.Repeat("a", 62)+"-bcd"))
+}
+
 func TestDocktailEnabled(t *testing.T) {
 	assert.False(t, ApplicationSettings{}.DocktailEnabled())
 	assert.False(t, ApplicationSettings{Tailscale: TailscaleSettings{Enabled: true}}.DocktailEnabled())
@@ -487,9 +505,10 @@ func TestDocktailLabels(t *testing.T) {
 
 	derived := ApplicationSettings{Name: "budget", AppPort: 5006, Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable": "true",
-		"docktail.service.name":   "budget",
-		"docktail.service.port":   "5006",
+		"docktail.service.enable":       "true",
+		"docktail.service.name":         "budget",
+		"docktail.service.port":         "5006",
+		"docktail.service.service-port": "443",
 	}, derived.DocktailLabels())
 
 	overridden := ApplicationSettings{
@@ -516,10 +535,18 @@ func TestDocktailLabels(t *testing.T) {
 
 	conventional := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 80, Path: "/"}}
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable": "true",
-		"docktail.service.name":   "budget",
-		"docktail.service.port":   "80",
+		"docktail.service.enable":       "true",
+		"docktail.service.name":         "budget",
+		"docktail.service.port":         "80",
+		"docktail.service.service-port": "80",
 	}, conventional.DocktailLabels())
+}
+
+func TestEffectiveServicePort(t *testing.T) {
+	assert.Equal(t, 443, ApplicationSettings{}.EffectiveServicePort())
+	assert.Equal(t, 443, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 0}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 80}}.EffectiveServicePort())
+	assert.Equal(t, 8443, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 8443}}.EffectiveServicePort())
 }
 
 func TestDocktailLabelsMarshalRoundTrip(t *testing.T) {
@@ -597,6 +624,18 @@ func TestValidateTailscale(t *testing.T) {
 
 		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: -1}
 		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailPort)
+	})
+
+	t.Run("relative path", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Path: "budget"}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailPath)
+	})
+
+	t.Run("absolute path", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Path: "/budget"}
+		assert.NoError(t, s.ValidateTailscale())
 	})
 
 	t.Run("valid ports", func(t *testing.T) {
