@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -20,10 +21,23 @@ const (
 	stageVerifying
 )
 
+const (
+	docktailNotAdvertisedPrompt  = "The app is running, but its Tailscale Service hasn't appeared yet. Retry the check, keep the app, or delete it and its data?"
+	docktailNotAdvertisedWarning = "the Tailscale Service isn't advertised yet, so the app may not be reachable on your tailnet until docktail reconciles it"
+)
+
+// errInstallCancelled reports a cancelled install to the install goroutine, so
+// that it can stop without touching the app.
+var errInstallCancelled = errors.New("install cancelled")
+
 type installProgressMsg struct {
 	stage      installStage
 	percentage int
 }
+
+// installPromptMsg asks the UI to put up the docktail decision prompt; the
+// install goroutine then blocks until the user answers.
+type installPromptMsg struct{}
 
 type installDoneMsg struct {
 	app *docker.Application
@@ -53,8 +67,11 @@ type InstallActivity struct {
 	percentage    int
 	progress      Progress
 	warnings      []string
+	prompt        *DocktailPrompt
 	progressChan  chan installProgressMsg
 	warningChan   chan installWarningMsg
+	promptChan    chan installPromptMsg
+	decisionChan  chan docktailDecision
 	doneChan      chan installDoneMsg
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -72,6 +89,8 @@ func NewInstallActivity(ns *docker.Namespace, imageRef, hostname string, registr
 		progress:     NewProgress(0, Colors.Primary),
 		progressChan: make(chan installProgressMsg, 10),
 		warningChan:  make(chan installWarningMsg, 10),
+		promptChan:   make(chan installPromptMsg, 1),
+		decisionChan: make(chan docktailDecision, 1),
 		doneChan:     make(chan installDoneMsg, 1),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -102,6 +121,21 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 	case installWarningMsg:
 		m.warnings = append(m.warnings, msg.warnings...)
 		return m.waitForProgress()
+
+	case installPromptMsg:
+		prompt := NewDocktailPrompt(docktailNotAdvertisedPrompt)
+		m.prompt = &prompt
+		return m.waitForProgress()
+
+	case docktailDecisionMsg:
+		m.prompt = nil
+		m.decisionChan <- msg.decision
+		return m.waitForProgress()
+
+	case tea.KeyPressMsg, MouseEvent:
+		if m.prompt != nil {
+			return m.updatePrompt(msg)
+		}
 
 	case installDoneMsg:
 		if msg.err != nil {
@@ -144,6 +178,10 @@ func (m *InstallActivity) View() string {
 		parts = append(parts, Styles.CenteredLine(m.width, warningStyle.Render(warning)))
 	}
 
+	if m.prompt != nil {
+		parts = append(parts, "", m.prompt.View())
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
@@ -164,6 +202,14 @@ func (m *InstallActivity) startInstall() tea.Cmd {
 
 func (m *InstallActivity) waitForProgress() tea.Cmd {
 	return func() tea.Msg {
+		// A warning is queued immediately before the terminal message that
+		// follows it, so drain warnings first to make sure they're seen.
+		select {
+		case warning := <-m.warningChan:
+			return warning
+		default:
+		}
+
 		select {
 		case progress, ok := <-m.progressChan:
 			if ok {
@@ -171,11 +217,23 @@ func (m *InstallActivity) waitForProgress() tea.Cmd {
 			}
 		case warning := <-m.warningChan:
 			return warning
+		case prompt := <-m.promptChan:
+			return prompt
 		case done := <-m.doneChan:
 			return done
 		}
 		return nil
 	}
+}
+
+func (m *InstallActivity) updatePrompt(msg tea.Msg) tea.Cmd {
+	if m.prompt == nil {
+		return nil
+	}
+
+	prompt, cmd := m.prompt.Update(msg)
+	m.prompt = &prompt
+	return cmd
 }
 
 func (m *InstallActivity) runInstall(ctx context.Context) {
@@ -234,10 +292,69 @@ func (m *InstallActivity) runInstall(ctx context.Context) {
 
 	m.progressChan <- installProgressMsg{stage: stageVerifying}
 
-	if err := app.VerifyHTTPOrRemove(ctx); err != nil {
+	err = m.verifyWithPrompt(ctx, app)
+	if errors.Is(err, errInstallCancelled) {
+		return
+	}
+	if err != nil {
 		m.doneChan <- installDoneMsg{err: err}
 		return
 	}
 
 	m.doneChan <- installDoneMsg{app: app}
+}
+
+// verifyWithPrompt checks the deployed app, asking the user what to do when a
+// Tailscale Service hasn't been advertised within the verification window. It
+// returns nil to keep the app running, the verification error to fail the
+// install, or errInstallCancelled when the install has been cancelled and the
+// app must be left alone.
+func (m *InstallActivity) verifyWithPrompt(ctx context.Context, app *docker.Application) error {
+	for {
+		err := app.Verify(ctx)
+		if err == nil {
+			return nil
+		}
+
+		if !errors.Is(err, docker.ErrDocktailNotAdvertised) {
+			m.removeAfterFailedVerification(app)
+			return err
+		}
+
+		decision, ok := m.promptForDecision(ctx)
+		if !ok {
+			return errInstallCancelled
+		}
+
+		switch decision {
+		case docktailRetry:
+			// loop and verify again with a fresh window
+		case docktailKeep:
+			m.warningChan <- installWarningMsg{warnings: []string{docktailNotAdvertisedWarning}}
+			return nil
+		case docktailRollback:
+			m.removeAfterFailedVerification(app)
+			return err
+		}
+	}
+}
+
+// promptForDecision asks the UI to show the prompt and blocks until the user
+// answers. It reports false if the install is cancelled while waiting, so that
+// a cancelled install neither hangs nor rolls the app back.
+func (m *InstallActivity) promptForDecision(ctx context.Context) (docktailDecision, bool) {
+	m.promptChan <- installPromptMsg{}
+
+	select {
+	case decision := <-m.decisionChan:
+		return decision, true
+	case <-ctx.Done():
+		return 0, false
+	}
+}
+
+func (m *InstallActivity) removeAfterFailedVerification(app *docker.Application) {
+	if err := app.Remove(context.Background(), true); err != nil {
+		slog.Error("Failed to clean up after verification failure", "app", app.Settings.Name, "error", err)
+	}
 }

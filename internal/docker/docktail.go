@@ -29,15 +29,19 @@ var (
 	docktailVerifyInterval = 2 * time.Second
 )
 
+// errTailscaleStatusUnparsable marks output that isn't valid serve status at
+// all, as opposed to valid status that simply doesn't advertise the Service.
+var errTailscaleStatusUnparsable = errors.New("unparsable tailscale serve status")
+
 // verifyDocktail checks that docktail has advertised this app as a Tailscale
 // Service by inspecting the host's serve configuration. Reading serve status
 // needs no root, which is what makes this check possible from here.
 //
 // Docktail is asynchronous, and a Service can even be waiting for approval in
 // the Tailscale admin console, so ONCE polls for a bounded window. If the
-// Service never appears it warns and returns nil: the container is healthy and
-// serving locally through the proxy, and ONCE can't fix an external system's
-// state.
+// Service never appears it returns ErrDocktailNotAdvertised, but a CLI that
+// isn't installed (or output that can't be read or parsed) only warns: ONCE
+// can't verify or fix those, so they must not prompt or roll anything back.
 func (a *Application) verifyDocktail(ctx context.Context) error {
 	name := a.Settings.EffectiveServiceName()
 	port := a.Settings.EffectiveTailscalePort()
@@ -53,7 +57,13 @@ func (a *Application) verifyDocktail(ctx context.Context) error {
 		case err != nil:
 			a.warnDocktailVerification(fmt.Sprintf("couldn't read Tailscale serve status: %v", err))
 			return nil
-		case parseTailscaleServeStatus(out, name, port) == nil:
+		}
+
+		switch verifyErr := parseTailscaleServeStatus(out, name, port); {
+		case verifyErr == nil:
+			return nil
+		case errors.Is(verifyErr, errTailscaleStatusUnparsable):
+			a.warnDocktailVerification(fmt.Sprintf("couldn't parse Tailscale serve status: %v", verifyErr))
 			return nil
 		}
 
@@ -68,8 +78,7 @@ func (a *Application) verifyDocktail(ctx context.Context) error {
 		}
 	}
 
-	a.warnDocktailVerification(fmt.Sprintf("the Tailscale Service svc:%s isn't advertised on port %d yet; docktail may still be reconciling, or the Service may be awaiting approval in your Tailscale admin console", name, port))
-	return nil
+	return fmt.Errorf("%w: svc:%s is not advertised on port %d yet", ErrDocktailNotAdvertised, name, port)
 }
 
 // DocktailWarnings reports host-level problems that would stop this app from
@@ -159,7 +168,7 @@ func parseTailscaleServeStatus(data []byte, serviceName string, port int) error 
 
 	var status tailscaleServeStatus
 	if err := json.Unmarshal(data, &status); err != nil {
-		return fmt.Errorf("%w: parsing tailscale serve status: %w", ErrDocktailVerifyFailed, err)
+		return fmt.Errorf("%w: %w: parsing tailscale serve status: %w", ErrDocktailVerifyFailed, errTailscaleStatusUnparsable, err)
 	}
 
 	targetPort := strconv.Itoa(port)

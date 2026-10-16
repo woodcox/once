@@ -146,7 +146,7 @@ once deploy <image> --host app.example.com --docktail --docktail-service myapp
 
 Set the application's hostname to the Service's tailnet name, so the URLs ONCE generates point at the address clients use.
 
-After deploying, ONCE waits up to 30 seconds for `tailscale serve status` to show the Service. If it doesn't appear -- docktail isn't running, the node has no tags, or the Service is still awaiting approval in the admin console -- it warns and carries on, because docktail reconciles continuously and picks the application up once that's fixed.
+After deploying, ONCE waits up to 30 seconds for `tailscale serve status` to show the Service. If it doesn't appear -- docktail isn't running, the node has no tags, or the Service is still awaiting approval in the admin console -- ONCE asks whether to retry the check or roll the application back. In non-interactive use it warns and keeps the application, because docktail reconciles continuously and picks it up once that's fixed.
 
 ## Making a ONCE-compatible application
 

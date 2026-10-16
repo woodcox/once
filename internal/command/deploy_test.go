@@ -1,6 +1,8 @@
 package command
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +12,86 @@ import (
 
 	"github.com/basecamp/once/internal/docker"
 )
+
+func TestDecideDocktailNotAdvertised(t *testing.T) {
+	failingVerify := func(t *testing.T) func(context.Context) error {
+		t.Helper()
+		return func(context.Context) error {
+			t.Fatal("verification should not have been attempted")
+			return nil
+		}
+	}
+
+	t.Run("keeps the app on end of input", func(t *testing.T) {
+		var out strings.Builder
+
+		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader(""), &out)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("keeps the app on unparseable input", func(t *testing.T) {
+		var out strings.Builder
+
+		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader("banana\n"), &out)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("keeps the app on enter", func(t *testing.T) {
+		var out strings.Builder
+
+		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader("\n"), &out)
+
+		require.NoError(t, err)
+	})
+
+	t.Run("retry keeps the app once the Service appears", func(t *testing.T) {
+		var out strings.Builder
+		calls := 0
+		verify := func(context.Context) error {
+			calls++
+			if calls == 1 {
+				return docker.ErrDocktailNotAdvertised
+			}
+			return nil
+		}
+
+		err := decideDocktailNotAdvertised(context.Background(), verify, strings.NewReader("r\nr\n"), &out)
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, calls)
+		assert.Contains(t, out.String(), "now advertised")
+	})
+
+	t.Run("retry re-prompts while still not advertised", func(t *testing.T) {
+		var out strings.Builder
+		verify := func(context.Context) error { return docker.ErrDocktailNotAdvertised }
+
+		err := decideDocktailNotAdvertised(context.Background(), verify, strings.NewReader("r\nr\nk\n"), &out)
+
+		require.NoError(t, err)
+		assert.Equal(t, 3, strings.Count(out.String(), "[r/k/d]"))
+	})
+
+	t.Run("retry reports an unrelated verification failure", func(t *testing.T) {
+		var out strings.Builder
+		failure := fmt.Errorf("%w: connection refused", docker.ErrVerificationFailed)
+		verify := func(context.Context) error { return failure }
+
+		err := decideDocktailNotAdvertised(context.Background(), verify, strings.NewReader("r\n"), &out)
+
+		assert.ErrorIs(t, err, docker.ErrVerificationFailed)
+	})
+
+	t.Run("delete rolls the app back", func(t *testing.T) {
+		var out strings.Builder
+
+		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader("d\n"), &out)
+
+		assert.ErrorIs(t, err, docker.ErrDocktailNotAdvertised)
+	})
+}
 
 func TestParseEnvVars(t *testing.T) {
 	t.Run("nil input", func(t *testing.T) {

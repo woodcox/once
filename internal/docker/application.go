@@ -57,6 +57,10 @@ var (
 		msg:         "tailscale service not advertised",
 		description: "The application is running, but docktail hasn't advertised it as a Tailscale Service. Check that the docktail container is running, and that the service name matches the Service defined in your Tailscale admin console.",
 	}
+	ErrDocktailNotAdvertised = &describedError{
+		msg:         "tailscale service not advertised yet",
+		description: "The application is running, but the Tailscale Service hasn't appeared. It may still be reconciling, or it may be awaiting approval in your Tailscale admin console.",
+	}
 )
 
 const (
@@ -247,15 +251,12 @@ func (a *Application) UpdateSettings(ctx context.Context, settings ApplicationSe
 	return nil
 }
 
-func (a *Application) VerifyHTTPOrRemove(ctx context.Context) error {
-	if err := a.verify(ctx); err != nil {
-		if cleanupErr := a.Remove(context.Background(), true); cleanupErr != nil {
-			slog.Error("Failed to clean up after verification failure", "app", a.Settings.Name, "error", cleanupErr)
-		}
-		return err
-	}
-
-	return nil
+// Verify checks that the deployed application is actually reachable. Apps
+// advertised as Tailscale Services are verified against Tailscale rather than
+// over HTTP. It never removes the app: callers decide what a failed
+// verification should mean.
+func (a *Application) Verify(ctx context.Context) error {
+	return a.verify(ctx)
 }
 
 func (a *Application) Remove(ctx context.Context, removeData bool) error {

@@ -201,14 +201,20 @@ func TestVerifyDocktail(t *testing.T) {
 		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
 	})
 
-	t.Run("service absent warns instead of failing", func(t *testing.T) {
+	t.Run("service absent fails with the not-advertised sentinel", func(t *testing.T) {
 		stubTailscale(t, `{"Services":{}}`)
 
-		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
+		assert.ErrorIs(t, newDocktailApp().verifyDocktail(context.Background()), ErrDocktailNotAdvertised)
 	})
 
-	t.Run("target is the wrong port warns instead of failing", func(t *testing.T) {
+	t.Run("target is the wrong port fails with the not-advertised sentinel", func(t *testing.T) {
 		stubTailscale(t, `{"Services":{"svc:budget":{"Web":{"host.ts.net:443":{"Handlers":{"/":{"Proxy":"http://172.21.0.2:80"}}}}}}}`)
+
+		assert.ErrorIs(t, newDocktailApp().verifyDocktail(context.Background()), ErrDocktailNotAdvertised)
+	})
+
+	t.Run("unparsable serve status warns instead of failing", func(t *testing.T) {
+		stubTailscale(t, `not json`)
 
 		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
 	})
@@ -236,7 +242,7 @@ func TestVerifyDocktail(t *testing.T) {
 
 		// The host is unreachable over HTTP, so a fall back to HTTP
 		// verification would surface as ErrVerificationFailed.
-		require.NoError(t, newDocktailApp().verify(context.Background()))
+		assert.ErrorIs(t, newDocktailApp().Verify(context.Background()), ErrDocktailNotAdvertised)
 	})
 }
 

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -51,7 +52,11 @@ func runWithProgress(label string, task func(docker.DeployProgressCallback) erro
 	}
 
 	if err != nil {
-		fmt.Printf("%s: %s\n", label, lipgloss.NewStyle().Foreground(lipgloss.Red).Render("failed"))
+		// A deferred decision isn't a failure: the caller asks the user what
+		// to do, and reports the outcome itself.
+		if !errors.Is(err, errDocktailDecisionDeferred) {
+			fmt.Printf("%s: %s\n", label, lipgloss.NewStyle().Foreground(lipgloss.Red).Render("failed"))
+		}
 	} else {
 		fmt.Printf("%s: %s\n", label, lipgloss.NewStyle().Foreground(lipgloss.Green).Render("done"))
 	}
