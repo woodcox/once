@@ -121,7 +121,7 @@ Requirements on the host:
   ```
 
 - The node tagged (e.g. `tag:server`), with matching `tagOwners` and an `autoApprovers.services` rule in the tailnet policy file. Without the auto-approver, each advertised Service host needs approving by hand.
-- A Service defined per application: docktail creates them from the labels if you give it `TAILSCALE_OAUTH_CLIENT_ID`/`TAILSCALE_OAUTH_CLIENT_SECRET`, otherwise create them yourself in the admin console. Either way the name must match the application's `Service name` (or the application name), lowercased and with anything that isn't a letter or digit replaced by a hyphen.
+- A Service defined per application: docktail creates them from the labels if you give it `TAILSCALE_OAUTH_CLIENT_ID`/`TAILSCALE_OAUTH_CLIENT_SECRET`, otherwise create them yourself in the admin console. Either way the name must match the application's `Service name` (or the application name), lowercased and with anything that isn't a letter or digit replaced by a hyphen. Tailscale accepts the advertisement even when no such Service is defined, so ONCE confirming the Service was advertised doesn't mean clients can reach it -- that also needs the Service to exist and its host to be approved.
 - A grant letting clients reach it, since a Service is its own grant destination:
 
   ```json
