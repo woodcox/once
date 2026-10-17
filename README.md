@@ -146,6 +146,8 @@ once deploy <image> --host app.example.com --docktail --docktail-service myapp
 
 Set the application's hostname to the Service's tailnet name, so the URLs ONCE generates point at the address clients use.
 
+Tailscale terminates TLS and passes the original hostname through to the application, along with `X-Forwarded-Proto: https`, `X-Forwarded-Host` and `X-Forwarded-For`. It also adds identity headers (`Tailscale-User-Login`, `Tailscale-User-Name`, `Tailscale-User-Profile-Pic`), so an application can tell which tailnet user is connecting. Don't treat those headers as authorization on their own: the application is also reachable through ONCE's proxy on the host's ports, where they can be forged unless you block that path.
+
 After deploying, ONCE waits up to 30 seconds for `tailscale serve status` to show the Service. If it doesn't appear -- docktail isn't running, the node has no tags, or the Service is still awaiting approval in the admin console -- ONCE asks whether to retry the check or roll the application back. In non-interactive use it warns and keeps the application, because docktail reconciles continuously and picks it up once that's fixed.
 
 ## Making a ONCE-compatible application
