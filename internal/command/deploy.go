@@ -157,6 +157,7 @@ func decideDocktailNotAdvertised(ctx context.Context, verify func(context.Contex
 		case "d", "delete":
 			return docker.ErrDocktailNotAdvertised
 		default:
+			fmt.Fprintln(out, "Keeping the app.")
 			return nil
 		}
 	}

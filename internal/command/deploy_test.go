@@ -28,6 +28,7 @@ func TestDecideDocktailNotAdvertised(t *testing.T) {
 		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader(""), &out)
 
 		require.NoError(t, err)
+		assert.Contains(t, out.String(), "Keeping the app.")
 	})
 
 	t.Run("keeps the app on unparseable input", func(t *testing.T) {
@@ -36,6 +37,7 @@ func TestDecideDocktailNotAdvertised(t *testing.T) {
 		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader("banana\n"), &out)
 
 		require.NoError(t, err)
+		assert.Contains(t, out.String(), "Keeping the app.")
 	})
 
 	t.Run("keeps the app on enter", func(t *testing.T) {
@@ -44,6 +46,7 @@ func TestDecideDocktailNotAdvertised(t *testing.T) {
 		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader("\n"), &out)
 
 		require.NoError(t, err)
+		assert.Contains(t, out.String(), "Keeping the app.")
 	})
 
 	t.Run("retry keeps the app once the Service appears", func(t *testing.T) {
