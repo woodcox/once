@@ -260,11 +260,20 @@ func (a *Application) Verify(ctx context.Context) error {
 }
 
 func (a *Application) Remove(ctx context.Context, removeData bool) error {
-	if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
-		return fmt.Errorf("removing from proxy: %w", err)
+	if a.usesProxy() {
+		if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
+			return fmt.Errorf("removing from proxy: %w", err)
+		}
 	}
 
 	return a.Destroy(ctx, removeData)
+}
+
+// usesProxy reports whether this app is registered with kamal-proxy. Docktail
+// apps are reached over the tailnet by their docktail labels, so ONCE keeps
+// them out of the proxy entirely.
+func (a *Application) usesProxy() bool {
+	return !a.Settings.DocktailEnabled()
 }
 
 func (a *Application) Destroy(ctx context.Context, destroyVolumes bool) error {
@@ -393,19 +402,31 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 
 	shortContainerID := resp.ID[:12]
 
-	if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
-		AppName:         a.Settings.Name,
-		Target:          a.Settings.DeployTarget(shortContainerID),
-		Host:            a.Settings.Host,
-		TLS:             a.Settings.TLSEnabled(),
-		HealthCheckPath: a.Settings.HealthCheckPath,
-	}); err != nil {
-		a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
-		if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
+	if a.Settings.DocktailEnabled() {
+		if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
+			slog.Debug("Removing pre-existing proxy route for docktail app", "app", a.Settings.Name, "error", err)
+		}
+
+		if err := waitForContainerHealthy(ctx, a.namespace.client, a.namespace.name, resp.ID, a.Settings.EffectiveAppPort(), a.Settings.EffectiveHealthCheckPath()); err != nil {
+			a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 			slog.Error("Application failed to start", "app", a.Settings.Name, "error", err)
 			return ErrAppNotStarted
 		}
-		return fmt.Errorf("registering with proxy: %w", err)
+	} else {
+		if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
+			AppName:         a.Settings.Name,
+			Target:          a.Settings.DeployTarget(shortContainerID),
+			Host:            a.Settings.Host,
+			TLS:             a.Settings.TLSEnabled(),
+			HealthCheckPath: a.Settings.HealthCheckPath,
+		}); err != nil {
+			a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+			if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
+				slog.Error("Application failed to start", "app", a.Settings.Name, "error", err)
+				return ErrAppNotStarted
+			}
+			return fmt.Errorf("registering with proxy: %w", err)
+		}
 	}
 
 	if err := a.removeContainersExcept(ctx, containerName); err != nil {
@@ -550,4 +571,98 @@ func (a *Application) containerConfig(env []string) *container.Config {
 		Labels: labels,
 		Env:    env,
 	}
+}
+
+// Helpers
+
+// Health check timings mirror kamal-proxy's --deploy-timeout 120s and
+// health-check-period 1s defaults, with a per-request timeout to fail fast on
+// individual probes. These are variables so tests can shrink them.
+var (
+	healthCheckInterval = 1 * time.Second
+	healthCheckTimeout  = 120 * time.Second
+	healthCheckRequest  = 5 * time.Second
+)
+
+// healthCheckProbe performs a single health check request. It is a variable so
+// tests can substitute it without opening sockets.
+var healthCheckProbe = func(ctx context.Context, url string) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	client := &http.Client{Timeout: healthCheckRequest}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode, nil
+}
+
+// healthCheckClient abstracts the Docker API calls needed by the health check
+// path. *client.Client satisfies it; tests can substitute their own.
+type healthCheckClient interface {
+	ContainerInspect(ctx context.Context, containerID string, options client.ContainerInspectOptions) (client.ContainerInspectResult, error)
+}
+
+// waitForContainerHealthy polls the application's health check endpoint over
+// the container's Docker network IP until it returns 2xx, mirroring the timing
+// kamal-proxy uses for non-docktail apps. The check goes directly to the
+// container, not through DNS or the proxy, so docktail apps don't need to be
+// reachable any other way to be considered healthy.
+func waitForContainerHealthy(ctx context.Context, c healthCheckClient, network, containerID string, port int, path string) error {
+	ip, err := containerNetworkIP(ctx, c, network, containerID)
+	if err != nil {
+		return err
+	}
+
+	url := fmt.Sprintf("http://%s:%d%s", ip, port, path)
+	deadline := time.Now().Add(healthCheckTimeout)
+
+	for {
+		status, err := healthCheckProbe(ctx, url)
+		if err == nil && status >= 200 && status <= 299 {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("application did not respond with 2xx within %s", healthCheckTimeout)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(healthCheckInterval):
+		}
+	}
+}
+
+// containerNetworkIP returns the container's IP on the given Docker network,
+// or an error when the inspect fails or the endpoint is missing. Errors
+// propagate as-is so callers can distinguish "container/network gone" from a
+// real health check timeout.
+func containerNetworkIP(ctx context.Context, c healthCheckClient, network, containerID string) (string, error) {
+	info, err := c.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("inspecting container: %w", err)
+	}
+
+	if info.Container.NetworkSettings == nil {
+		return "", fmt.Errorf("container has no network settings yet")
+	}
+
+	endpoint := info.Container.NetworkSettings.Networks[network]
+	if endpoint == nil {
+		return "", fmt.Errorf("container is not attached to the %q network", network)
+	}
+
+	addr := endpoint.IPAddress
+	if !addr.IsValid() {
+		return "", fmt.Errorf("container has no IP address on the %q network", network)
+	}
+
+	return addr.String(), nil
 }

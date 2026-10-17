@@ -352,3 +352,28 @@ func TestContainerConfigWithoutDocktailLabels(t *testing.T) {
 	assert.Equal(t, settings.Marshal(), config.Labels[labelKey])
 	assert.Len(t, config.Labels, 1)
 }
+
+func TestUsesProxy(t *testing.T) {
+	t.Run("plain app uses proxy", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{Name: "chat", Host: "chat.example.com"}}
+		assert.True(t, app.usesProxy())
+	})
+
+	t.Run("docktail app skips proxy", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{
+			Name:      "budget",
+			Host:      "budget.example.com",
+			Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode},
+		}}
+		assert.False(t, app.usesProxy())
+	})
+
+	t.Run("tailscale toggled on but mode unset uses proxy", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{
+			Name:      "budget",
+			Host:      "budget.example.com",
+			Tailscale: TailscaleSettings{Enabled: true},
+		}}
+		assert.True(t, app.usesProxy())
+	})
+}
