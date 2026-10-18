@@ -247,9 +247,9 @@ func (m InstallAdvancedForm) maxVisibleRows() int {
 	if m.height <= 0 {
 		return m.envRowCount()
 	}
-	// Title (2) + fixed fields and checkboxes (30) + env header (2) +
-	// buttons (3) + help (1)
-	available := m.height - 38
+	// Title (2) + fixed fields and checkboxes (30) + Tailscale Service section
+	// (32) + env header (2) + buttons (3) + help (1)
+	available := m.height - 70
 	rowHeight := 4 // bordered input (3) + gap (1)
 	return max(available/rowHeight, 1)
 }
@@ -262,8 +262,8 @@ func (m InstallAdvancedForm) renderContent() string {
 	parts = append(parts, m.renderField(advancedVolumePathsField, "Volume paths")...)
 	parts = append(parts, m.renderCheckbox(advancedSkipRailsEnvField, "Rails environment")...)
 
-	parts = append(parts, m.renderEnvGrid()...)
 	parts = append(parts, m.renderDocktailSection()...)
+	parts = append(parts, m.renderEnvGrid()...)
 	parts = append(parts, m.renderButtons())
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
