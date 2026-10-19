@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -69,6 +70,40 @@ func TestInstallAdvancedForm_DefaultVolumePathsSubmitAsUnset(t *testing.T) {
 	assert.Nil(t, settings.VolumePaths)
 }
 
+func TestInstallAdvancedForm_CoversAppShapeOnly(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
+
+	assert.Equal(t, 6, m.form.ItemCount(), "four fixed fields plus one empty env row")
+	assert.Equal(t, 0, advancedHealthCheckField)
+	assert.Equal(t, 1, advancedAppPortField)
+	assert.Equal(t, 2, advancedVolumePathsField)
+	assert.Equal(t, 3, advancedSkipRailsEnvField)
+	assert.Equal(t, 4, advancedEnvStart)
+}
+
+func TestInstallAdvancedForm_HasNoTailscaleFields(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
+	view := ansi.Strip(m.View())
+
+	assert.NotContains(t, view, "Tailscale")
+	assert.NotContains(t, view, "Docktail")
+}
+
+func TestInstallAdvancedForm_LeavesTailscaleSettingsAlone(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name: "budget",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			ServicePort: 443,
+			Path:        "/",
+		},
+	}
+
+	assert.True(t, original.Equal(advancedFormSubmit(t, NewInstallAdvancedForm(original))))
+}
+
 func TestInstallAdvancedForm_GrowsEnvRows(t *testing.T) {
 	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
@@ -85,61 +120,16 @@ func TestInstallAdvancedForm_GrowsEnvRows(t *testing.T) {
 	assert.Equal(t, initial+2, m.form.ItemCount(), "typing a new key appends an empty row")
 }
 
-func TestInstallAdvancedForm_SubmitDocktailValues(t *testing.T) {
-	original := docker.ApplicationSettings{Name: "budget", AppPort: 5006}
+func TestInstallAdvancedForm_FitsFieldsAndButtonsAtSmallHeight(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 
-	m := NewInstallAdvancedForm(original)
-	m.form.CheckboxField(advancedDocktailEnabledField).Toggle()
-	m.form.TextField(advancedDocktailServiceField).SetValue("Budget")
-	m.form.TextField(advancedDocktailServicePortField).SetValue("8443")
-	m.form.TextField(advancedDocktailPathField).SetValue("/budget")
-	m.form.TextField(advancedDocktailTagsField).SetValue("tag:server")
+	view := ansi.Strip(m.View())
 
-	settings := advancedFormSubmit(t, m)
-
-	assert.True(t, settings.DocktailEnabled())
-	assert.Equal(t, docker.DocktailMode, settings.Tailscale.Mode, "the mode defaults to docktail")
-	assert.Equal(t, "Budget", settings.Tailscale.Service, "the typed name is kept as entered")
-	assert.Equal(t, "budget", settings.EffectiveServiceName(), "the service name is sanitized for the tailnet")
-	assert.Equal(t, 8443, settings.Tailscale.ServicePort)
-	assert.Equal(t, "/budget", settings.Tailscale.Path)
-	assert.Equal(t, "tag:server", settings.Tailscale.Tags)
-	assert.Equal(t, map[string]string{
-		"docktail.service.enable":       "true",
-		"docktail.service.name":         "budget",
-		"docktail.service.port":         "5006",
-		"docktail.service.service-port": "8443",
-		"docktail.service.path":         "/budget",
-		"docktail.tags":                 "tag:server",
-	}, settings.DocktailLabels())
-}
-
-func TestInstallAdvancedForm_DocktailPrefillsAndRoundTrips(t *testing.T) {
-	original := docker.ApplicationSettings{
-		Name:    "budget",
-		AppPort: 5006,
-		Tailscale: docker.TailscaleSettings{
-			Enabled:     true,
-			Mode:        docker.DocktailMode,
-			Service:     "budget",
-			Port:        3000,
-			ServicePort: 443,
-			Path:        "/",
-			Tags:        "tag:server",
-		},
-	}
-
-	m := NewInstallAdvancedForm(original)
-
-	assert.True(t, m.form.CheckboxField(advancedDocktailEnabledField).Checked())
-	assert.Equal(t, docker.DocktailMode, m.form.TextField(advancedDocktailModeField).Value())
-	assert.Equal(t, "budget", m.form.TextField(advancedDocktailServiceField).Value())
-	assert.Equal(t, "3000", m.form.TextField(advancedDocktailPortField).Value())
-	assert.Equal(t, "443", m.form.TextField(advancedDocktailServicePortField).Value())
-	assert.Equal(t, "/", m.form.TextField(advancedDocktailPathField).Value())
-	assert.Equal(t, "tag:server", m.form.TextField(advancedDocktailTagsField).Value())
-
-	assert.True(t, original.Equal(advancedFormSubmit(t, m)))
+	assert.LessOrEqual(t, strings.Count(view, "\n")+1, 40)
+	assert.Contains(t, view, "Environment variables")
+	assert.Contains(t, view, "Install")
+	assert.Contains(t, view, "Cancel")
 }
 
 func TestInstallAdvancedForm_Cancel(t *testing.T) {

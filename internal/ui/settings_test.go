@@ -172,6 +172,21 @@ func TestSettings_ViewShowsProgressWhileDeploying(t *testing.T) {
 	assert.NotEmpty(t, view)
 }
 
+func TestSettings_TailscaleSectionIsWired(t *testing.T) {
+	ns, _ := docker.NewNamespace("test")
+	app := &docker.Application{
+		Settings: docker.ApplicationSettings{
+			Name:  "budget",
+			Host:  "budget.example.com",
+			Image: "example/app:latest",
+		},
+	}
+
+	s := NewSettings(ns, app, SettingsSectionTailscale)
+
+	assert.Equal(t, "Tailscale", s.section.Title())
+}
+
 // Helpers
 
 func testSettings() Settings {

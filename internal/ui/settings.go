@@ -89,6 +89,8 @@ func NewSettings(ns *docker.Namespace, app *docker.Application, sectionType Sett
 		section = NewSettingsFormEmail(app.Settings)
 	case SettingsSectionEnvironment:
 		section = NewSettingsFormEnvironment(app.Settings)
+	case SettingsSectionTailscale:
+		section = NewSettingsFormTailscale(app.Settings)
 	case SettingsSectionResources:
 		section = NewSettingsFormResources(app.Settings)
 	case SettingsSectionUpdates:

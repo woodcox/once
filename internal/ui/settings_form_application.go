@@ -18,13 +18,6 @@ const (
 	appAppPortField
 	appVolumePathsField
 	appSkipRailsEnvField
-	appDocktailEnabledField
-	appDocktailModeField
-	appDocktailServiceField
-	appDocktailPortField
-	appDocktailServicePortField
-	appDocktailPathField
-	appDocktailTagsField
 )
 
 type SettingsFormApplication struct {
@@ -61,31 +54,6 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 	}
 
 	skipRailsEnvField := NewCheckboxField("Skip Rails environment variables", settings.SkipRailsEnv)
-	docktailEnabledField := NewCheckboxField("Publish as a Tailscale Service", settings.DocktailEnabled())
-
-	docktailModeField := NewTextField(docker.DocktailMode)
-	docktailModeField.SetValue(settings.Tailscale.Mode)
-
-	docktailServiceField := NewTextField("defaults to the app name")
-	docktailServiceField.SetValue(settings.Tailscale.Service)
-
-	docktailPortField := NewTextField("app port")
-	docktailPortField.SetDigitsOnly(true)
-	if settings.Tailscale.Port != 0 {
-		docktailPortField.SetValue(strconv.Itoa(settings.Tailscale.Port))
-	}
-
-	docktailServicePortField := NewTextField("443")
-	docktailServicePortField.SetDigitsOnly(true)
-	if settings.Tailscale.ServicePort != 0 {
-		docktailServicePortField.SetValue(strconv.Itoa(settings.Tailscale.ServicePort))
-	}
-
-	docktailPathField := NewTextField("/")
-	docktailPathField.SetValue(settings.Tailscale.Path)
-
-	docktailTagsField := NewTextField("tag:container")
-	docktailTagsField.SetValue(settings.Tailscale.Tags)
 
 	m := SettingsFormApplication{
 		title: "Application",
@@ -97,13 +65,6 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 			FormItem{Label: "App port", Field: appPortField},
 			FormItem{Label: "Volume paths", Field: volumePathsField},
 			FormItem{Label: "Rails environment", Field: skipRailsEnvField},
-			FormItem{Label: "Tailscale Service", Field: docktailEnabledField},
-			FormItem{Label: "Docktail mode", Field: docktailModeField},
-			FormItem{Label: "Service name", Field: docktailServiceField},
-			FormItem{Label: "Backend port", Field: docktailPortField},
-			FormItem{Label: "Service port", Field: docktailServicePortField},
-			FormItem{Label: "Service path", Field: docktailPathField},
-			FormItem{Label: "Service tags", Field: docktailTagsField},
 		),
 	}
 
@@ -126,17 +87,6 @@ func NewSettingsFormApplication(settings docker.ApplicationSettings) SettingsFor
 		}
 
 		s.SkipRailsEnv = f.CheckboxField(appSkipRailsEnvField).Checked()
-
-		s.Tailscale.Enabled = f.CheckboxField(appDocktailEnabledField).Checked()
-		s.Tailscale.Mode = f.TextField(appDocktailModeField).Value()
-		if s.Tailscale.Enabled && s.Tailscale.Mode == "" {
-			s.Tailscale.Mode = docker.DocktailMode
-		}
-		s.Tailscale.Service = f.TextField(appDocktailServiceField).Value()
-		s.Tailscale.Port, _ = strconv.Atoi(f.TextField(appDocktailPortField).Value())
-		s.Tailscale.ServicePort, _ = strconv.Atoi(f.TextField(appDocktailServicePortField).Value())
-		s.Tailscale.Path = f.TextField(appDocktailPathField).Value()
-		s.Tailscale.Tags = f.TextField(appDocktailTagsField).Value()
 
 		return func() tea.Msg { return SettingsSectionSubmitMsg{Settings: s} }
 	})

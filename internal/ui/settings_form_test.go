@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -138,12 +139,29 @@ func TestSettingsFormApplication_Cancel(t *testing.T) {
 	assert.True(t, ok, "expected SettingsSectionCancelMsg, got %T", msg)
 }
 
-func TestSettingsFormApplication_DocktailRoundTrip(t *testing.T) {
+func TestSettingsFormApplication_LeavesTailscaleSettingsAlone(t *testing.T) {
 	original := docker.ApplicationSettings{
-		Name:    "budget",
-		Image:   "example/app:latest",
-		Host:    "budget.example.com",
-		AppPort: 5006,
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			ServicePort: 443,
+			Path:        "/",
+		},
+	}
+
+	form := NewSettingsFormApplication(original)
+
+	assert.NotContains(t, ansi.Strip(form.View()), "Tailscale")
+	assert.True(t, original.Equal(applicationSubmit(t, &form)), "the Application section keeps the Service settings untouched")
+}
+
+func TestSettingsFormTailscale_InitialState(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Name: "budget",
 		Tailscale: docker.TailscaleSettings{
 			Enabled:     true,
 			Mode:        docker.DocktailMode,
@@ -155,31 +173,101 @@ func TestSettingsFormApplication_DocktailRoundTrip(t *testing.T) {
 		},
 	}
 
-	form := NewSettingsFormApplication(original)
+	form := NewSettingsFormTailscale(settings)
 
-	assert.True(t, form.form.CheckboxField(appDocktailEnabledField).Checked())
-	assert.Equal(t, "budget", form.form.TextField(appDocktailServiceField).Value())
-	assert.Equal(t, "3000", form.form.TextField(appDocktailPortField).Value())
-	assert.Equal(t, "8443", form.form.TextField(appDocktailServicePortField).Value())
-	assert.Equal(t, "/budget", form.form.TextField(appDocktailPathField).Value())
-	assert.Equal(t, "tag:server", form.form.TextField(appDocktailTagsField).Value())
-
-	assert.True(t, original.Equal(applicationSubmit(t, &form)))
+	assert.Equal(t, "Tailscale", form.Title())
+	assert.True(t, form.form.CheckboxField(tailscaleEnabledField).Checked())
+	assert.Equal(t, "budget", form.form.TextField(tailscaleServiceNameField).Value())
+	assert.Equal(t, "3000", form.form.TextField(tailscaleBackendPortField).Value())
+	assert.Equal(t, "8443", form.form.TextField(tailscaleServicePortField).Value())
+	assert.Equal(t, "/budget", form.form.TextField(tailscalePathField).Value())
+	assert.Equal(t, "tag:server", form.form.TextField(tailscaleTagsField).Value())
 }
 
-func TestSettingsFormApplication_EnablingDocktailDefaultsTheMode(t *testing.T) {
-	form := NewSettingsFormApplication(docker.ApplicationSettings{
+func TestSettingsFormTailscale_RoundTrip(t *testing.T) {
+	original := docker.ApplicationSettings{
 		Name:  "budget",
 		Image: "example/app:latest",
 		Host:  "budget.example.com",
-	})
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			Port:        3000,
+			ServicePort: 8443,
+			Path:        "/budget",
+			Tags:        "tag:server",
+		},
+	}
 
-	form.form.CheckboxField(appDocktailEnabledField).Toggle()
+	form := NewSettingsFormTailscale(original)
 
-	settings := applicationSubmit(t, &form)
+	result := tailscaleSubmit(t, &form)
+
+	assert.True(t, original.Equal(result))
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":       "true",
+		"docktail.service.name":         "budget",
+		"docktail.service.port":         "3000",
+		"docktail.service.service-port": "8443",
+		"docktail.service.path":         "/budget",
+		"docktail.tags":                 "tag:server",
+	}, result.DocktailLabels())
+}
+
+func TestSettingsFormTailscale_EnablingDefaultsTheMode(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+	}
+
+	form := NewSettingsFormTailscale(original)
+	form.form.CheckboxField(tailscaleEnabledField).Toggle()
+
+	settings := tailscaleSubmit(t, &form)
+
 	assert.True(t, settings.DocktailEnabled())
 	assert.Equal(t, docker.DocktailMode, settings.Tailscale.Mode)
 	assert.Equal(t, "budget", settings.EffectiveServiceName())
+}
+
+func TestSettingsFormTailscale_DisablingClearsTheService(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			ServicePort: 443,
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+	form.form.CheckboxField(tailscaleEnabledField).Toggle()
+
+	settings := tailscaleSubmit(t, &form)
+
+	assert.False(t, settings.DocktailEnabled())
+	assert.Nil(t, settings.DocktailLabels())
+	assert.False(t, original.Equal(settings))
+}
+
+func TestSettingsFormTailscale_Cancel(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget"})
+
+	for form.form.Focused() != form.form.ItemCount()+1 {
+		tailscalePressTab(&form)
+	}
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	form = result.(SettingsFormTailscale)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok := msg.(SettingsSectionCancelMsg)
+	assert.True(t, ok, "expected SettingsSectionCancelMsg, got %T", msg)
 }
 
 func TestSettingsFormEmail_InitialState(t *testing.T) {
@@ -755,4 +843,24 @@ func environmentTypeText(form *SettingsFormEnvironment, text string) {
 
 func environmentSendWindowSize(form *SettingsFormEnvironment, w, h int) {
 	updateSettingsForm(form, tea.WindowSizeMsg{Width: w, Height: h})
+}
+
+func tailscalePressTab(form *SettingsFormTailscale) {
+	updateSettingsForm(form, keyPressMsg("tab"))
+}
+
+func tailscaleSubmit(t *testing.T, form *SettingsFormTailscale) docker.ApplicationSettings {
+	t.Helper()
+
+	for form.form.Focused() != form.form.ItemCount() {
+		tailscalePressTab(form)
+	}
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	*form = result.(SettingsFormTailscale)
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(SettingsSectionSubmitMsg)
+	require.True(t, ok, "expected SettingsSectionSubmitMsg, got %T", msg)
+	return msg.Settings
 }

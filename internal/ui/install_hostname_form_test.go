@@ -3,13 +3,14 @@ package ui
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInstallHostnameForm_Submit(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetPublic)
 
 	hostnameFormTypeText(&form, "chat.example.com")
 	hostnameFormPressTab(&form)
@@ -24,7 +25,7 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 }
 
 func TestInstallHostnameForm_Cancel(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "", InstallTargetPublic)
 
 	// Tab past submit and the advanced settings action to reach cancel
 	hostnameFormPressTab(&form)
@@ -39,7 +40,7 @@ func TestInstallHostnameForm_Cancel(t *testing.T) {
 }
 
 func TestInstallHostnameForm_AdvancedSettings(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "", InstallTargetPublic)
 	hostnameFormTypeText(&form, "app.example.com")
 
 	hostnameFormPressTab(&form)
@@ -55,7 +56,7 @@ func TestInstallHostnameForm_AdvancedSettings(t *testing.T) {
 }
 
 func TestInstallHostnameForm_RequiresHostname(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "", InstallTargetPublic)
 
 	// Tab to submit button, then press enter with empty hostname
 	hostnameFormPressTab(&form)
@@ -64,24 +65,72 @@ func TestInstallHostnameForm_RequiresHostname(t *testing.T) {
 }
 
 func TestInstallHostnameForm_Hostname(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "", InstallTargetPublic)
 	hostnameFormTypeText(&form, "app.example.com")
 	assert.Equal(t, "app.example.com", form.Hostname())
 }
 
 func TestInstallHostnameForm_ShowsTitleWhenSet(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "campfire")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "campfire", InstallTargetPublic)
 	view := ansi.Strip(form.View())
 	assert.Contains(t, view, "Installing campfire")
 }
 
 func TestInstallHostnameForm_NoTitleWhenEmpty(t *testing.T) {
-	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "")
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetPublic)
 	view := ansi.Strip(form.View())
 	assert.NotContains(t, view, "Installing")
 }
 
+func TestInstallHostnameForm_PublicTargetAsksForAHostname(t *testing.T) {
+	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
+
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetPublic)
+	hostnameFormSendWindowSize(&form)
+	view := ansi.Strip(form.View())
+
+	assert.Contains(t, view, "Hostname")
+	assert.Contains(t, view, "once-campfire.example.com")
+}
+
+func TestInstallHostnameForm_TailnetTargetAsksForATailnetName(t *testing.T) {
+	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
+
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetTailnet)
+	hostnameFormSendWindowSize(&form)
+	view := ansi.Strip(form.View())
+
+	assert.Contains(t, view, "Tailnet name")
+	assert.Contains(t, view, "once-campfire.tail1234.ts.net")
+	assert.NotContains(t, view, "Hostname")
+}
+
+func TestInstallHostnameForm_TailnetTargetFallsBackWithoutSuffix(t *testing.T) {
+	stubTailnetMagicDNSSuffix(t, "")
+
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetTailnet)
+	hostnameFormSendWindowSize(&form)
+	view := ansi.Strip(form.View())
+
+	assert.Contains(t, view, "once-campfire.example.com")
+}
+
+func TestTailnetNamePlaceholder(t *testing.T) {
+	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
+
+	assert.Equal(t, "once-campfire.tail1234.ts.net", tailnetNamePlaceholder("ghcr.io/basecamp/once-campfire:latest"))
+	assert.Equal(t, "app.example.com", tailnetNamePlaceholder(""), "no image ref leaves the generic placeholder")
+}
+
 // Helpers
+
+func stubTailnetMagicDNSSuffix(t *testing.T, suffix string) {
+	t.Helper()
+
+	original := tailnetMagicDNSSuffix
+	tailnetMagicDNSSuffix = func() string { return suffix }
+	t.Cleanup(func() { tailnetMagicDNSSuffix = original })
+}
 
 func hostnameFormTypeText(form *InstallHostnameForm, text string) {
 	for _, r := range text {
@@ -91,4 +140,8 @@ func hostnameFormTypeText(form *InstallHostnameForm, text string) {
 
 func hostnameFormPressTab(form *InstallHostnameForm) {
 	*form, _ = form.Update(keyPressMsg("tab"))
+}
+
+func hostnameFormSendWindowSize(form *InstallHostnameForm) {
+	*form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 }

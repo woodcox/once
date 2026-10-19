@@ -27,8 +27,10 @@ type installState int
 const (
 	installStateAppList   installState = iota // Screen 1: choose app
 	installStateImageForm                     // Screen 2: enter image ref
-	installStateHostname                      // Screen 3: enter hostname
-	installStateAdvanced                      // Screen 4: advanced settings
+	installStateWhere                         // Screen 3: choose where it runs
+	installStateHostname                      // Screen 4: enter hostname
+	installStateAdvanced                      // Screen 5: advanced settings
+	installStateTailscale                     // Screen 6: Tailscale Service options
 	installStateActivity                      // Installing
 )
 
@@ -38,26 +40,32 @@ type InstallFormSubmitMsg struct {
 }
 
 type Install struct {
-	namespace      *docker.Namespace
-	width, height  int
-	help           Help
-	state          installState
-	appList        InstallAppList
-	imageForm      InstallImageForm
-	hostnameForm   InstallHostnameForm
-	advancedForm   InstallAdvancedForm
-	activity       *InstallActivity
-	popupHelp      *PopupHelp
-	starfield      *Starfield
-	logo           *Logo
-	err            error
-	cliMode        bool
-	customImage    bool
-	customImageRef string
-	installFlag    string
-	registry       docker.RegistrySettings
-	pendingImage   string
-	pendingHost    string
+	namespace          *docker.Namespace
+	width, height      int
+	help               Help
+	state              installState
+	appList            InstallAppList
+	imageForm          InstallImageForm
+	whereForm          InstallWhereForm
+	hostnameForm       InstallHostnameForm
+	advancedForm       InstallAdvancedForm
+	tailscaleForm      InstallTailscaleForm
+	activity           *InstallActivity
+	popupHelp          *PopupHelp
+	starfield          *Starfield
+	logo               *Logo
+	err                error
+	cliMode            bool
+	customImage        bool
+	customImageRef     string
+	installFlag        string
+	registry           docker.RegistrySettings
+	target             InstallTarget
+	pendingImage       string
+	pendingHost        string
+	pendingSettings    docker.ApplicationSettings
+	pendingTailscale   docker.TailscaleSettings
+	tailscaleConfirmed bool
 }
 
 func NewInstall(ns *docker.Namespace, imageRef string) Install {
@@ -76,7 +84,7 @@ func NewInstall(ns *docker.Namespace, imageRef string) Install {
 			imageRef = expanded
 		}
 		m.state = installStateHostname
-		m.hostnameForm = NewInstallHostnameForm(imageRef, m.installFlag)
+		m.hostnameForm = NewInstallHostnameForm(imageRef, m.installFlag, InstallTargetPublic)
 	} else {
 		m.state = installStateAppList
 		m.appList = NewInstallAppList()
@@ -172,10 +180,11 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 
 	case InstallAppSelectedMsg:
-		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
 		m.customImage = false
 		m.registry = docker.RegistrySettings{}
-		m.state = installStateHostname
+		m.pendingImage = msg.ImageRef
+		m.resetTarget()
+		m.state = installStateWhere
 		return m, m.initScreenWithSize()
 
 	case InstallCustomSelectedMsg:
@@ -192,9 +201,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.err = docker.ErrRegistryPasswordWithoutUsername
 			return m, nil
 		}
-		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
 		m.customImage = true
 		m.customImageRef = msg.ImageRef
+		m.pendingImage = msg.ImageRef
 		m.registry = docker.RegistrySettings{}
 		if msg.RegistryUsername != "" || msg.RegistryPassword != "" {
 			host, _ := docker.RegistryHost(msg.ImageRef)
@@ -204,6 +213,13 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 				Password: msg.RegistryPassword,
 			}
 		}
+		m.resetTarget()
+		m.state = installStateWhere
+		return m, m.initScreenWithSize()
+
+	case InstallWhereSelectedMsg:
+		m.target = msg.Target
+		m.hostnameForm = NewInstallHostnameForm(m.pendingImage, "", m.target)
 		m.state = installStateHostname
 		return m, m.initScreenWithSize()
 
@@ -215,11 +231,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		if m.cliMode {
 			return m, m.cancelFromScreen()
 		}
-		if m.customImage {
-			m.state = installStateImageForm
-			return m, m.imageForm.Init()
-		}
-		m.state = installStateAppList
+		m.state = installStateWhere
 		return m, nil
 
 	case InstallFormSubmitMsg:
@@ -227,10 +239,26 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.err = docker.ErrHostnameInUse
 			return m, nil
 		}
-		m.state = installStateActivity
-		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname, m.registry, docker.ApplicationSettings{})
-		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		return m, m.activity.Init()
+		m.pendingImage = msg.ImageRef
+		m.pendingHost = msg.Hostname
+		if m.target == InstallTargetTailnet {
+			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingTailscale)
+			m.state = installStateTailscale
+			return m, m.initScreenWithSize()
+		}
+		return m, m.startActivity(m.pendingSettings)
+
+	case InstallTailscaleSubmitMsg:
+		if m.state != installStateTailscale {
+			break
+		}
+		m.pendingTailscale = msg.Tailscale
+		m.tailscaleConfirmed = true
+		return m, m.startActivity(m.pendingSettings)
+
+	case InstallTailscaleBackMsg:
+		m.state = installStateHostname
+		return m, nil
 
 	case InstallAdvancedMsg:
 		if msg.Hostname == "" {
@@ -243,7 +271,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 		m.pendingImage = msg.ImageRef
 		m.pendingHost = msg.Hostname
-		m.advancedForm = NewInstallAdvancedForm(docker.ApplicationSettings{})
+		m.advancedForm = NewInstallAdvancedForm(m.pendingSettings)
 		m.state = installStateAdvanced
 		return m, m.initScreenWithSize()
 
@@ -258,10 +286,13 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.err = err
 			return m, nil
 		}
-		m.state = installStateActivity
-		m.activity = NewInstallActivity(m.namespace, m.pendingImage, m.pendingHost, m.registry, msg.Settings)
-		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		return m, m.activity.Init()
+		m.pendingSettings = settings
+		if m.target == InstallTargetTailnet && !m.tailscaleConfirmed {
+			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingTailscale)
+			m.state = installStateTailscale
+			return m, m.initScreenWithSize()
+		}
+		return m, m.startActivity(m.pendingSettings)
 
 	case SettingsSectionCancelMsg:
 		if m.state != installStateAdvanced {
@@ -344,10 +375,14 @@ func (m Install) initCurrentScreen() tea.Cmd {
 		return m.appList.Init()
 	case installStateImageForm:
 		return m.imageForm.Init()
+	case installStateWhere:
+		return m.whereForm.Init()
 	case installStateHostname:
 		return m.hostnameForm.Init()
 	case installStateAdvanced:
 		return m.advancedForm.Init()
+	case installStateTailscale:
+		return m.tailscaleForm.Init()
 	}
 	return nil
 }
@@ -370,6 +405,10 @@ func (m *Install) updateCurrentScreen(msg tea.Msg) tea.Cmd {
 		var cmd tea.Cmd
 		m.imageForm, cmd = m.imageForm.Update(msg)
 		return cmd
+	case installStateWhere:
+		var cmd tea.Cmd
+		m.whereForm, cmd = m.whereForm.Update(msg)
+		return cmd
 	case installStateHostname:
 		var cmd tea.Cmd
 		m.hostnameForm, cmd = m.hostnameForm.Update(msg)
@@ -377,6 +416,10 @@ func (m *Install) updateCurrentScreen(msg tea.Msg) tea.Cmd {
 	case installStateAdvanced:
 		var cmd tea.Cmd
 		m.advancedForm, cmd = m.advancedForm.Update(msg)
+		return cmd
+	case installStateTailscale:
+		var cmd tea.Cmd
+		m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
 		return cmd
 	}
 	return nil
@@ -388,10 +431,14 @@ func (m Install) viewCurrentScreen() string {
 		return m.appList.View()
 	case installStateImageForm:
 		return m.imageForm.View()
+	case installStateWhere:
+		return m.whereForm.View()
 	case installStateHostname:
 		return m.hostnameForm.View()
 	case installStateAdvanced:
 		return m.advancedForm.View()
+	case installStateTailscale:
+		return m.tailscaleForm.View()
 	}
 	return ""
 }
@@ -403,21 +450,55 @@ func (m Install) handleBack() (Install, tea.Cmd) {
 	case installStateImageForm:
 		m.state = installStateAppList
 		return m, nil
-	case installStateHostname:
-		if m.cliMode {
-			return m, m.cancelFromScreen()
-		}
+	case installStateWhere:
 		if m.customImage {
 			m.state = installStateImageForm
 			return m, m.imageForm.Init()
 		}
 		m.state = installStateAppList
 		return m, nil
-	case installStateAdvanced:
+	case installStateHostname:
+		if m.cliMode {
+			return m, m.cancelFromScreen()
+		}
+		m.state = installStateWhere
+		return m, nil
+	case installStateAdvanced, installStateTailscale:
 		m.state = installStateHostname
 		return m, nil
 	}
 	return m, nil
+}
+
+// startActivity installs the app: the settings collected so far, the image and
+// host, and whether the app runs publicly or on the tailnet.
+func (m *Install) startActivity(settings docker.ApplicationSettings) tea.Cmd {
+	settings.Image = m.pendingImage
+	settings.Host = m.pendingHost
+	if m.target == InstallTargetTailnet {
+		settings.Tailscale = m.pendingTailscale
+	}
+	settings = m.target.Apply(settings)
+
+	if err := settings.Validate(); err != nil {
+		m.err = err
+		return nil
+	}
+
+	m.state = installStateActivity
+	m.activity = NewInstallActivity(m.namespace, m.pendingImage, m.pendingHost, m.registry, settings)
+	m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	return m.activity.Init()
+}
+
+// resetTarget returns the app to the default public target, discarding a
+// Tailscale Service chosen for a previously selected image.
+func (m *Install) resetTarget() {
+	m.target = InstallTargetPublic
+	m.pendingSettings = docker.ApplicationSettings{}
+	m.pendingTailscale = docker.TailscaleSettings{}
+	m.tailscaleConfirmed = false
+	m.whereForm = NewInstallWhereForm()
 }
 
 func (m Install) imageErrorState() installState {
