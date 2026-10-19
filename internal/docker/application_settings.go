@@ -218,7 +218,7 @@ func (s ApplicationSettings) ValidateTailscale() error {
 		return ErrInvalidDocktailPath
 	}
 	switch s.Tailscale.Protocol {
-	case "", "http", "https", "tcp":
+	case "", "http", "https", "https+insecure", "tcp", "tls-terminated-tcp":
 	default:
 		return ErrInvalidDocktailProtocol
 	}
@@ -440,7 +440,7 @@ func (s ApplicationSettings) effectiveServiceProtocol() string {
 	if s.EffectiveServicePort() == 443 {
 		return "https"
 	}
-	if s.effectiveProtocol() == "tcp" {
+	if isTCPProtocol(s.effectiveProtocol()) {
 		return "tcp"
 	}
 	return "http"

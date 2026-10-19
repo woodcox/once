@@ -708,6 +708,7 @@ func TestEffectiveDocktailProtocols(t *testing.T) {
 	assert.Equal(t, "http", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 80}}.effectiveServiceProtocol())
 	assert.Equal(t, "http", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 5432}}.effectiveServiceProtocol())
 	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 5432, Protocol: "tcp"}}.effectiveServiceProtocol())
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 5432, Protocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
 	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 8443, ServiceProtocol: "https"}}.effectiveServiceProtocol())
 	assert.Equal(t, "tls-terminated-tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServiceProtocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
 }
@@ -719,7 +720,7 @@ func TestValidateTailscaleProtocols(t *testing.T) {
 	}
 
 	t.Run("backend protocol", func(t *testing.T) {
-		for _, protocol := range []string{"http", "https", "tcp"} {
+		for _, protocol := range []string{"http", "https", "https+insecure", "tcp", "tls-terminated-tcp"} {
 			assert.NoError(t, settings(TailscaleSettings{Protocol: protocol}).ValidateTailscale())
 		}
 		assert.ErrorIs(t, settings(TailscaleSettings{Protocol: "grpc"}).ValidateTailscale(), ErrInvalidDocktailProtocol)
@@ -747,6 +748,7 @@ func TestValidateTailscaleProtocols(t *testing.T) {
 
 	t.Run("path is rejected for TCP", func(t *testing.T) {
 		assert.ErrorIs(t, settings(TailscaleSettings{Port: 5432, ServicePort: 5432, Protocol: "tcp", Path: "/budget"}).ValidateTailscale(), ErrDocktailPathOnTCP)
+		assert.ErrorIs(t, settings(TailscaleSettings{Port: 5432, ServicePort: 5432, Protocol: "tls-terminated-tcp", Path: "/budget"}).ValidateTailscale(), ErrDocktailPathOnTCP)
 		assert.NoError(t, settings(TailscaleSettings{Port: 5432, ServicePort: 5432, Protocol: "tcp", Path: "/"}).ValidateTailscale())
 		assert.NoError(t, settings(TailscaleSettings{Path: "/budget"}).ValidateTailscale())
 	})
