@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
@@ -214,6 +215,7 @@ type Form struct {
 	actionButton *FormActionButton
 	focused      int
 	width        int
+	height       int
 	errorField   int
 	error        string
 	onSubmit     func(f *Form) tea.Cmd
@@ -249,6 +251,7 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		f.width = msg.Width
+		f.height = msg.Height
 		inputWidth := min(f.width-4, 60)
 		for _, item := range f.items {
 			item.Field.SetWidth(inputWidth)
@@ -288,45 +291,32 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 }
 
 func (f Form) View() string {
-	var parts []string
+	blocks := f.itemBlocks()
+	buttons := f.renderButtons()
 
-	errorStyle := lipgloss.NewStyle().Foreground(Colors.Error)
-
-	for i, item := range f.items {
-		if _, isStatic := item.Field.(*StaticField); isStatic {
-			parts = append(parts, item.Field.View())
-			continue
-		}
-		label := Styles.Label.Render(item.Label)
-
-		hasError := f.error != "" && i == f.errorField
-		inputStyle := Styles.WithError(Styles.Focus(Styles.Input, f.focused == i), hasError)
-		field := mouse.Mark(fieldTarget(i), inputStyle.Render(item.Field.View()))
-
-		if hasError {
-			parts = append(parts, label, field, errorStyle.Render(f.error), "")
-		} else {
-			parts = append(parts, label, field, "")
-		}
+	// A form that doesn't fit the terminal shows whole items around the
+	// focused one and keeps the buttons reachable.
+	if f.height > 0 && f.height < 3 {
+		return buttons
 	}
 
-	submitButton := mouse.Mark("submit", Styles.Focus(Styles.ButtonPrimary, f.focused == f.submitIndex()).
-		Render(f.submitLabel))
-
-	buttonParts := []string{submitButton}
-
-	if f.actionButton != nil {
-		actionBtn := mouse.Mark("action", Styles.Focus(Styles.Button, f.focused == f.actionIndex()).
-			Render(f.actionButton.Label))
-		buttonParts = append(buttonParts, actionBtn)
+	start, end, windowed := f.visibleRange(blocks)
+	if !windowed {
+		parts := make([]string, 0, len(blocks)+2)
+		parts = append(parts, blocks...)
+		parts = append(parts, "", buttons)
+		return lipgloss.JoinVertical(lipgloss.Left, parts...)
 	}
 
-	cancelButton := mouse.Mark("cancel", Styles.Focus(Styles.Button, f.focused == f.cancelIndex()).
-		Render("Cancel"))
-
-	buttonParts = append(buttonParts, cancelButton)
-	buttons := lipgloss.JoinHorizontal(lipgloss.Center, buttonParts...)
-	parts = append(parts, "", buttons)
+	parts := make([]string, 0, end-start+3)
+	if start > 0 {
+		parts = append(parts, hiddenFieldsIndicator("↑", start))
+	}
+	parts = append(parts, blocks[start:end]...)
+	if end < len(blocks) {
+		parts = append(parts, hiddenFieldsIndicator("↓", len(blocks)-end))
+	}
+	parts = append(parts, buttons)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
@@ -384,6 +374,101 @@ func (f Form) Error() string {
 }
 
 // Private
+
+func (f Form) itemBlocks() []string {
+	blocks := make([]string, 0, len(f.items))
+	errorStyle := lipgloss.NewStyle().Foreground(Colors.Error)
+
+	for i, item := range f.items {
+		if _, isStatic := item.Field.(*StaticField); isStatic {
+			blocks = append(blocks, item.Field.View())
+			continue
+		}
+
+		parts := []string{Styles.Label.Render(item.Label)}
+
+		hasError := f.error != "" && i == f.errorField
+		inputStyle := Styles.WithError(Styles.Focus(Styles.Input, f.focused == i), hasError)
+		parts = append(parts, mouse.Mark(fieldTarget(i), inputStyle.Render(item.Field.View())))
+
+		if hasError {
+			parts = append(parts, errorStyle.Render(f.error))
+		}
+		parts = append(parts, "")
+
+		blocks = append(blocks, lipgloss.JoinVertical(lipgloss.Left, parts...))
+	}
+
+	return blocks
+}
+
+func (f Form) renderButtons() string {
+	submitButton := mouse.Mark("submit", Styles.Focus(Styles.ButtonPrimary, f.focused == f.submitIndex()).
+		Render(f.submitLabel))
+
+	buttonParts := []string{submitButton}
+
+	if f.actionButton != nil {
+		actionBtn := mouse.Mark("action", Styles.Focus(Styles.Button, f.focused == f.actionIndex()).
+			Render(f.actionButton.Label))
+		buttonParts = append(buttonParts, actionBtn)
+	}
+
+	cancelButton := mouse.Mark("cancel", Styles.Focus(Styles.Button, f.focused == f.cancelIndex()).
+		Render("Cancel"))
+
+	buttonParts = append(buttonParts, cancelButton)
+	return lipgloss.JoinHorizontal(lipgloss.Center, buttonParts...)
+}
+
+// visibleRange returns the slice of item blocks to render. When the form is
+// taller than the terminal it grows the window around the focused item, one
+// whole block at a time, and reserves a line for each hidden-fields indicator.
+func (f Form) visibleRange(blocks []string) (start, end int, windowed bool) {
+	n := len(blocks)
+	if f.height <= 0 || n == 0 {
+		return 0, n, false
+	}
+
+	total := 0
+	for _, block := range blocks {
+		total += lipgloss.Height(block)
+	}
+	if total+2 <= f.height {
+		return 0, n, false
+	}
+
+	budget := f.height - 1
+	focused := min(max(f.focused, 0), n-1)
+	start, end = focused, focused+1
+	used := lipgloss.Height(blocks[focused])
+
+	for {
+		grew := false
+
+		if start > 0 {
+			height := used + lipgloss.Height(blocks[start-1])
+			if height+hiddenFieldsLines(start-1, end, n) <= budget {
+				start--
+				used = height
+				grew = true
+			}
+		}
+
+		if end < n {
+			height := used + lipgloss.Height(blocks[end])
+			if height+hiddenFieldsLines(start, end+1, n) <= budget {
+				end++
+				used = height
+				grew = true
+			}
+		}
+
+		if !grew {
+			return start, end, true
+		}
+	}
+}
 
 func (f Form) focusNext() (Form, tea.Cmd) {
 	f.blurCurrent()
@@ -550,4 +635,26 @@ func fieldTarget(i int) string {
 
 func isDigitKey(k tea.Key) bool {
 	return unicode.IsDigit(rune(k.Text[0]))
+}
+
+func hiddenFieldsIndicator(arrow string, count int) string {
+	return lipgloss.NewStyle().Foreground(Colors.Border).
+		Render(fmt.Sprintf("%s %d more fields", arrow, count))
+}
+
+func hiddenFieldsLines(start, end, total int) int {
+	lines := 0
+	if start > 0 {
+		lines++
+	}
+	if end < total {
+		lines++
+	}
+	return lines
+}
+
+// formViewportHeight is the room a form has on a full-page screen: the title
+// rule, status/blank lines above it, and the help line below it.
+func formViewportHeight(terminalHeight int) int {
+	return max(terminalHeight-5, 1)
 }

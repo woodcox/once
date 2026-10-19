@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -348,6 +352,55 @@ func TestFormAppendItems_FocusStability(t *testing.T) {
 	assert.Equal(t, 1, form.Focused(), "focus unchanged after append")
 }
 
+func TestForm_LongFormWindowsAroundFocusedField(t *testing.T) {
+	form := longForm(6)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	view := form.View()
+
+	assert.LessOrEqual(t, lipgloss.Height(view), 20)
+	assert.Contains(t, view, "Field 1", "focused field stays visible")
+	assert.Contains(t, view, "Submit")
+	assert.Contains(t, view, "Cancel")
+	assert.Contains(t, view, "↓", "hidden fields are indicated")
+}
+
+func TestForm_LongFormKeepsFocusedFieldVisibleWhileScrolling(t *testing.T) {
+	form := longForm(6)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	for range 5 {
+		formPressTab(&form)
+	}
+	assert.Equal(t, 5, form.Focused())
+
+	last := form.View()
+	assert.LessOrEqual(t, lipgloss.Height(last), 20)
+	assert.Contains(t, last, "Field 6")
+	assert.Contains(t, last, "↑")
+
+	formPressShiftTab(&form)
+	assert.Equal(t, 4, form.Focused())
+
+	back := form.View()
+	assert.LessOrEqual(t, lipgloss.Height(back), 20)
+	assert.NotEmpty(t, strings.TrimSpace(back))
+	assert.Contains(t, back, "Field 5")
+}
+
+func TestForm_ShortFormIsUnchangedByWindowSize(t *testing.T) {
+	form := NewForm("Done",
+		FormItem{Label: "First", Field: NewTextField("first")},
+		FormItem{Label: "Second", Field: NewTextField("second")},
+	)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 100})
+	tall := form.View()
+
+	sized, _ := form.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	assert.Equal(t, withoutMouseMarks(tall), withoutMouseMarks(sized.View()), "a form that fits is rendered exactly as before")
+	assert.Equal(t, 14, lipgloss.Height(tall))
+}
+
 // Helpers
 
 func updateForm(f Form, msg tea.Msg) Form {
@@ -381,4 +434,21 @@ func formFocusSubmit(form *Form) {
 
 func formClickSubmit(form *Form) {
 	*form = updateForm(*form, MouseEvent{IsClick: true, Target: "submit"})
+}
+
+func longForm(n int) Form {
+	items := make([]FormItem, 0, n)
+	for i := range n {
+		items = append(items, FormItem{
+			Label: fmt.Sprintf("Field %d", i+1),
+			Field: NewTextField(fmt.Sprintf("field %d", i+1)),
+		})
+	}
+	return NewForm("Submit", items...)
+}
+
+var mouseMarkPattern = regexp.MustCompile(`\x1b\[\d+z`)
+
+func withoutMouseMarks(s string) string {
+	return mouseMarkPattern.ReplaceAllString(s, "")
 }

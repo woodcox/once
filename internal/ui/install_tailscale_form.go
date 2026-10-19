@@ -86,6 +86,11 @@ func (m InstallTailscaleForm) Init() tea.Cmd {
 }
 
 func (m InstallTailscaleForm) Update(msg tea.Msg) (InstallTailscaleForm, tea.Cmd) {
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		wsm.Height = formViewportHeight(wsm.Height)
+		msg = wsm
+	}
+
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
 	return m, cmd
