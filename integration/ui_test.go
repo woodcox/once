@@ -44,9 +44,13 @@ func TestUIInstallAndManageApp(t *testing.T) {
 	d.send(keyMsg("tab"))
 	d.send(keyMsg("enter"))
 
+	// -- Screen 3: Where should it run? Public is preselected --
+	d.waitForView("Where should this app run?", 5*time.Second)
+	d.send(keyMsg("enter"))
+
 	d.waitForView("Hostname", 5*time.Second)
 
-	// -- Screen 3: Hostname form --
+	// -- Screen 4: Hostname form --
 	d.typeText("chat.localhost")
 	d.send(keyMsg("tab"))
 	d.send(keyMsg("enter"))
