@@ -142,7 +142,24 @@ Turn it on with `Tailscale Service` in the install advanced settings, later unde
 once deploy <image> --host app.example.com --docktail --docktail-service myapp
 ```
 
-`--docktail-service` defaults to the application name, `--docktail-port` to the app port, `--docktail-service-port` to `443`, `--docktail-path` to `/`, and `--docktail-tags` to docktail's own default.
+ONCE sets these labels, and only these; anything unset is left to docktail's defaults:
+
+| Label | ONCE field | Default | Notes |
+| --- | --- | --- | --- |
+| `docktail.service.enable` | `--docktail` | off | |
+| `docktail.service.name` | `--docktail-service` | application name | lowercased DNS label |
+| `docktail.service.port` | `--docktail-port` | app port | backend container port |
+| `docktail.service.description` | `--docktail-description` | unset | synced to the Service comment; needs API credentials |
+| `docktail.service.direct` | `--docktail-direct` | `true` | `false` proxies published host ports instead of the container IP |
+| `docktail.service.network` | `--docktail-network` | `bridge` or first available | network used for container IP detection |
+| `docktail.service.protocol` | `--docktail-protocol` | `https` on port 443, else `http` | backend: `http`, `https` or `tcp` |
+| `docktail.service.service-port` | `--docktail-service-port` | `443` | port Tailscale listens on |
+| `docktail.service.service-protocol` | `--docktail-service-protocol` | `https` on 443, `tcp` for TCP, else `http` | `http`, `https`, `tcp` or `tls-terminated-tcp` |
+| `docktail.service.path` | `--docktail-path` | `/` | HTTP(S) only; rejected for TCP |
+| `docktail.service.proxy-protocol` | `--docktail-proxy-protocol` | off | `1` or `2`; TCP only |
+| `docktail.tags` | `--docktail-tags` | docktail's default | comma-separated |
+
+Funnel (`docktail.funnel.*`) is not supported: ONCE only advertises private Services.
 
 Set the application's hostname to the Service's tailnet name, so the URLs ONCE generates point at the address clients use.
 

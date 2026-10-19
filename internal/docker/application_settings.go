@@ -102,12 +102,18 @@ const DocktailMode = "docktail"
 
 // Docktail label keys, as understood by https://docktail.org.
 const (
-	docktailLabelEnable      = "docktail.service.enable"
-	docktailLabelName        = "docktail.service.name"
-	docktailLabelPort        = "docktail.service.port"
-	docktailLabelServicePort = "docktail.service.service-port"
-	docktailLabelPath        = "docktail.service.path"
-	docktailLabelTags        = "docktail.tags"
+	docktailLabelEnable          = "docktail.service.enable"
+	docktailLabelName            = "docktail.service.name"
+	docktailLabelPort            = "docktail.service.port"
+	docktailLabelServicePort     = "docktail.service.service-port"
+	docktailLabelServiceProtocol = "docktail.service.service-protocol"
+	docktailLabelPath            = "docktail.service.path"
+	docktailLabelProtocol        = "docktail.service.protocol"
+	docktailLabelProxyProtocol   = "docktail.service.proxy-protocol"
+	docktailLabelDescription     = "docktail.service.description"
+	docktailLabelDirect          = "docktail.service.direct"
+	docktailLabelNetwork         = "docktail.service.network"
+	docktailLabelTags            = "docktail.tags"
 )
 
 // TailscaleSettings configures exposure of an application as a native
@@ -115,13 +121,30 @@ const (
 // `docktail.*` labels on the app container and the host's docktail container
 // advertises it to tailscaled.
 type TailscaleSettings struct {
-	Enabled     bool   `json:"enabled,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	Service     string `json:"service,omitempty"`
-	Port        int    `json:"port,omitempty"`
-	ServicePort int    `json:"servicePort,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Tags        string `json:"tags,omitempty"`
+	Enabled         bool   `json:"enabled,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	Service         string `json:"service,omitempty"`
+	Port            int    `json:"port,omitempty"`
+	ServicePort     int    `json:"servicePort,omitempty"`
+	Path            string `json:"path,omitempty"`
+	Tags            string `json:"tags,omitempty"`
+	Description     string `json:"description,omitempty"`
+	Protocol        string `json:"protocol,omitempty"`
+	ServiceProtocol string `json:"serviceProtocol,omitempty"`
+	ProxyProtocol   string `json:"proxyProtocol,omitempty"`
+	Direct          *bool  `json:"direct,omitempty"`
+	Network         string `json:"network,omitempty"`
+}
+
+func (t TailscaleSettings) Equal(other TailscaleSettings) bool {
+	if (t.Direct == nil) != (other.Direct == nil) {
+		return false
+	}
+	if t.Direct != nil && *t.Direct != *other.Direct {
+		return false
+	}
+	t.Direct, other.Direct = nil, nil
+	return t == other
 }
 
 type ApplicationSettings struct {
@@ -194,6 +217,30 @@ func (s ApplicationSettings) ValidateTailscale() error {
 	if s.Tailscale.Path != "" && !strings.HasPrefix(s.Tailscale.Path, "/") {
 		return ErrInvalidDocktailPath
 	}
+	switch s.Tailscale.Protocol {
+	case "", "http", "https", "tcp":
+	default:
+		return ErrInvalidDocktailProtocol
+	}
+	switch s.Tailscale.ServiceProtocol {
+	case "", "http", "https", "tcp", "tls-terminated-tcp":
+	default:
+		return ErrInvalidDocktailServiceProtocol
+	}
+	switch s.Tailscale.ProxyProtocol {
+	case "", "1", "2":
+	default:
+		return ErrInvalidDocktailProxyProtocol
+	}
+
+	serviceProtocol := s.effectiveServiceProtocol()
+	if s.Tailscale.ProxyProtocol != "" && !isTCPProtocol(serviceProtocol) {
+		return ErrDocktailProxyProtocolWithoutTCP
+	}
+	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" && isTCPProtocol(serviceProtocol) {
+		return ErrDocktailPathOnTCP
+	}
+
 	if !s.Tailscale.Enabled {
 		return nil
 	}
@@ -299,6 +346,24 @@ func (s ApplicationSettings) DocktailLabels() map[string]string {
 		docktailLabelServicePort: strconv.Itoa(s.EffectiveServicePort()),
 	}
 
+	if s.Tailscale.Protocol != "" {
+		labels[docktailLabelProtocol] = s.Tailscale.Protocol
+	}
+	if s.Tailscale.ServiceProtocol != "" {
+		labels[docktailLabelServiceProtocol] = s.Tailscale.ServiceProtocol
+	}
+	if s.Tailscale.Description != "" {
+		labels[docktailLabelDescription] = s.Tailscale.Description
+	}
+	if s.Tailscale.Network != "" {
+		labels[docktailLabelNetwork] = s.Tailscale.Network
+	}
+	if s.Tailscale.ProxyProtocol != "" {
+		labels[docktailLabelProxyProtocol] = s.Tailscale.ProxyProtocol
+	}
+	if s.Tailscale.Direct != nil {
+		labels[docktailLabelDirect] = strconv.FormatBool(*s.Tailscale.Direct)
+	}
 	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" {
 		labels[docktailLabelPath] = s.Tailscale.Path
 	}
@@ -319,7 +384,7 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	if !slices.Equal(s.VolumePaths, other.VolumePaths) {
 		return false
 	}
-	if s.Tailscale != other.Tailscale {
+	if !s.Tailscale.Equal(other.Tailscale) {
 		return false
 	}
 	if s.Resources != other.Resources {
@@ -351,7 +416,41 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	return true
 }
 
+// Private
+
+// effectiveProtocol returns the backend protocol docktail will use, defaulting
+// to https on the backend port 443 and http otherwise.
+func (s ApplicationSettings) effectiveProtocol() string {
+	if s.Tailscale.Protocol != "" {
+		return s.Tailscale.Protocol
+	}
+	if s.EffectiveTailscalePort() == 443 {
+		return "https"
+	}
+	return "http"
+}
+
+// effectiveServiceProtocol returns the Tailscale-facing protocol docktail will
+// use, defaulting to https on the service port 443, tcp for a TCP backend, and
+// http otherwise.
+func (s ApplicationSettings) effectiveServiceProtocol() string {
+	if s.Tailscale.ServiceProtocol != "" {
+		return s.Tailscale.ServiceProtocol
+	}
+	if s.EffectiveServicePort() == 443 {
+		return "https"
+	}
+	if s.effectiveProtocol() == "tcp" {
+		return "tcp"
+	}
+	return "http"
+}
+
 // Helpers
+
+func isTCPProtocol(protocol string) bool {
+	return protocol == "tcp" || protocol == "tls-terminated-tcp"
+}
 
 const maxDNSLabelLength = 63
 

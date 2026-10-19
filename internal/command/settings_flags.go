@@ -30,12 +30,18 @@ type settingsFlags struct {
 	volumePaths     []string
 	skipRailsEnv    bool
 
-	docktail            bool
-	docktailService     string
-	docktailPort        int
-	docktailServicePort int
-	docktailPath        string
-	docktailTags        string
+	docktail                bool
+	docktailService         string
+	docktailPort            int
+	docktailServicePort     int
+	docktailPath            string
+	docktailTags            string
+	docktailDescription     string
+	docktailProtocol        string
+	docktailServiceProtocol string
+	docktailProxyProtocol   string
+	docktailNetwork         string
+	docktailDirect          string
 
 	registryUsername      string
 	registryPassword      string
@@ -66,6 +72,12 @@ func (f *settingsFlags) register(cmd *cobra.Command) {
 	cmd.Flags().IntVar(&f.docktailServicePort, "docktail-service-port", 0, "port Tailscale should listen on (defaults to 443)")
 	cmd.Flags().StringVar(&f.docktailPath, "docktail-path", "", "URL path to serve the application under (defaults to /)")
 	cmd.Flags().StringVar(&f.docktailTags, "docktail-tags", "", "comma-separated Tailscale Service tags")
+	cmd.Flags().StringVar(&f.docktailDescription, "docktail-description", "", "human-readable description for the Tailscale Service")
+	cmd.Flags().StringVar(&f.docktailProtocol, "docktail-protocol", "", "backend protocol (http, https or tcp; defaults to https on port 443, otherwise http)")
+	cmd.Flags().StringVar(&f.docktailServiceProtocol, "docktail-service-protocol", "", "Tailscale-facing protocol (http, https, tcp or tls-terminated-tcp)")
+	cmd.Flags().StringVar(&f.docktailProxyProtocol, "docktail-proxy-protocol", "", "PROXY protocol version to prepend on TCP forwards (1 or 2)")
+	cmd.Flags().StringVar(&f.docktailNetwork, "docktail-network", "", "Docker network used for container IP detection")
+	cmd.Flags().StringVar(&f.docktailDirect, "docktail-direct", "", "proxy directly to the container IP (true or false; defaults to true)")
 	cmd.Flags().StringVar(&f.registryUsername, "registry-username", "", "registry username for pulling the application image")
 	cmd.Flags().StringVar(&f.registryPassword, "registry-password", "", "registry password for pulling the application image")
 	cmd.Flags().BoolVar(&f.registryPasswordStdin, "registry-password-stdin", false, "read the registry password from stdin")
@@ -74,6 +86,11 @@ func (f *settingsFlags) register(cmd *cobra.Command) {
 
 func (f *settingsFlags) buildSettings(cmd *cobra.Command, image, host string) (docker.ApplicationSettings, error) {
 	envVars, err := f.parseEnvVars()
+	if err != nil {
+		return docker.ApplicationSettings{}, err
+	}
+
+	direct, err := parseOptionalBool(f.docktailDirect)
 	if err != nil {
 		return docker.ApplicationSettings{}, err
 	}
@@ -108,12 +125,18 @@ func (f *settingsFlags) buildSettings(cmd *cobra.Command, image, host string) (d
 		VolumePaths:     docker.ParseVolumePaths(strings.Join(f.volumePaths, ",")),
 		SkipRailsEnv:    f.skipRailsEnv,
 		Tailscale: docker.TailscaleSettings{
-			Enabled:     f.docktail,
-			Service:     f.docktailService,
-			Port:        f.docktailPort,
-			ServicePort: f.docktailServicePort,
-			Path:        f.docktailPath,
-			Tags:        f.docktailTags,
+			Enabled:         f.docktail,
+			Service:         f.docktailService,
+			Port:            f.docktailPort,
+			ServicePort:     f.docktailServicePort,
+			Path:            f.docktailPath,
+			Tags:            f.docktailTags,
+			Description:     f.docktailDescription,
+			Protocol:        f.docktailProtocol,
+			ServiceProtocol: f.docktailServiceProtocol,
+			ProxyProtocol:   f.docktailProxyProtocol,
+			Direct:          direct,
+			Network:         f.docktailNetwork,
 		},
 	}
 
@@ -230,6 +253,28 @@ func (f *settingsFlags) applyChanges(cmd *cobra.Command, existing docker.Applica
 	if cmd.Flags().Changed("docktail-tags") {
 		s.Tailscale.Tags = f.docktailTags
 	}
+	if cmd.Flags().Changed("docktail-description") {
+		s.Tailscale.Description = f.docktailDescription
+	}
+	if cmd.Flags().Changed("docktail-protocol") {
+		s.Tailscale.Protocol = f.docktailProtocol
+	}
+	if cmd.Flags().Changed("docktail-service-protocol") {
+		s.Tailscale.ServiceProtocol = f.docktailServiceProtocol
+	}
+	if cmd.Flags().Changed("docktail-proxy-protocol") {
+		s.Tailscale.ProxyProtocol = f.docktailProxyProtocol
+	}
+	if cmd.Flags().Changed("docktail-network") {
+		s.Tailscale.Network = f.docktailNetwork
+	}
+	if cmd.Flags().Changed("docktail-direct") {
+		direct, err := parseOptionalBool(f.docktailDirect)
+		if err != nil {
+			return s, err
+		}
+		s.Tailscale.Direct = direct
+	}
 	usernameChanged := cmd.Flags().Changed("registry-username")
 	passwordChanged := cmd.Flags().Changed("registry-password") || cmd.Flags().Changed("registry-password-stdin")
 	if usernameChanged != passwordChanged {
@@ -295,4 +340,20 @@ func (f *settingsFlags) parseEnvVars() (map[string]string, error) {
 	}
 
 	return envVars, nil
+}
+
+// Helpers
+
+func parseOptionalBool(value string) (*bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return nil, nil
+	case "true":
+		enabled := true
+		return &enabled, nil
+	case "false":
+		enabled := false
+		return &enabled, nil
+	}
+	return nil, fmt.Errorf("invalid boolean %q: must be true or false", value)
 }
