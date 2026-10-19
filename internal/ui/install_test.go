@@ -646,6 +646,39 @@ func TestInstall_AdvancedSubmitValidatesSettings(t *testing.T) {
 	})
 }
 
+func TestInstall_TailscaleSubmitSurfacesDockerValidation(t *testing.T) {
+	m := newTestInstall()
+	m.target = InstallTargetTailnet
+	m.pendingImage = "example/postgres:latest"
+	m.pendingHost = "postgres.example.ts.net"
+	m.state = installStateTailscale
+
+	m, _ = updateInstall(m, InstallTailscaleSubmitMsg{Tailscale: docker.TailscaleSettings{
+		Enabled:         true,
+		Mode:            docker.DocktailMode,
+		Service:         "postgres",
+		Protocol:        "tcp",
+		ServiceProtocol: "tcp",
+		Path:            "/db",
+	}})
+
+	assert.Equal(t, installStateTailscale, m.state)
+	assert.ErrorIs(t, m.err, docker.ErrDocktailPathOnTCP)
+}
+
+func TestInstall_TailscaleHelpDescribesTheTailnet(t *testing.T) {
+	m := newTestInstall()
+	m.target = InstallTargetTailnet
+	m.state = installStateHostname
+
+	title, content := m.helpForState()
+
+	assert.Equal(t, "Naming the Service on your tailnet", title)
+	assert.Contains(t, content, "tailnet")
+	assert.Contains(t, content, "MagicDNS")
+	assert.NotContains(t, content, "localhost")
+}
+
 // Helpers
 
 func newTestInstall() Install {

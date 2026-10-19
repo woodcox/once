@@ -242,7 +242,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		m.pendingImage = msg.ImageRef
 		m.pendingHost = msg.Hostname
 		if m.target == InstallTargetTailnet {
-			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingTailscale)
+			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
 			m.state = installStateTailscale
 			return m, m.initScreenWithSize()
 		}
@@ -288,7 +288,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 		m.pendingSettings = settings
 		if m.target == InstallTargetTailnet && !m.tailscaleConfirmed {
-			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingTailscale)
+			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
 			m.state = installStateTailscale
 			return m, m.initScreenWithSize()
 		}
@@ -634,6 +634,9 @@ func (m *Install) updateHelpBindings() {
 func (m Install) helpForState() (string, string) {
 	switch m.state {
 	case installStateHostname:
+		if m.target == InstallTargetTailnet {
+			return "Naming the Service on your tailnet", installTailnetHelpText
+		}
 		return "Setting the hostname", installHostnameHelpText
 	}
 	return "", ""
@@ -649,6 +652,17 @@ For example, if you own example.com and are installing Campfire, you might choos
 When you use your own domain on a publicly-reachable server, ONCE will set up SSL automatically to secure your application.
 
 If you're installing only on your local machine, you can use a localhost domain instead. You can still use a subdomain to support multiple applications (like chat.localhost). When you install an application in this way, it won't get the automatic SSL.
+
+You can always change these settings later, too: look for them under Settings -> Application.
+`
+
+	installTailnetHelpText = `On this screen you should enter the name this application will be known by on your tailnet.
+
+ONCE publishes the app as a Tailscale Service, so the name only needs to be meaningful to you and your tailnet. It doesn't need to be a public domain, and there's no DNS to configure: MagicDNS resolves it for your other devices.
+
+For example, if your tailnet is example.ts.net and you're installing Campfire, you might choose campfire.example.ts.net.
+
+Because traffic stays on the tailnet, ONCE doesn't set up an SSL certificate for this application; Tailscale handles encryption between your devices.
 
 You can always change these settings later, too: look for them under Settings -> Application.
 `

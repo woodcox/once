@@ -215,6 +215,143 @@ func TestSettingsFormTailscale_RoundTrip(t *testing.T) {
 	}, result.DocktailLabels())
 }
 
+func TestSettingsFormTailscale_RoundTripsEveryLabel(t *testing.T) {
+	direct := false
+	original := docker.ApplicationSettings{
+		Name:    "budget",
+		Image:   "example/app:latest",
+		Host:    "budget.example.com",
+		AppPort: 3000,
+		Tailscale: docker.TailscaleSettings{
+			Enabled:         true,
+			Mode:            docker.DocktailMode,
+			Service:         "budget",
+			Description:     "Budget tracker",
+			Port:            3000,
+			Protocol:        "https+insecure",
+			ServicePort:     8443,
+			ServiceProtocol: "https",
+			Path:            "/budget",
+			Tags:            "tag:server",
+			Network:         "tailnet0",
+			Direct:          &direct,
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+
+	assert.Equal(t, "Budget tracker", form.form.TextField(tailscaleDescriptionField).Value())
+	assert.Equal(t, "https+insecure", form.form.TextField(tailscaleBackendProtocolField).Value())
+	assert.Equal(t, "https", form.form.TextField(tailscaleServiceProtocolField).Value())
+	assert.Equal(t, "tailnet0", form.form.TextField(tailscaleNetworkField).Value())
+	assert.True(t, form.form.CheckboxField(tailscaleDirectField).Checked())
+
+	result := tailscaleSubmit(t, &form)
+
+	assert.True(t, original.Equal(result))
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":           "true",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "3000",
+		"docktail.service.service-port":     "8443",
+		"docktail.service.protocol":         "https+insecure",
+		"docktail.service.service-protocol": "https",
+		"docktail.service.description":      "Budget tracker",
+		"docktail.service.network":          "tailnet0",
+		"docktail.service.direct":           "false",
+		"docktail.service.path":             "/budget",
+		"docktail.tags":                     "tag:server",
+	}, result.DocktailLabels())
+}
+
+func TestSettingsFormTailscale_ProxyProtocolRoundTrip(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name: "postgres",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:         true,
+			Mode:            docker.DocktailMode,
+			Service:         "postgres",
+			Port:            5432,
+			Protocol:        "tcp",
+			ServicePort:     5432,
+			ServiceProtocol: "tls-terminated-tcp",
+			Path:            "/",
+			ProxyProtocol:   "1",
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+
+	assert.Equal(t, "1", form.form.TextField(tailscaleProxyProtocolField).Value())
+
+	result := tailscaleSubmit(t, &form)
+
+	assert.True(t, original.Equal(result))
+	assert.Equal(t, "1", result.DocktailLabels()["docktail.service.proxy-protocol"])
+}
+
+func TestSettingsFormTailscale_DirectRoundTrip(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget", Tailscale: docker.TailscaleSettings{
+		Enabled: true,
+		Mode:    docker.DocktailMode,
+		Service: "budget",
+	}})
+
+	assert.Nil(t, tailscaleSubmit(t, &form).Tailscale.Direct)
+
+	form.form.CheckboxField(tailscaleDirectField).Toggle()
+	direct := tailscaleSubmit(t, &form).Tailscale.Direct
+	require.NotNil(t, direct)
+	assert.False(t, *direct)
+}
+
+func TestSettingsFormTailscale_ShowsTheLabelsItWillSet(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{
+		Name:    "budget",
+		AppPort: 3000,
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+			Path:    "/budget",
+		},
+	})
+
+	view := ansi.Strip(form.View())
+
+	assert.Contains(t, view, "Labels")
+	assert.Contains(t, view, "docktail.service.enable=true")
+	assert.Contains(t, view, "docktail.service.name=budget")
+	assert.Contains(t, view, "docktail.service.port=3000")
+	assert.Contains(t, view, "docktail.service.service-port=443")
+	assert.Contains(t, view, "docktail.service.path=/budget")
+
+	form.form.TextField(tailscaleNetworkField).SetValue("tailnet0")
+	form.form.CheckboxField(tailscaleDirectField).Toggle()
+	updateSettingsForm(&form, keyPressMsg("x"))
+
+	updated := ansi.Strip(form.View())
+	assert.Contains(t, updated, "docktail.service.network=tailnet0")
+	assert.Contains(t, updated, "docktail.service.direct=false")
+}
+
+func TestSettingsFormTailscale_DisablingHidesTheLabels(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name: "budget",
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+	assert.Contains(t, ansi.Strip(form.View()), "docktail.service.name=budget")
+
+	updateSettingsForm(&form, keyPressMsg(" "))
+	assert.Contains(t, ansi.Strip(form.View()), "(not published)")
+}
+
 func TestSettingsFormTailscale_EnablingDefaultsTheMode(t *testing.T) {
 	original := docker.ApplicationSettings{
 		Name:  "budget",
