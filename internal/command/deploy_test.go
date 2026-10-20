@@ -87,15 +87,24 @@ func TestDecideDocktailNotAdvertised(t *testing.T) {
 		assert.ErrorIs(t, err, docker.ErrVerificationFailed)
 	})
 
-	t.Run("delete rolls the app back and exits cleanly", func(t *testing.T) {
+	t.Run("delete asks the caller to roll the app back", func(t *testing.T) {
 		var out strings.Builder
 
 		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader("d\n"), &out)
 
-		// The caller has already removed the app and its data on a "d"
-		// decision, so returning an error would just turn a successful
-		// rollback into a confusing non-zero exit.
-		require.NoError(t, err)
+		// The caller removes the app and its data on this sentinel, then
+		// reports success rather than a failure.
+		require.ErrorIs(t, err, errDocktailDelete)
+	})
+
+	t.Run("cancellation is reported rather than treated as success", func(t *testing.T) {
+		var out strings.Builder
+
+		verify := func(context.Context) error { return context.Canceled }
+
+		err := decideDocktailNotAdvertised(context.Background(), verify, strings.NewReader("r\n"), &out)
+
+		require.ErrorIs(t, err, context.Canceled)
 	})
 }
 

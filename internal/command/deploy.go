@@ -22,6 +22,11 @@ import (
 // answering it needs to read from the terminal.
 var errDocktailDecisionDeferred = errors.New("docktail decision deferred")
 
+// errDocktailDelete reports that the user chose to delete an app whose Service
+// never appeared. It is not a failure: the caller rolls the app back and
+// reports success.
+var errDocktailDelete = errors.New("docktail deploy rolled back")
+
 type deployCommand struct {
 	cmd   *cobra.Command
 	flags settingsFlags
@@ -115,7 +120,10 @@ func (d *deployCommand) resolveDocktailNotAdvertised(ctx context.Context, app *d
 	}
 
 	if err := decideDocktailNotAdvertised(ctx, app.Verify, cmd.InOrStdin(), out); err != nil {
-		d.removeAfterVerificationFailure(app)
+		if errors.Is(err, errDocktailDelete) {
+			d.removeAfterVerificationFailure(app)
+			return nil
+		}
 		return err
 	}
 
@@ -155,10 +163,7 @@ func decideDocktailNotAdvertised(ctx context.Context, verify func(context.Contex
 			fmt.Fprintln(out, "The Tailscale Service is now advertised.")
 			return nil
 		case "d", "delete":
-			// The caller rolls the app (and its data) back via
-			// removeAfterVerificationFailure; that succeeded, so report
-			// success rather than an error.
-			return nil
+			return errDocktailDelete
 		default:
 			fmt.Fprintln(out, "Keeping the app.")
 			return nil
