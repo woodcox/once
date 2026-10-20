@@ -129,7 +129,9 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 
 	case docktailDecisionMsg:
 		if m.prompt == nil {
-			return nil
+			// A second decision arrived before the first was consumed.
+			// Drop it, but keep the progress pump alive.
+			return m.waitForProgress()
 		}
 		m.prompt = nil
 		select {

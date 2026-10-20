@@ -94,7 +94,7 @@ func TestInstallActivity_DecisionSendNeverBlocks(t *testing.T) {
 		assert.Nil(t, cmd, "no prompt means the key produces no command")
 
 		cmd = m.Update(docktailDecisionMsg{decision: docktailKeep})
-		assert.Nil(t, cmd, "a stray decision after the prompt is cleared produces no command")
+		assert.NotNil(t, cmd, "a stray decision is dropped but the progress pump keeps running")
 	}()
 	select {
 	case <-done:

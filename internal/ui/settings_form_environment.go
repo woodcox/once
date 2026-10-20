@@ -69,8 +69,6 @@ func (m SettingsFormEnvironment) Update(msg tea.Msg) (SettingsSection, tea.Cmd) 
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
 		m.height = wsm.Height
-		wsm.Height = formViewportHeight(wsm.Height)
-		msg = wsm
 	}
 
 	var cmd tea.Cmd
