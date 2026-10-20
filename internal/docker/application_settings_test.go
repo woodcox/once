@@ -495,20 +495,34 @@ func TestEffectiveTailscalePort(t *testing.T) {
 
 func TestDocktailLabels(t *testing.T) {
 	disabled := ApplicationSettings{Name: "budget"}
-	assert.Nil(t, disabled.DocktailLabels())
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "false",
+		"docktail.funnel.enable":  "false",
+	}, disabled.DocktailLabels())
 
 	enabledWithoutMode := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true}}
-	assert.Nil(t, enabledWithoutMode.DocktailLabels())
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "false",
+		"docktail.funnel.enable":  "false",
+	}, enabledWithoutMode.DocktailLabels())
 
 	unknownMode := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: "funnel"}}
-	assert.Nil(t, unknownMode.DocktailLabels())
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "false",
+		"docktail.funnel.enable":  "false",
+	}, unknownMode.DocktailLabels())
 
 	derived := ApplicationSettings{Name: "budget", AppPort: 5006, Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable":       "true",
-		"docktail.service.name":         "budget",
-		"docktail.service.port":         "5006",
-		"docktail.service.service-port": "443",
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "5006",
+		"docktail.service.service-port":     "443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "https",
+		"docktail.service.direct":           "true",
+		"docktail.tags":                     "tag:container",
 	}, derived.DocktailLabels())
 
 	overridden := ApplicationSettings{
@@ -525,20 +539,29 @@ func TestDocktailLabels(t *testing.T) {
 		},
 	}
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable":       "true",
-		"docktail.service.name":         "example-app",
-		"docktail.service.port":         "3000",
-		"docktail.service.service-port": "8443",
-		"docktail.service.path":         "/budget",
-		"docktail.tags":                 "tag:server,tag:app",
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "example-app",
+		"docktail.service.port":             "3000",
+		"docktail.service.service-port":     "8443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "http",
+		"docktail.service.direct":           "true",
+		"docktail.tags":                     "tag:server,tag:app",
+		"docktail.service.path":             "/budget",
 	}, overridden.DocktailLabels())
 
 	conventional := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 80, Path: "/"}}
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable":       "true",
-		"docktail.service.name":         "budget",
-		"docktail.service.port":         "80",
-		"docktail.service.service-port": "80",
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "80",
+		"docktail.service.service-port":     "80",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "http",
+		"docktail.service.direct":           "true",
+		"docktail.tags":                     "tag:container",
 	}, conventional.DocktailLabels())
 }
 
@@ -547,6 +570,10 @@ func TestEffectiveServicePort(t *testing.T) {
 	assert.Equal(t, 443, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 0}}.EffectiveServicePort())
 	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 80}}.EffectiveServicePort())
 	assert.Equal(t, 8443, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 8443}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tcp"}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tcp", ServiceProtocol: "tcp"}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tls-terminated-tcp"}}.EffectiveServicePort())
+	assert.Equal(t, 443, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "https"}}.EffectiveServicePort())
 }
 
 func TestDocktailLabelsMarshalRoundTrip(t *testing.T) {
@@ -648,13 +675,18 @@ func TestValidateTailscale(t *testing.T) {
 func TestDocktailLabelsOptionalFields(t *testing.T) {
 	pointer := func(value bool) *bool { return &value }
 
-	t.Run("unset optional labels are omitted", func(t *testing.T) {
+	t.Run("unset optional labels are emitted as effective defaults", func(t *testing.T) {
 		s := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
 		assert.Equal(t, map[string]string{
-			"docktail.service.enable":       "true",
-			"docktail.service.name":         "budget",
-			"docktail.service.port":         "80",
-			"docktail.service.service-port": "443",
+			"docktail.service.enable":           "true",
+			"docktail.funnel.enable":            "false",
+			"docktail.service.name":             "budget",
+			"docktail.service.port":             "80",
+			"docktail.service.service-port":     "443",
+			"docktail.service.protocol":         "http",
+			"docktail.service.service-protocol": "https",
+			"docktail.service.direct":           "true",
+			"docktail.tags":                     "tag:container",
 		}, s.DocktailLabels())
 	})
 
@@ -666,7 +698,6 @@ func TestDocktailLabelsOptionalFields(t *testing.T) {
 				Mode:            DocktailMode,
 				Port:            5432,
 				ServicePort:     5432,
-				Path:            "/budget",
 				Tags:            "tag:server",
 				Description:     "Budget app",
 				Protocol:        "tcp",
@@ -678,10 +709,10 @@ func TestDocktailLabelsOptionalFields(t *testing.T) {
 		}
 		assert.Equal(t, map[string]string{
 			"docktail.service.enable":           "true",
+			"docktail.funnel.enable":            "false",
 			"docktail.service.name":             "budget",
 			"docktail.service.port":             "5432",
 			"docktail.service.service-port":     "5432",
-			"docktail.service.path":             "/budget",
 			"docktail.tags":                     "tag:server",
 			"docktail.service.description":      "Budget app",
 			"docktail.service.protocol":         "tcp",
@@ -692,9 +723,49 @@ func TestDocktailLabelsOptionalFields(t *testing.T) {
 		}, s.DocktailLabels())
 	})
 
+	t.Run("path is omitted for TCP service protocols", func(t *testing.T) {
+		s := ApplicationSettings{
+			Name: "budget",
+			Tailscale: TailscaleSettings{
+				Enabled:         true,
+				Mode:            DocktailMode,
+				Protocol:        "tcp",
+				ServiceProtocol: "tcp",
+				Port:            5432,
+				ServicePort:     5432,
+				Path:            "/budget",
+			},
+		}
+		assert.NotContains(t, s.DocktailLabels(), "docktail.service.path")
+	})
+
+	t.Run("path is emitted for HTTP(S) service protocols", func(t *testing.T) {
+		s := ApplicationSettings{
+			Name: "budget",
+			Tailscale: TailscaleSettings{
+				Enabled: true,
+				Mode:    DocktailMode,
+				Path:    "/budget",
+			},
+		}
+		assert.Equal(t, "/budget", s.DocktailLabels()["docktail.service.path"])
+	})
+
+	t.Run("default tag is used when user did not supply one", func(t *testing.T) {
+		s := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+		assert.Equal(t, "tag:container", s.DocktailLabels()["docktail.tags"])
+	})
+
 	t.Run("direct true is emitted", func(t *testing.T) {
 		s := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, Direct: pointer(true)}}
 		assert.Equal(t, "true", s.DocktailLabels()["docktail.service.direct"])
+	})
+
+	t.Run("public mode container gets explicit enable and funnel disable", func(t *testing.T) {
+		s := ApplicationSettings{Name: "budget"}
+		labels := s.DocktailLabels()
+		assert.Equal(t, "false", labels["docktail.service.enable"])
+		assert.Equal(t, "false", labels["docktail.funnel.enable"])
 	})
 }
 
@@ -711,6 +782,15 @@ func TestEffectiveDocktailProtocols(t *testing.T) {
 	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 5432, Protocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
 	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 8443, ServiceProtocol: "https"}}.effectiveServiceProtocol())
 	assert.Equal(t, "tls-terminated-tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServiceProtocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
+
+	// Unset service port: choose by backend.
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tcp"}}.effectiveServiceProtocol())
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "https"}}.effectiveServiceProtocol())
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "https+insecure"}}.effectiveServiceProtocol())
+
+	// Explicit service port 443 short-circuits to https regardless of backend.
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 443, Protocol: "tcp"}}.effectiveServiceProtocol())
 }
 
 func TestValidateTailscaleProtocols(t *testing.T) {
@@ -776,7 +856,6 @@ func TestDocktailLabelsOptionalFieldsMarshalRoundTrip(t *testing.T) {
 			Service:         "budget",
 			Port:            5432,
 			ServicePort:     5432,
-			Path:            "/budget",
 			Tags:            "tag:app",
 			Description:     "Budget app",
 			Protocol:        "tcp",

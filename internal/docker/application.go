@@ -3,10 +3,12 @@ package docker
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,11 +37,12 @@ var (
 	ErrInvalidDocktailPort             = errors.New("docktail ports must be between 0 and 65535")
 	ErrInvalidDocktailMode             = errors.New("unsupported docktail mode")
 	ErrInvalidDocktailPath             = errors.New("docktail path must start with /")
-	ErrInvalidDocktailProtocol         = errors.New("docktail protocol must be one of http, https or tcp")
+	ErrInvalidDocktailProtocol         = errors.New("docktail protocol must be one of http, https, https+insecure, tcp or tls-terminated-tcp")
 	ErrInvalidDocktailServiceProtocol  = errors.New("docktail service protocol must be one of http, https, tcp or tls-terminated-tcp")
 	ErrInvalidDocktailProxyProtocol    = errors.New("docktail proxy protocol must be 1 or 2")
 	ErrDocktailProxyProtocolWithoutTCP = errors.New("docktail proxy protocol requires a TCP service protocol")
 	ErrDocktailPathOnTCP               = errors.New("docktail path is not supported for a TCP service protocol")
+	ErrDocktailDirectFalse             = errors.New("docktail's direct=false mode needs published host ports, which ONCE does not create; leave --docktail-direct unset (it defaults to true)")
 	ErrDocktailServiceRequired         = errors.New("a Tailscale service name is required when docktail mode is enabled")
 	ErrSetupFailed                     = errors.New("setup failed")
 	ErrPullFailed                      = &describedError{
@@ -408,14 +411,18 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	shortContainerID := resp.ID[:12]
 
 	if a.Settings.DocktailEnabled() {
-		if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
-			slog.Debug("Removing pre-existing proxy route for docktail app", "app", a.Settings.Name, "error", err)
-		}
-
-		if err := waitForContainerHealthy(ctx, a.namespace.client, a.namespace.name, resp.ID, a.Settings.EffectiveAppPort(), a.Settings.EffectiveHealthCheckPath()); err != nil {
+		if err := waitForContainerHealthy(ctx, a.namespace.client, a.namespace.name, resp.ID, a.Settings.effectiveProtocol(), a.Settings.EffectiveAppPort(), a.Settings.EffectiveHealthCheckPath()); err != nil {
 			a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 			slog.Error("Application failed to start", "app", a.Settings.Name, "error", err)
 			return ErrAppNotStarted
+		}
+
+		// Remove the proxy route only after the new container is proven
+		// healthy: a failed switch would otherwise leave the previous app
+		// running but unroutable on this hostname.
+		if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
+			a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+			return fmt.Errorf("removing pre-existing proxy route: %w", err)
 		}
 	} else {
 		if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
@@ -589,8 +596,8 @@ var (
 	healthCheckRequest  = 5 * time.Second
 )
 
-// healthCheckProbe performs a single health check request. It is a variable so
-// tests can substitute it without opening sockets.
+// healthCheckProbe performs a single HTTP health check request. It is a
+// variable so tests can substitute it without opening sockets.
 var healthCheckProbe = func(ctx context.Context, url string) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -607,34 +614,45 @@ var healthCheckProbe = func(ctx context.Context, url string) (int, error) {
 	return resp.StatusCode, nil
 }
 
+// healthCheckTCPProbe opens a TCP connection to the given address. It is a
+// variable so tests can substitute it without opening sockets.
+var healthCheckTCPProbe = func(ctx context.Context, addr string) error {
+	d := net.Dialer{Timeout: healthCheckRequest}
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
 // healthCheckClient abstracts the Docker API calls needed by the health check
 // path. *client.Client satisfies it; tests can substitute their own.
 type healthCheckClient interface {
 	ContainerInspect(ctx context.Context, containerID string, options client.ContainerInspectOptions) (client.ContainerInspectResult, error)
 }
 
-// waitForContainerHealthy polls the application's health check endpoint over
-// the container's Docker network IP until it returns 2xx, mirroring the timing
+// waitForContainerHealthy polls the application's health check over the
+// container's Docker network IP until it succeeds, mirroring the timing
 // kamal-proxy uses for non-docktail apps. The check goes directly to the
 // container, not through DNS or the proxy, so docktail apps don't need to be
-// reachable any other way to be considered healthy.
-func waitForContainerHealthy(ctx context.Context, c healthCheckClient, network, containerID string, port int, path string) error {
+// reachable any other way to be considered healthy. The probe is chosen by
+// the backend protocol so HTTPS or TCP backends don't fail just because an
+// HTTP probe can't be served.
+func waitForContainerHealthy(ctx context.Context, c healthCheckClient, network, containerID, protocol string, port int, path string) error {
 	ip, err := containerNetworkIP(ctx, c, network, containerID)
 	if err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("http://%s:%d%s", ip, port, path)
 	deadline := time.Now().Add(healthCheckTimeout)
 
 	for {
-		status, err := healthCheckProbe(ctx, url)
-		if err == nil && status >= 200 && status <= 299 {
+		if runHealthCheckProbe(ctx, protocol, ip, port, path) == nil {
 			return nil
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("application did not respond with 2xx within %s", healthCheckTimeout)
+			return fmt.Errorf("application did not become healthy (%s) within %s", protocol, healthCheckTimeout)
 		}
 
 		select {
@@ -642,6 +660,47 @@ func waitForContainerHealthy(ctx context.Context, c healthCheckClient, network, 
 			return ctx.Err()
 		case <-time.After(healthCheckInterval):
 		}
+	}
+}
+
+// runHealthCheckProbe performs a single health probe using the probe that
+// matches the backend protocol so HTTPS or TCP backends don't fail just
+// because an HTTP probe can't be served. HTTPS probes disable TLS
+// verification because the target is a container IP on a private Docker
+// network without a serving certificate: this is a liveness check, not an
+// authentication check.
+func runHealthCheckProbe(ctx context.Context, protocol, ip string, port int, path string) error {
+	switch protocol {
+	case "https", "https+insecure":
+		url := fmt.Sprintf("https://%s:%d%s", ip, port, path)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		client := &http.Client{
+			Timeout:   healthCheckRequest,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return fmt.Errorf("status %d", resp.StatusCode)
+		}
+		return nil
+	case "tcp", "tls-terminated-tcp":
+		return healthCheckTCPProbe(ctx, net.JoinHostPort(ip, strconv.Itoa(port)))
+	default:
+		status, err := healthCheckProbe(ctx, fmt.Sprintf("http://%s:%d%s", ip, port, path))
+		if err != nil {
+			return err
+		}
+		if status < 200 || status > 299 {
+			return fmt.Errorf("status %d", status)
+		}
+		return nil
 	}
 }
 

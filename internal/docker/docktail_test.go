@@ -42,96 +42,124 @@ func TestParseTailscaleServeStatus(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		data    string
-		service string
-		port    int
-		wantErr bool
+		name         string
+		data         string
+		service      string
+		port         int
+		expectedHost string
+		wantErr      bool
 	}{
 		{
-			name:    "matching service and port",
-			data:    serveStatusWithBudgetService,
-			service: "budget",
-			port:    5006,
+			name:         "matching service and port",
+			data:         serveStatusWithBudgetService,
+			service:      "budget",
+			port:         5006,
+			expectedHost: "172.21.0.2",
 		},
 		{
-			name:    "service name is matched case insensitively",
-			data:    serveStatusWithBudgetService,
-			service: "Budget",
-			port:    5006,
+			name:         "service name is matched case insensitively",
+			data:         serveStatusWithBudgetService,
+			service:      "Budget",
+			port:         5006,
+			expectedHost: "172.21.0.2",
 		},
 		{
-			name:    "no services advertised",
-			data:    `{"Services":{}}`,
-			service: "budget",
-			port:    5006,
-			wantErr: true,
+			name:         "no services advertised",
+			data:         `{"Services":{}}`,
+			service:      "budget",
+			port:         5006,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
 		},
 		{
-			name:    "different service name",
-			data:    serveStatusWithBudgetService,
-			service: "other",
-			port:    5006,
-			wantErr: true,
+			name:         "different service name",
+			data:         serveStatusWithBudgetService,
+			service:      "other",
+			port:         5006,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
 		},
 		{
-			name:    "service advertised on another port",
-			data:    serveStatusWithBudgetService,
-			service: "budget",
-			port:    80,
-			wantErr: true,
+			name:         "service advertised on another port",
+			data:         serveStatusWithBudgetService,
+			service:      "budget",
+			port:         80,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
 		},
 		{
-			name:    "port 8080 does not match port 80",
-			data:    statusForProxy("http://172.21.0.2:8080"),
-			service: "budget",
-			port:    80,
-			wantErr: true,
+			name:         "port 8080 does not match port 80",
+			data:         statusForProxy("http://172.21.0.2:8080"),
+			service:      "budget",
+			port:         80,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
 		},
 		{
-			name:    "port 50061 does not match port 5006",
-			data:    statusForProxy("http://172.21.0.2:50061"),
-			service: "budget",
-			port:    5006,
-			wantErr: true,
+			name:         "port 50061 does not match port 5006",
+			data:         statusForProxy("http://172.21.0.2:50061"),
+			service:      "budget",
+			port:         5006,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
 		},
 		{
-			name:    "explicit port matches exactly",
-			data:    statusForProxy("http://172.21.0.2:5006"),
-			service: "budget",
-			port:    5006,
+			name:         "explicit port matches exactly",
+			data:         statusForProxy("http://172.21.0.2:5006"),
+			service:      "budget",
+			port:         5006,
+			expectedHost: "172.21.0.2",
 		},
 		{
-			name:    "portless http proxy matches port 80",
-			data:    statusForProxy("http://172.21.0.2"),
-			service: "budget",
-			port:    80,
+			name:         "portless http proxy matches port 80",
+			data:         statusForProxy("http://172.21.0.2"),
+			service:      "budget",
+			port:         80,
+			expectedHost: "172.21.0.2",
 		},
 		{
-			name:    "portless https proxy matches port 443",
-			data:    statusForProxy("https://172.21.0.2"),
-			service: "budget",
-			port:    443,
+			name:         "portless https proxy matches port 443",
+			data:         statusForProxy("https://172.21.0.2"),
+			service:      "budget",
+			port:         443,
+			expectedHost: "172.21.0.2",
 		},
 		{
-			name:    "portless http proxy does not match port 443",
-			data:    statusForProxy("http://172.21.0.2"),
-			service: "budget",
-			port:    443,
-			wantErr: true,
+			name:         "portless http proxy does not match port 443",
+			data:         statusForProxy("http://172.21.0.2"),
+			service:      "budget",
+			port:         443,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
 		},
 		{
-			name:    "invalid json",
-			data:    `not json`,
-			service: "budget",
-			port:    5006,
-			wantErr: true,
+			name:         "invalid json",
+			data:         `not json`,
+			service:      "budget",
+			port:         5006,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
+		},
+		{
+			name:         "same name and port but a different host does not verify",
+			data:         statusForProxy("http://172.21.0.2:5006"),
+			service:      "budget",
+			port:         5006,
+			expectedHost: "172.21.0.99",
+			wantErr:      true,
+		},
+		{
+			name:         "empty expected host skips the host check",
+			data:         statusForProxy("http://172.21.0.2:5006"),
+			service:      "budget",
+			port:         5006,
+			expectedHost: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parseTailscaleServeStatus([]byte(tt.data), tt.service, tt.port)
+			err := parseTailscaleServeStatus([]byte(tt.data), tt.service, tt.port, tt.expectedHost)
 			if tt.wantErr {
 				assert.ErrorIs(t, err, ErrDocktailVerifyFailed)
 				return
@@ -243,6 +271,24 @@ func TestVerifyDocktail(t *testing.T) {
 		// The host is unreachable over HTTP, so a fall back to HTTP
 		// verification would surface as ErrVerificationFailed.
 		assert.ErrorIs(t, newDocktailApp().Verify(context.Background()), ErrDocktailNotAdvertised)
+	})
+
+	t.Run("cancelled context is reported as not verified", func(t *testing.T) {
+		// Keep the loop alive long enough to exercise the ctx.Done()
+		// branch rather than the deadline-exhausted branch, so this test
+		// pins the behaviour of reporting cancellation as not verified.
+		docktailVerifyWindow = time.Hour
+		docktailVerifyInterval = time.Hour
+		t.Cleanup(func() { docktailVerifyWindow = 0 })
+
+		stubTailscale(t, `{"Services":{}}`)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := newDocktailApp().verifyDocktail(ctx)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, context.Canceled)
 	})
 }
 

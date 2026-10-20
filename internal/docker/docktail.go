@@ -42,9 +42,17 @@ var errTailscaleStatusUnparsable = errors.New("unparsable tailscale serve status
 // Service never appears it returns ErrDocktailNotAdvertised, but a CLI that
 // isn't installed (or output that can't be read or parsed) only warns: ONCE
 // can't verify or fix those, so they must not prompt or roll anything back.
+// A cancellation always surfaces as an error so it isn't reported as
+// "verified".
+//
+// The check also pins the proxy target to this deployment's container IP,
+// so a leftover handler still pointing at an old container doesn't satisfy
+// verification.
 func (a *Application) verifyDocktail(ctx context.Context) error {
 	name := a.Settings.EffectiveServiceName()
 	port := a.Settings.EffectiveTailscalePort()
+
+	expectedHost := a.containerNetworkIP(ctx)
 
 	deadline := time.Now().Add(docktailVerifyWindow)
 
@@ -55,11 +63,14 @@ func (a *Application) verifyDocktail(ctx context.Context) error {
 			a.warnDocktailVerification("the tailscale CLI isn't installed on this host, so ONCE can't confirm the Tailscale Service was advertised")
 			return nil
 		case err != nil:
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("verifying Tailscale Service: %w", ctxErr)
+			}
 			a.warnDocktailVerification(fmt.Sprintf("couldn't read Tailscale serve status: %v", err))
 			return nil
 		}
 
-		switch verifyErr := parseTailscaleServeStatus(out, name, port); {
+		switch verifyErr := parseTailscaleServeStatus(out, name, port, expectedHost); {
 		case verifyErr == nil:
 			return nil
 		case errors.Is(verifyErr, errTailscaleStatusUnparsable):
@@ -73,12 +84,31 @@ func (a *Application) verifyDocktail(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			return nil
+			return fmt.Errorf("verifying Tailscale Service: %w", ctx.Err())
 		case <-time.After(docktailVerifyInterval):
 		}
 	}
 
 	return fmt.Errorf("%w: svc:%s is not advertised on port %d yet", ErrDocktailNotAdvertised, name, port)
+}
+
+// containerNetworkIP returns the docker network IP of this app's container,
+// or empty when the lookup fails. Only the host part of the proxy URL is
+// verified against the result, so an empty target falls back to the
+// port-only check.
+func (a *Application) containerNetworkIP(ctx context.Context) string {
+	if a.namespace == nil {
+		return ""
+	}
+	name, err := a.ContainerName(ctx)
+	if err != nil {
+		return ""
+	}
+	ip, err := containerNetworkIP(ctx, a.namespace.client, a.namespace.name, name)
+	if err != nil {
+		return ""
+	}
+	return ip
 }
 
 // DocktailWarnings reports host-level problems that would stop this app from
@@ -163,7 +193,7 @@ type tailscaleHandler struct {
 	Proxy string `json:"Proxy"`
 }
 
-func parseTailscaleServeStatus(data []byte, serviceName string, port int) error {
+func parseTailscaleServeStatus(data []byte, serviceName string, port int, expectedHost string) error {
 	service := "svc:" + serviceName
 
 	var status tailscaleServeStatus
@@ -180,13 +210,17 @@ func parseTailscaleServeStatus(data []byte, serviceName string, port int) error 
 
 		for _, web := range advertised.Web {
 			for _, handler := range web.Handlers {
-				if proxyMatchesPort(handler.Proxy, targetPort) {
-					return nil
+				if !proxyMatchesPort(handler.Proxy, targetPort) {
+					continue
 				}
+				if expectedHost != "" && !proxyHostEquals(handler.Proxy, expectedHost) {
+					continue
+				}
+				return nil
 			}
 		}
 
-		return fmt.Errorf("%w: service %q is advertised, but has no endpoint on port %d", ErrDocktailVerifyFailed, service, port)
+		return fmt.Errorf("%w: service %q is advertised, but has no endpoint on port %d for host %q", ErrDocktailVerifyFailed, service, port, expectedHost)
 	}
 
 	return fmt.Errorf("%w: no Tailscale Service named %q yet; check that the service name matches the one defined in your Tailscale admin console", ErrDocktailVerifyFailed, service)
@@ -215,6 +249,17 @@ func proxyMatchesPort(proxy, port string) bool {
 		return port == "443"
 	}
 	return port == "80"
+}
+
+// proxyHostEquals reports whether a serve handler's proxy URL has the given
+// hostname. The hostname check ignores the trailing dot Docker resolves
+// FQDNs to, and matches IP literals exactly.
+func proxyHostEquals(proxy, expected string) bool {
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return false
+	}
+	return u.Hostname() == expected
 }
 
 func normalizeServiceName(name string) string {

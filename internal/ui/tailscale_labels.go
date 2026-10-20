@@ -16,7 +16,7 @@ func tailscaleLabelsText(settings docker.ApplicationSettings) string {
 	header := Styles.Label.Render("Labels")
 
 	labels := settings.DocktailLabels()
-	if len(labels) == 0 {
+	if !settings.DocktailEnabled() {
 		return header + "\n" + lipgloss.NewStyle().Foreground(Colors.Muted).Render("(not published)")
 	}
 

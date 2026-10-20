@@ -350,7 +350,9 @@ func TestContainerConfigWithoutDocktailLabels(t *testing.T) {
 	config := (&Application{Settings: settings}).containerConfig(nil)
 
 	assert.Equal(t, settings.Marshal(), config.Labels[labelKey])
-	assert.Len(t, config.Labels, 1)
+	assert.Equal(t, "false", config.Labels[docktailLabelEnable])
+	assert.Equal(t, "false", config.Labels[docktailLabelFunnelEnable])
+	assert.Len(t, config.Labels, 3)
 }
 
 func TestUsesProxy(t *testing.T) {

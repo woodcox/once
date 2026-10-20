@@ -49,10 +49,15 @@ func TestInstallTailscaleForm_DefaultsReachTheLabels(t *testing.T) {
 	settings := docker.ApplicationSettings{Name: "once-campfire", AppPort: 5006, Tailscale: tailscale}
 
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable":       "true",
-		"docktail.service.name":         "once-campfire",
-		"docktail.service.port":         "5006",
-		"docktail.service.service-port": "443",
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "once-campfire",
+		"docktail.service.port":             "5006",
+		"docktail.service.service-port":     "443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "https",
+		"docktail.service.direct":           "true",
+		"docktail.tags":                     "tag:container",
 	}, settings.DocktailLabels())
 }
 

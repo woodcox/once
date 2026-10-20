@@ -152,11 +152,54 @@ func defaultServiceName(imageRef string) string {
 	return docker.SanitizeDNSLabel(docker.NameFromImageRef(imageRef))
 }
 
+// effectiveServicePort mirrors docktail's smart default: 443 when the
+// effective service protocol is https, 80 otherwise.
 func effectiveServicePort(settings docker.TailscaleSettings) int {
 	if settings.ServicePort != 0 {
 		return settings.ServicePort
 	}
-	return 443
+	protocol := effectiveBackendProtocol(settings)
+	serviceProtocol := effectiveTailscaleServiceProtocol(settings, protocol)
+	if serviceProtocol == "https" {
+		return 443
+	}
+	return 80
+}
+
+func effectiveBackendProtocol(settings docker.TailscaleSettings) string {
+	if settings.Protocol != "" {
+		return settings.Protocol
+	}
+	if settings.Port != 0 {
+		if settings.Port == 443 {
+			return "https"
+		}
+		return "http"
+	}
+	return "http"
+}
+
+func effectiveTailscaleServiceProtocol(settings docker.TailscaleSettings, backend string) string {
+	if settings.ServiceProtocol != "" {
+		return settings.ServiceProtocol
+	}
+	if settings.ServicePort != 0 {
+		if settings.ServicePort == 443 {
+			return "https"
+		}
+		if isTCPProtocol(backend) {
+			return "tcp"
+		}
+		return "http"
+	}
+	if isTCPProtocol(backend) {
+		return "tcp"
+	}
+	return "https"
+}
+
+func isTCPProtocol(protocol string) bool {
+	return protocol == "tcp" || protocol == "tls-terminated-tcp"
 }
 
 func installTailscaleSettings(f *Form) docker.TailscaleSettings {

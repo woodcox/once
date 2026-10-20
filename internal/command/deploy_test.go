@@ -87,12 +87,15 @@ func TestDecideDocktailNotAdvertised(t *testing.T) {
 		assert.ErrorIs(t, err, docker.ErrVerificationFailed)
 	})
 
-	t.Run("delete rolls the app back", func(t *testing.T) {
+	t.Run("delete rolls the app back and exits cleanly", func(t *testing.T) {
 		var out strings.Builder
 
 		err := decideDocktailNotAdvertised(context.Background(), failingVerify(t), strings.NewReader("d\n"), &out)
 
-		assert.ErrorIs(t, err, docker.ErrDocktailNotAdvertised)
+		// The caller has already removed the app and its data on a "d"
+		// decision, so returning an error would just turn a successful
+		// rollback into a confusing non-zero exit.
+		require.NoError(t, err)
 	})
 }
 
@@ -302,12 +305,16 @@ func TestBuildSettingsDocktailFlags(t *testing.T) {
 	assert.Equal(t, "budget", s.EffectiveServiceName())
 	assert.Equal(t, 5006, s.EffectiveTailscalePort())
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable":       "true",
-		"docktail.service.name":         "budget",
-		"docktail.service.port":         "5006",
-		"docktail.service.service-port": "443",
-		"docktail.service.path":         "/budget",
-		"docktail.tags":                 "tag:server",
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "5006",
+		"docktail.service.service-port":     "443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "https",
+		"docktail.service.direct":           "true",
+		"docktail.service.path":             "/budget",
+		"docktail.tags":                     "tag:server",
 	}, s.DocktailLabels())
 }
 
@@ -379,7 +386,7 @@ func TestBuildSettingsDocktailOptionalFlags(t *testing.T) {
 	require.NoError(t, cmd.Flags().Set("docktail-protocol", "https"))
 	require.NoError(t, cmd.Flags().Set("docktail-service-protocol", "https"))
 	require.NoError(t, cmd.Flags().Set("docktail-network", "once"))
-	require.NoError(t, cmd.Flags().Set("docktail-direct", "false"))
+	require.NoError(t, cmd.Flags().Set("docktail-direct", "true"))
 
 	s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
 	require.NoError(t, err)
@@ -389,12 +396,24 @@ func TestBuildSettingsDocktailOptionalFlags(t *testing.T) {
 	assert.Equal(t, "https", s.Tailscale.ServiceProtocol)
 	assert.Equal(t, "once", s.Tailscale.Network)
 	require.NotNil(t, s.Tailscale.Direct)
-	assert.False(t, *s.Tailscale.Direct)
-	assert.Equal(t, "false", s.DocktailLabels()["docktail.service.direct"])
+	assert.True(t, *s.Tailscale.Direct)
+	assert.Equal(t, "true", s.DocktailLabels()["docktail.service.direct"])
 	assert.Equal(t, "Budget app", s.DocktailLabels()["docktail.service.description"])
 	assert.Equal(t, "https", s.DocktailLabels()["docktail.service.protocol"])
 	assert.Equal(t, "https", s.DocktailLabels()["docktail.service.service-protocol"])
 	assert.Equal(t, "once", s.DocktailLabels()["docktail.service.network"])
+}
+
+func TestBuildSettingsDocktailDirectFalseRejected(t *testing.T) {
+	cmd := &cobra.Command{}
+	f := &settingsFlags{}
+	f.register(cmd)
+
+	require.NoError(t, cmd.Flags().Set("docktail", "true"))
+	require.NoError(t, cmd.Flags().Set("docktail-direct", "false"))
+
+	_, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
+	assert.ErrorIs(t, err, docker.ErrDocktailDirectFalse)
 }
 
 func TestBuildSettingsDocktailProxyProtocol(t *testing.T) {
@@ -426,7 +445,7 @@ func TestBuildSettingsDocktailDirectUnset(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Nil(t, s.Tailscale.Direct)
-	assert.NotContains(t, s.DocktailLabels(), "docktail.service.direct")
+	assert.Equal(t, "true", s.DocktailLabels()["docktail.service.direct"])
 }
 
 func TestBuildSettingsDocktailDirectInvalid(t *testing.T) {
@@ -473,15 +492,12 @@ func TestApplyChangesDocktailOptionalFlags(t *testing.T) {
 		assert.Equal(t, existing.Tailscale, s.Tailscale)
 	})
 
-	t.Run("direct false overrides", func(t *testing.T) {
+	t.Run("direct false is rejected", func(t *testing.T) {
 		cmd, f := newCmd()
 		require.NoError(t, cmd.Flags().Set("docktail-direct", "false"))
 
-		s, err := f.applyChanges(cmd, existing, existing.Image)
-		require.NoError(t, err)
-
-		require.NotNil(t, s.Tailscale.Direct)
-		assert.False(t, *s.Tailscale.Direct)
+		_, err := f.applyChanges(cmd, existing, existing.Image)
+		assert.ErrorIs(t, err, docker.ErrDocktailDirectFalse)
 	})
 
 	t.Run("empty value clears direct", func(t *testing.T) {

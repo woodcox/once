@@ -114,7 +114,14 @@ const (
 	docktailLabelDirect          = "docktail.service.direct"
 	docktailLabelNetwork         = "docktail.service.network"
 	docktailLabelTags            = "docktail.tags"
+	docktailLabelFunnelEnable    = "docktail.funnel.enable"
 )
+
+// defaultDocktailTags is the value used for `docktail.tags` when the user
+// hasn't provided one. docktail's own default (its DEFAULT_SERVICE_TAGS env)
+// is "tag:container"; we set it explicitly so an image-supplied tag is
+// overridden.
+const defaultDocktailTags = "tag:container"
 
 // TailscaleSettings configures exposure of an application as a native
 // Tailscale Service. Only docktail label mode is supported: ONCE sets
@@ -240,6 +247,9 @@ func (s ApplicationSettings) ValidateTailscale() error {
 	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" && isTCPProtocol(serviceProtocol) {
 		return ErrDocktailPathOnTCP
 	}
+	if s.Tailscale.Direct != nil && !*s.Tailscale.Direct {
+		return ErrDocktailDirectFalse
+	}
 
 	if !s.Tailscale.Enabled {
 		return nil
@@ -323,35 +333,49 @@ func (s ApplicationSettings) EffectiveTailscalePort() int {
 }
 
 // EffectiveServicePort returns the port Tailscale should listen on, defaulting
-// to 443 so the Service is served over HTTPS.
+// to 443 when the effective service protocol is https and 80 otherwise.
 func (s ApplicationSettings) EffectiveServicePort() int {
 	if s.Tailscale.ServicePort != 0 {
 		return s.Tailscale.ServicePort
 	}
-	return 443
+	if s.effectiveServiceProtocol() == "https" {
+		return 443
+	}
+	return 80
 }
 
-// DocktailLabels returns the `docktail.*` labels to place on the app
-// container, or nil when docktail mode is off. Optional labels are omitted so
-// that docktail's own defaults apply.
+// DocktailLabels returns the `docktail.*` labels to place on the app container.
+// Every key ONCE can determine is set explicitly, including the funnel enable
+// and service enable flags, so a Docker image can't smuggle its own labels
+// into docktail's reads. Description, network and proxy-protocol remain
+// user-set-only and are emitted only when the user supplied a value; any
+// image-supplied value for those keys survives, which is documented in the
+// README label table.
 func (s ApplicationSettings) DocktailLabels() map[string]string {
-	if !s.DocktailEnabled() {
-		return nil
-	}
-
 	labels := map[string]string{
-		docktailLabelEnable:      "true",
-		docktailLabelName:        s.EffectiveServiceName(),
-		docktailLabelPort:        strconv.Itoa(s.EffectiveTailscalePort()),
-		docktailLabelServicePort: strconv.Itoa(s.EffectiveServicePort()),
+		docktailLabelFunnelEnable: "false",
 	}
 
-	if s.Tailscale.Protocol != "" {
-		labels[docktailLabelProtocol] = s.Tailscale.Protocol
+	if !s.DocktailEnabled() {
+		labels[docktailLabelEnable] = "false"
+		return labels
 	}
-	if s.Tailscale.ServiceProtocol != "" {
-		labels[docktailLabelServiceProtocol] = s.Tailscale.ServiceProtocol
+
+	labels[docktailLabelEnable] = "true"
+	labels[docktailLabelName] = s.EffectiveServiceName()
+	labels[docktailLabelPort] = strconv.Itoa(s.EffectiveTailscalePort())
+	labels[docktailLabelServicePort] = strconv.Itoa(s.EffectiveServicePort())
+	labels[docktailLabelProtocol] = s.effectiveProtocol()
+	labels[docktailLabelServiceProtocol] = s.effectiveServiceProtocol()
+
+	labels[docktailLabelDirect] = strconv.FormatBool(s.effectiveDirect())
+
+	tags := s.Tailscale.Tags
+	if tags == "" {
+		tags = defaultDocktailTags
 	}
+	labels[docktailLabelTags] = tags
+
 	if s.Tailscale.Description != "" {
 		labels[docktailLabelDescription] = s.Tailscale.Description
 	}
@@ -361,17 +385,23 @@ func (s ApplicationSettings) DocktailLabels() map[string]string {
 	if s.Tailscale.ProxyProtocol != "" {
 		labels[docktailLabelProxyProtocol] = s.Tailscale.ProxyProtocol
 	}
-	if s.Tailscale.Direct != nil {
-		labels[docktailLabelDirect] = strconv.FormatBool(*s.Tailscale.Direct)
-	}
-	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" {
+
+	// docktail rejects a path for TCP service protocols; emit only when
+	// the effective service protocol is not TCP, mirroring that rule.
+	if !isTCPProtocol(s.effectiveServiceProtocol()) && s.Tailscale.Path != "" && s.Tailscale.Path != "/" {
 		labels[docktailLabelPath] = s.Tailscale.Path
-	}
-	if s.Tailscale.Tags != "" {
-		labels[docktailLabelTags] = s.Tailscale.Tags
 	}
 
 	return labels
+}
+
+// effectiveDirect returns the value to advertise for `docktail.service.direct`,
+// treating an unset Direct as true (which matches docktail's own default).
+func (s ApplicationSettings) effectiveDirect() bool {
+	if s.Tailscale.Direct == nil {
+		return true
+	}
+	return *s.Tailscale.Direct
 }
 
 func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
@@ -431,19 +461,32 @@ func (s ApplicationSettings) effectiveProtocol() string {
 }
 
 // effectiveServiceProtocol returns the Tailscale-facing protocol docktail will
-// use, defaulting to https on the service port 443, tcp for a TCP backend, and
-// http otherwise.
+// use, mirroring docktail's smart defaults: explicit value, else (when
+// ServicePort is set) https on 443, tcp for a TCP backend, else http; else
+// https for an http/https/https+insecure backend, tcp for a tcp/tls-terminated-tcp
+// backend, http otherwise.
 func (s ApplicationSettings) effectiveServiceProtocol() string {
 	if s.Tailscale.ServiceProtocol != "" {
 		return s.Tailscale.ServiceProtocol
 	}
-	if s.EffectiveServicePort() == 443 {
+	if s.Tailscale.ServicePort != 0 {
+		if s.Tailscale.ServicePort == 443 {
+			return "https"
+		}
+		if isTCPProtocol(s.effectiveProtocol()) {
+			return "tcp"
+		}
+		return "http"
+	}
+	switch s.effectiveProtocol() {
+	case "tcp", "tls-terminated-tcp":
+		return "tcp"
+	default:
+		// http, https, https+insecure, or anything else → https on the
+		// Tailscale side, since there's no way to ask for plain http from
+		// Tailscale without an explicit service protocol.
 		return "https"
 	}
-	if isTCPProtocol(s.effectiveProtocol()) {
-		return "tcp"
-	}
-	return "http"
 }
 
 // Helpers

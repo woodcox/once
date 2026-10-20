@@ -206,17 +206,20 @@ func TestSettingsFormTailscale_RoundTrip(t *testing.T) {
 
 	assert.True(t, original.Equal(result))
 	assert.Equal(t, map[string]string{
-		"docktail.service.enable":       "true",
-		"docktail.service.name":         "budget",
-		"docktail.service.port":         "3000",
-		"docktail.service.service-port": "8443",
-		"docktail.service.path":         "/budget",
-		"docktail.tags":                 "tag:server",
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "3000",
+		"docktail.service.service-port":     "8443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "http",
+		"docktail.service.direct":           "true",
+		"docktail.service.path":             "/budget",
+		"docktail.tags":                     "tag:server",
 	}, result.DocktailLabels())
 }
 
 func TestSettingsFormTailscale_RoundTripsEveryLabel(t *testing.T) {
-	direct := false
 	original := docker.ApplicationSettings{
 		Name:    "budget",
 		Image:   "example/app:latest",
@@ -234,7 +237,6 @@ func TestSettingsFormTailscale_RoundTripsEveryLabel(t *testing.T) {
 			Path:            "/budget",
 			Tags:            "tag:server",
 			Network:         "tailnet0",
-			Direct:          &direct,
 		},
 	}
 
@@ -244,13 +246,14 @@ func TestSettingsFormTailscale_RoundTripsEveryLabel(t *testing.T) {
 	assert.Equal(t, "https+insecure", form.form.TextField(tailscaleBackendProtocolField).Value())
 	assert.Equal(t, "https", form.form.TextField(tailscaleServiceProtocolField).Value())
 	assert.Equal(t, "tailnet0", form.form.TextField(tailscaleNetworkField).Value())
-	assert.True(t, form.form.CheckboxField(tailscaleDirectField).Checked())
+	assert.False(t, form.form.CheckboxField(tailscaleDirectField).Checked())
 
 	result := tailscaleSubmit(t, &form)
 
 	assert.True(t, original.Equal(result))
 	assert.Equal(t, map[string]string{
 		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
 		"docktail.service.name":             "budget",
 		"docktail.service.port":             "3000",
 		"docktail.service.service-port":     "8443",
@@ -258,7 +261,7 @@ func TestSettingsFormTailscale_RoundTripsEveryLabel(t *testing.T) {
 		"docktail.service.service-protocol": "https",
 		"docktail.service.description":      "Budget tracker",
 		"docktail.service.network":          "tailnet0",
-		"docktail.service.direct":           "false",
+		"docktail.service.direct":           "true",
 		"docktail.service.path":             "/budget",
 		"docktail.tags":                     "tag:server",
 	}, result.DocktailLabels())
@@ -388,7 +391,11 @@ func TestSettingsFormTailscale_DisablingClearsTheService(t *testing.T) {
 	settings := tailscaleSubmit(t, &form)
 
 	assert.False(t, settings.DocktailEnabled())
-	assert.Nil(t, settings.DocktailLabels())
+	// Disabled containers still carry the explicit enable/funnel labels so
+	// docker can't merge image-supplied values into docktail's read.
+	labels := settings.DocktailLabels()
+	assert.Equal(t, "false", labels["docktail.service.enable"])
+	assert.Equal(t, "false", labels["docktail.funnel.enable"])
 	assert.False(t, original.Equal(settings))
 }
 

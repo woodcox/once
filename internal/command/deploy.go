@@ -155,7 +155,10 @@ func decideDocktailNotAdvertised(ctx context.Context, verify func(context.Contex
 			fmt.Fprintln(out, "The Tailscale Service is now advertised.")
 			return nil
 		case "d", "delete":
-			return docker.ErrDocktailNotAdvertised
+			// The caller rolls the app (and its data) back via
+			// removeAfterVerificationFailure; that succeeded, so report
+			// success rather than an error.
+			return nil
 		default:
 			fmt.Fprintln(out, "Keeping the app.")
 			return nil
