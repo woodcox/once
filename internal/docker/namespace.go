@@ -280,6 +280,25 @@ func (n *Namespace) containerAppName(containerName string) string {
 
 // Private
 
+// docktailServiceOwner returns the name of an existing application that
+// advertises the given docktail Service name, skipping the named app and any
+// application that doesn't publish a docktail label. The second return is true
+// when a conflict is found.
+func (n *Namespace) docktailServiceOwner(service, excludeApp string) (string, bool) {
+	for _, app := range n.applications {
+		if app.Settings.Name == excludeApp {
+			continue
+		}
+		if !app.Settings.DocktailEnabled() {
+			continue
+		}
+		if app.Settings.EffectiveServiceName() == service {
+			return app.Settings.Name, true
+		}
+	}
+	return "", false
+}
+
 type appCandidate struct {
 	app     *Application
 	created int64

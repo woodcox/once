@@ -74,6 +74,61 @@ func TestHostInUseByAnother(t *testing.T) {
 	assert.False(t, ns.HostInUseByAnother("other.localhost", "app1"))
 }
 
+func TestDocktailServiceOwner(t *testing.T) {
+	docktail := func(name, service string) ApplicationSettings {
+		return ApplicationSettings{
+			Name:      name,
+			Host:      name + ".localhost",
+			Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, Service: service},
+		}
+	}
+
+	t.Run("two apps claiming the same effective name rejects the second", func(t *testing.T) {
+		ns := &Namespace{name: "test"}
+		ns.applications = append(ns.applications,
+			NewApplication(ns, docktail("alpha", "shared")),
+			NewApplication(ns, docktail("beta", "Shared")), // sanitises to "shared"
+		)
+
+		owner, conflict := ns.docktailServiceOwner("shared", "beta")
+		require.True(t, conflict)
+		assert.Equal(t, "alpha", owner)
+	})
+
+	t.Run("same app redeploying does not trip itself", func(t *testing.T) {
+		ns := &Namespace{name: "test"}
+		ns.applications = append(ns.applications,
+			NewApplication(ns, docktail("alpha", "shared")),
+		)
+
+		_, conflict := ns.docktailServiceOwner("shared", "alpha")
+		assert.False(t, conflict)
+	})
+
+	t.Run("differently named services do not conflict", func(t *testing.T) {
+		ns := &Namespace{name: "test"}
+		ns.applications = append(ns.applications,
+			NewApplication(ns, docktail("alpha", "alpha-svc")),
+			NewApplication(ns, docktail("beta", "beta-svc")),
+		)
+
+		_, conflict := ns.docktailServiceOwner("alpha-svc", "alpha")
+		assert.False(t, conflict)
+		_, conflict = ns.docktailServiceOwner("beta-svc", "beta")
+		assert.False(t, conflict)
+	})
+
+	t.Run("public apps are ignored", func(t *testing.T) {
+		ns := &Namespace{name: "test"}
+		ns.applications = append(ns.applications,
+			NewApplication(ns, ApplicationSettings{Name: "alpha", Host: "alpha.localhost"}),
+		)
+
+		_, conflict := ns.docktailServiceOwner("alpha", "new-app")
+		assert.False(t, conflict)
+	})
+}
+
 func TestNewApplicationDoesNotAffectNamespace(t *testing.T) {
 	ns := &Namespace{name: "test"}
 	ns.addApplication(ApplicationSettings{Name: "existing", Host: "existing.localhost"})

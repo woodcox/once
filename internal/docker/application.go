@@ -69,6 +69,10 @@ var (
 		msg:         "tailscale service not advertised yet",
 		description: "The application is running, but the Tailscale Service hasn't appeared. It may still be reconciling, or it may be awaiting approval in your Tailscale admin console.",
 	}
+	ErrDocktailServiceNameInUse = &describedError{
+		msg:         "docktail Tailscale Service name is already in use by another application",
+		description: "Another application in this namespace is already advertised as this Tailscale Service via docktail. Choose a different --docktail-service (or app name), or remove the other application first.",
+	}
 )
 
 const (
@@ -362,6 +366,14 @@ func (a *Application) runningImageID(ctx context.Context) string {
 }
 
 func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolume, progress DeployProgressCallback) error {
+	if a.Settings.DocktailEnabled() {
+		if service := a.Settings.EffectiveServiceName(); service != "" {
+			if owner, conflict := a.namespace.docktailServiceOwner(service, a.Settings.Name); conflict {
+				return fmt.Errorf("%w: %s (another application %q is already using it)", ErrDocktailServiceNameInUse, service, owner)
+			}
+		}
+	}
+
 	if progress != nil {
 		progress(DeployProgress{Stage: DeployStageStarting})
 	}
