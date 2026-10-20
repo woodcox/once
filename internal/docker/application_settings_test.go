@@ -881,4 +881,6 @@ func TestTailscaleSettingsEqualDirect(t *testing.T) {
 	assert.True(t, TailscaleSettings{Direct: &first}.Equal(TailscaleSettings{Direct: &second}))
 	assert.False(t, TailscaleSettings{}.Equal(TailscaleSettings{Direct: &first}))
 	assert.False(t, TailscaleSettings{Direct: &first}.Equal(TailscaleSettings{Direct: &truth}))
+	assert.True(t, TailscaleSettings{}.Equal(TailscaleSettings{Direct: &truth}), "nil Direct and an explicit true are both docktail's default")
+	assert.True(t, TailscaleSettings{Direct: &truth}.Equal(TailscaleSettings{}))
 }

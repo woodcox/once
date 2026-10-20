@@ -22,7 +22,6 @@ func TestInstallTailscaleForm_Defaults(t *testing.T) {
 	assert.Equal(t, "/", m.form.TextField(installTailscalePathField).Value())
 	assert.Empty(t, m.form.TextField(installTailscaleTagsField).Value())
 	assert.Empty(t, m.form.TextField(installTailscaleNetworkField).Value())
-	assert.False(t, m.form.CheckboxField(installTailscaleDirectField).Checked())
 	assert.Empty(t, m.form.TextField(installTailscaleProxyProtocolField).Value())
 }
 
@@ -89,7 +88,6 @@ func TestInstallTailscaleForm_PrefillsExistingSettings(t *testing.T) {
 	assert.Equal(t, "/budget", m.form.TextField(installTailscalePathField).Value())
 	assert.Equal(t, "tag:server", m.form.TextField(installTailscaleTagsField).Value())
 	assert.Equal(t, "tailnet0", m.form.TextField(installTailscaleNetworkField).Value())
-	assert.True(t, m.form.CheckboxField(installTailscaleDirectField).Checked())
 
 	assert.True(t, original.Equal(installTailscaleFormSubmit(t, m)))
 }
@@ -115,14 +113,28 @@ func TestInstallTailscaleForm_ProxyProtocolRoundTrip(t *testing.T) {
 }
 
 func TestInstallTailscaleForm_DirectRoundTrip(t *testing.T) {
-	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
+	direct := true
 
-	assert.Nil(t, installTailscaleFormSubmit(t, m).Direct, "unchecked means docktail's default")
+	t.Run("nil Direct is preserved through a settings round-trip", func(t *testing.T) {
+		m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		})
+		assert.Nil(t, installTailscaleFormSubmit(t, m).Direct)
+	})
 
-	m.form.CheckboxField(installTailscaleDirectField).Toggle()
-	direct := installTailscaleFormSubmit(t, m).Direct
-	require.NotNil(t, direct)
-	assert.False(t, *direct)
+	t.Run("explicit Direct=true is preserved through a settings round-trip", func(t *testing.T) {
+		m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+			Direct:  &direct,
+		})
+		direct := installTailscaleFormSubmit(t, m).Direct
+		require.NotNil(t, direct)
+		assert.True(t, *direct)
+	})
 }
 
 func TestInstallTailscaleForm_ShowsTheLabelsItWillSet(t *testing.T) {
@@ -133,7 +145,6 @@ func TestInstallTailscaleForm_ShowsTheLabelsItWillSet(t *testing.T) {
 	})
 
 	m.form.TextField(installTailscaleNetworkField).SetValue("tailnet0")
-	m.form.CheckboxField(installTailscaleDirectField).Toggle()
 	m, _ = m.Update(keyPressMsg("x"))
 
 	view := ansi.Strip(m.form.View())
@@ -146,7 +157,7 @@ func TestInstallTailscaleForm_ShowsTheLabelsItWillSet(t *testing.T) {
 	assert.Contains(t, view, "docktail.service.path=/budget")
 	assert.Contains(t, view, "docktail.tags=tag:server")
 	assert.Contains(t, view, "docktail.service.network=tailnet0")
-	assert.Contains(t, view, "docktail.service.direct=false")
+	assert.Contains(t, view, "docktail.service.direct=true")
 }
 
 func TestInstallTailscaleForm_LabelPreviewFollowsEdits(t *testing.T) {

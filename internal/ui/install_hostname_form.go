@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -26,6 +27,7 @@ type InstallHostnameForm struct {
 	form     Form
 	imageRef string
 	title    string
+	target   InstallTarget
 }
 
 func NewInstallHostnameForm(imageRef, title string, target InstallTarget) InstallHostnameForm {
@@ -51,6 +53,7 @@ func NewInstallHostnameForm(imageRef, title string, target InstallTarget) Instal
 		),
 		imageRef: imageRef,
 		title:    title,
+		target:   target,
 	}
 
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
@@ -100,8 +103,9 @@ func (m InstallHostnameForm) Hostname() string {
 
 // tailnetMagicDNSSuffix returns the MagicDNS suffix of the tailnet this host
 // belongs to, or "" when the tailscale CLI isn't available. It is a variable
-// so tests can substitute a stub.
-var tailnetMagicDNSSuffix = readTailnetMagicDNSSuffix
+// so tests can substitute a stub, and a sync.OnceValue so a slow tailscaled
+// only freezes the first hostname screen instead of every one we render.
+var tailnetMagicDNSSuffix = sync.OnceValue(func() string { return readTailnetMagicDNSSuffix() })
 
 // tailnetNamePlaceholder suggests the name a Service for this app would take
 // on the tailnet, falling back to the usual hostname when the suffix can't be

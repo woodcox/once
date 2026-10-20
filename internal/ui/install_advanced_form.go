@@ -28,6 +28,7 @@ type InstallAdvancedForm struct {
 	height   int
 	scroll   int
 	settings docker.ApplicationSettings
+	envKeys  []string
 }
 
 func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvancedForm {
@@ -63,6 +64,7 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 	m := InstallAdvancedForm{
 		form:     NewForm("Install", items...),
 		settings: settings,
+		envKeys:  keys,
 	}
 
 	m.form.OnRebuild(func(f *Form) {
@@ -119,6 +121,8 @@ func (m InstallAdvancedForm) Update(msg tea.Msg) (InstallAdvancedForm, tea.Cmd) 
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
 		m.height = wsm.Height
+		wsm.Height = formViewportHeight(wsm.Height)
+		msg = wsm
 	}
 
 	var cmd tea.Cmd
@@ -131,6 +135,30 @@ func (m InstallAdvancedForm) Update(msg tea.Msg) (InstallAdvancedForm, tea.Cmd) 
 func (m InstallAdvancedForm) View() string {
 	title := Styles.Title.Render("Advanced settings")
 	return lipgloss.JoinVertical(lipgloss.Center, title, "", m.renderContent())
+}
+
+// matches reports whether the existing form's pre-filled values are still in
+// step with the settings it was built from, so the caller can decide whether
+// rebuilding from pendingSettings would discard typed input.
+func (m InstallAdvancedForm) matches(settings docker.ApplicationSettings) bool {
+	if m.form.ItemCount() == 0 {
+		return false
+	}
+	if m.settings.AppPort != settings.AppPort ||
+		m.settings.HealthCheckPath != settings.HealthCheckPath ||
+		m.settings.SkipRailsEnv != settings.SkipRailsEnv ||
+		!slices.Equal(m.settings.VolumePaths, settings.VolumePaths) {
+		return false
+	}
+	if len(m.envKeys) != len(settings.EnvVars) {
+		return false
+	}
+	for _, k := range m.envKeys {
+		if _, ok := settings.EnvVars[k]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // Private
@@ -174,7 +202,7 @@ func (m *InstallAdvancedForm) adjustScroll() {
 
 	focusedRow := m.focusedEnvRow()
 	if focusedRow < 0 {
-		focusedRow = m.envRowCount() - 1
+		return
 	}
 
 	if focusedRow < m.scroll {

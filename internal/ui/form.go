@@ -297,7 +297,7 @@ func (f Form) View() string {
 	// A form that doesn't fit the terminal shows whole items around the
 	// focused one and keeps the buttons reachable.
 	if f.height > 0 && f.height < 3 {
-		return buttons
+		return f.convergeBlock(blocks, buttons)
 	}
 
 	start, end, windowed := f.visibleRange(blocks)
@@ -319,6 +319,22 @@ func (f Form) View() string {
 	parts = append(parts, buttons)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// convergeBlock renders the focused field's input on a single line, plus the
+// buttons if they fit. Keystrokes still go to the focused field; this just makes
+// sure the field the user is editing is visible at all.
+func (f Form) convergeBlock(blocks []string, buttons string) string {
+	if f.focused >= len(blocks) {
+		return buttons
+	}
+	lines := strings.Split(blocks[f.focused], "\n")
+	// Each block is: [label, input_top, input_content, input_bottom, blank].
+	content := lines[2]
+	if f.height >= 4 {
+		return lipgloss.JoinVertical(lipgloss.Left, content, buttons)
+	}
+	return content
 }
 
 func (f *Form) SetActionButton(label string, onPress func() tea.Msg) {

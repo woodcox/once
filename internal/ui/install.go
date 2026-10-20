@@ -218,8 +218,10 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		return m, m.initScreenWithSize()
 
 	case InstallWhereSelectedMsg:
+		if m.target != msg.Target || m.hostnameForm.imageRef != m.pendingImage {
+			m.hostnameForm = NewInstallHostnameForm(m.pendingImage, "", msg.Target)
+		}
 		m.target = msg.Target
-		m.hostnameForm = NewInstallHostnameForm(m.pendingImage, "", m.target)
 		m.state = installStateHostname
 		return m, m.initScreenWithSize()
 
@@ -235,6 +237,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		return m, nil
 
 	case InstallFormSubmitMsg:
+		if m.state != installStateHostname {
+			break
+		}
 		if m.namespace.HostInUse(msg.Hostname) {
 			m.err = docker.ErrHostnameInUse
 			return m, nil
@@ -242,7 +247,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		m.pendingImage = msg.ImageRef
 		m.pendingHost = msg.Hostname
 		if m.target == InstallTargetTailnet {
-			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
+			if m.tailscaleForm.imageRef != m.pendingImage || m.tailscaleForm.appPort != m.pendingSettings.AppPort {
+				m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
+			}
 			m.state = installStateTailscale
 			return m, m.initScreenWithSize()
 		}
@@ -261,6 +268,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		return m, nil
 
 	case InstallAdvancedMsg:
+		if m.state != installStateHostname {
+			break
+		}
 		if msg.Hostname == "" {
 			m.err = docker.ErrHostRequired
 			return m, nil
@@ -271,7 +281,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 		m.pendingImage = msg.ImageRef
 		m.pendingHost = msg.Hostname
-		m.advancedForm = NewInstallAdvancedForm(m.pendingSettings)
+		if !m.advancedForm.matches(m.pendingSettings) {
+			m.advancedForm = NewInstallAdvancedForm(m.pendingSettings)
+		}
 		m.state = installStateAdvanced
 		return m, m.initScreenWithSize()
 
@@ -288,7 +300,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 		m.pendingSettings = settings
 		if m.target == InstallTargetTailnet && !m.tailscaleConfirmed {
-			m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
+			if m.tailscaleForm.imageRef != m.pendingImage || m.tailscaleForm.appPort != m.pendingSettings.AppPort {
+				m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
+			}
 			m.state = installStateTailscale
 			return m, m.initScreenWithSize()
 		}

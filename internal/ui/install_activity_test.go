@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
@@ -42,6 +43,70 @@ func TestInstallActivity_KeysIgnoredWithoutPrompt(t *testing.T) {
 
 	assert.Nil(t, m.Update(keyPressMsg("d")))
 	assert.Nil(t, m.Update(keyPressMsg("esc")))
+}
+
+func TestInstallActivity_SecondDecisionIsIgnored(t *testing.T) {
+	m := newTestActivity()
+	m.Update(installPromptMsg{})
+
+	cmd := m.Update(keyPressMsg("d"))
+	require.NotNil(t, cmd)
+	m.Update(cmd())
+	require.Nil(t, m.prompt, "the prompt is dismissed once a decision is made")
+
+	select {
+	case decision := <-m.decisionChan:
+		assert.Equal(t, docktailRollback, decision)
+	default:
+		t.Fatal("expected a decision on the decision channel, got none")
+	}
+
+	cmd = m.Update(keyPressMsg("d"))
+	require.Nil(t, cmd, "a second decision after the prompt is cleared produces no command")
+
+	select {
+	case decision := <-m.decisionChan:
+		t.Fatalf("second decision should be ignored, got %v", decision)
+	default:
+	}
+}
+
+func TestInstallActivity_DecisionSendNeverBlocks(t *testing.T) {
+	m := newTestActivity()
+	m.Update(installPromptMsg{})
+
+	cmd := m.Update(keyPressMsg("k"))
+	require.NotNil(t, cmd)
+	m.Update(cmd())
+
+	select {
+	case decision := <-m.decisionChan:
+		assert.Equal(t, docktailKeep, decision)
+	default:
+		t.Fatal("expected the first decision on the channel")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		cmd := m.Update(keyPressMsg("k"))
+		assert.Nil(t, cmd, "no prompt means the key produces no command")
+
+		cmd = m.Update(docktailDecisionMsg{decision: docktailKeep})
+		assert.Nil(t, cmd, "a stray decision after the prompt is cleared produces no command")
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Update blocked when decision channel had no consumer")
+	}
+
+	select {
+	case decision := <-m.decisionChan:
+		t.Fatalf("extra decisions should be dropped, got %v", decision)
+	default:
+	}
 }
 
 func TestInstallActivity_WarningsAreDrainedBeforeDone(t *testing.T) {

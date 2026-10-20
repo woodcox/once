@@ -144,14 +144,21 @@ type TailscaleSettings struct {
 }
 
 func (t TailscaleSettings) Equal(other TailscaleSettings) bool {
-	if (t.Direct == nil) != (other.Direct == nil) {
-		return false
-	}
-	if t.Direct != nil && *t.Direct != *other.Direct {
+	if !equalDirect(t.Direct, other.Direct) {
 		return false
 	}
 	t.Direct, other.Direct = nil, nil
 	return t == other
+}
+
+// equalDirect treats a nil Direct and an explicit true as the same: docktail's
+// own default is true, so a settings value set by the CLI never needs to be
+// distinguished from one left unset in the UI.
+func equalDirect(a, b *bool) bool {
+	if a == nil || b == nil {
+		return (a == nil || *a) && (b == nil || *b)
+	}
+	return *a == *b
 }
 
 type ApplicationSettings struct {
@@ -342,6 +349,19 @@ func (s ApplicationSettings) EffectiveServicePort() int {
 		return 443
 	}
 	return 80
+}
+
+// EffectiveProtocol returns the backend protocol docktail will use, defaulting
+// to https on the backend port 443 and http otherwise. Exposed so the install
+// form can show the same preview the docker package will end up emitting.
+func (s ApplicationSettings) EffectiveProtocol() string {
+	return s.effectiveProtocol()
+}
+
+// EffectiveServiceProtocol returns the Tailscale-facing protocol docktail
+// will use. Exposed for the same reason as EffectiveProtocol.
+func (s ApplicationSettings) EffectiveServiceProtocol() string {
+	return s.effectiveServiceProtocol()
 }
 
 // DocktailLabels returns the `docktail.*` labels to place on the app container.

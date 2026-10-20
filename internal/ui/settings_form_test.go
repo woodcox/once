@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -246,7 +247,6 @@ func TestSettingsFormTailscale_RoundTripsEveryLabel(t *testing.T) {
 	assert.Equal(t, "https+insecure", form.form.TextField(tailscaleBackendProtocolField).Value())
 	assert.Equal(t, "https", form.form.TextField(tailscaleServiceProtocolField).Value())
 	assert.Equal(t, "tailnet0", form.form.TextField(tailscaleNetworkField).Value())
-	assert.False(t, form.form.CheckboxField(tailscaleDirectField).Checked())
 
 	result := tailscaleSubmit(t, &form)
 
@@ -294,18 +294,28 @@ func TestSettingsFormTailscale_ProxyProtocolRoundTrip(t *testing.T) {
 }
 
 func TestSettingsFormTailscale_DirectRoundTrip(t *testing.T) {
-	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget", Tailscale: docker.TailscaleSettings{
-		Enabled: true,
-		Mode:    docker.DocktailMode,
-		Service: "budget",
-	}})
+	direct := true
 
-	assert.Nil(t, tailscaleSubmit(t, &form).Tailscale.Direct)
+	t.Run("nil Direct is preserved through a settings round-trip", func(t *testing.T) {
+		form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget", Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		}})
+		assert.Nil(t, tailscaleSubmit(t, &form).Tailscale.Direct)
+	})
 
-	form.form.CheckboxField(tailscaleDirectField).Toggle()
-	direct := tailscaleSubmit(t, &form).Tailscale.Direct
-	require.NotNil(t, direct)
-	assert.False(t, *direct)
+	t.Run("explicit Direct=true is preserved through a settings round-trip", func(t *testing.T) {
+		form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget", Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+			Direct:  &direct,
+		}})
+		result := tailscaleSubmit(t, &form).Tailscale.Direct
+		require.NotNil(t, result)
+		assert.True(t, *result)
+	})
 }
 
 func TestSettingsFormTailscale_ShowsTheLabelsItWillSet(t *testing.T) {
@@ -330,12 +340,11 @@ func TestSettingsFormTailscale_ShowsTheLabelsItWillSet(t *testing.T) {
 	assert.Contains(t, view, "docktail.service.path=/budget")
 
 	form.form.TextField(tailscaleNetworkField).SetValue("tailnet0")
-	form.form.CheckboxField(tailscaleDirectField).Toggle()
 	updateSettingsForm(&form, keyPressMsg("x"))
 
 	updated := ansi.Strip(form.View())
 	assert.Contains(t, updated, "docktail.service.network=tailnet0")
-	assert.Contains(t, updated, "docktail.service.direct=false")
+	assert.Contains(t, updated, "docktail.service.direct=true")
 }
 
 func TestSettingsFormTailscale_DisablingHidesTheLabels(t *testing.T) {
@@ -949,6 +958,36 @@ func TestSettingsFormEnvironment_AutoGrow(t *testing.T) {
 
 	environmentTypeText(&form, "Y")
 	assert.Equal(t, 4, form.form.ItemCount(), "no extra row while still in same key")
+}
+
+func TestSettingsFormApplication_FitsTerminalHeight(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Image: "ghcr.io/basecamp/once-campfire:latest",
+		Host:  "app.example.com",
+	}
+	form := NewSettingsFormApplication(settings)
+	updateSettingsForm(&form, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 24, "Application section must fit a 24-row terminal")
+}
+
+func TestSettingsFormTailscale_FitsTerminalHeight(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		},
+	}
+	form := NewSettingsFormTailscale(settings)
+	updateSettingsForm(&form, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 24, "Tailscale section must fit a 24-row terminal")
 }
 
 func TestSettingsFormEnvironment_AutoGrow_VisibleInView(t *testing.T) {

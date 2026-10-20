@@ -120,6 +120,29 @@ func TestInstallAdvancedForm_GrowsEnvRows(t *testing.T) {
 	assert.Equal(t, initial+2, m.form.ItemCount(), "typing a new key appends an empty row")
 }
 
+func TestInstallAdvancedForm_FixedFieldFocusLeavesEnvScrollAlone(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{
+		EnvVars: map[string]string{
+			"AAA": "1",
+			"BBB": "2",
+			"CCC": "3",
+			"DDD": "4",
+		},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+
+	for range 10 {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	require.Equal(t, advancedEnvStart+6, m.form.Focused(), "scrolled deep into the env grid")
+
+	for m.form.Focused() != advancedHealthCheckField {
+		m, _ = m.Update(keyPressMsg("shift+tab"))
+	}
+	require.Equal(t, advancedHealthCheckField, m.form.Focused(), "back at the first fixed field")
+	assert.Zero(t, m.scroll, "fixed-field focus must not jump the env grid to its last row")
+}
+
 func TestInstallAdvancedForm_FitsFieldsAndButtonsAtSmallHeight(t *testing.T) {
 	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})

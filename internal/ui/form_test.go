@@ -401,6 +401,25 @@ func TestForm_ShortFormIsUnchangedByWindowSize(t *testing.T) {
 	assert.Equal(t, 14, lipgloss.Height(tall))
 }
 
+func TestForm_TinyHeightShowsFocusedField(t *testing.T) {
+	hostname := NewTextField("app.example.com")
+	hostname.SetValue("chat.example.com")
+	form := NewForm("Done",
+		FormItem{Label: "Hostname", Field: hostname},
+		FormItem{Label: "Path", Field: NewTextField("/")},
+	)
+
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 1})
+	view := form.View()
+	assert.Equal(t, 1, lipgloss.Height(view))
+	assert.Contains(t, view, "chat.example.com", "the focused field's input is the visible line at height 1")
+
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 2})
+	view = form.View()
+	assert.Equal(t, 1, lipgloss.Height(view), "buttons only fit once the height covers them")
+	assert.Contains(t, view, "chat.example.com", "the focused field's input is still visible at height 2")
+}
+
 // Helpers
 
 func updateForm(f Form, msg tea.Msg) Form {

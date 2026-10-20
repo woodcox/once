@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -120,6 +121,34 @@ func TestTailnetNamePlaceholder(t *testing.T) {
 
 	assert.Equal(t, "once-campfire.tail1234.ts.net", tailnetNamePlaceholder("ghcr.io/basecamp/once-campfire:latest"))
 	assert.Equal(t, "app.example.com", tailnetNamePlaceholder(""), "no image ref leaves the generic placeholder")
+}
+
+func TestTailnetMagicDNSSuffixIsCached(t *testing.T) {
+	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
+
+	first := tailnetMagicDNSSuffix()
+	second := tailnetMagicDNSSuffix()
+	third := tailnetMagicDNSSuffix()
+
+	assert.Equal(t, "tail1234.ts.net", first)
+	assert.Equal(t, first, second)
+	assert.Equal(t, first, third)
+}
+
+func TestTailnetMagicDNSSuffixCachesAfterFirstRead(t *testing.T) {
+	calls := 0
+	suffix := sync.OnceValue(func() string {
+		calls++
+		return "tail1234.ts.net"
+	})
+	original := tailnetMagicDNSSuffix
+	tailnetMagicDNSSuffix = suffix
+	t.Cleanup(func() { tailnetMagicDNSSuffix = original })
+
+	for range 3 {
+		_ = tailnetMagicDNSSuffix()
+	}
+	assert.Equal(t, 1, calls, "the lookup should happen exactly once when cached")
 }
 
 // Helpers

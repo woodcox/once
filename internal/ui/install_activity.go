@@ -128,8 +128,14 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 		return m.waitForProgress()
 
 	case docktailDecisionMsg:
+		if m.prompt == nil {
+			return nil
+		}
 		m.prompt = nil
-		m.decisionChan <- msg.decision
+		select {
+		case m.decisionChan <- msg.decision:
+		default:
+		}
 		return m.waitForProgress()
 
 	case tea.KeyPressMsg, MouseEvent:

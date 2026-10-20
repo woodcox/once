@@ -19,7 +19,6 @@ const (
 	tailscalePathField
 	tailscaleTagsField
 	tailscaleNetworkField
-	tailscaleDirectField
 	tailscaleProxyProtocolField
 	tailscaleLabelsField
 )
@@ -65,8 +64,6 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 	networkField := NewTextField("docktail default; the Docker network used to find the container IP")
 	networkField.SetValue(settings.Tailscale.Network)
 
-	directField := NewCheckboxField("Use the published container port instead of the container IP", settings.Tailscale.Direct != nil && !*settings.Tailscale.Direct)
-
 	proxyProtocolField := NewTextField("off; 1 or 2; only for TCP service protocols")
 	proxyProtocolField.SetValue(settings.Tailscale.ProxyProtocol)
 
@@ -85,7 +82,6 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 			FormItem{Label: "Service path", Field: pathField},
 			FormItem{Label: "Service tags", Field: tagsField},
 			FormItem{Label: "Network", Field: networkField},
-			FormItem{Label: "Container address", Field: directField},
 			FormItem{Label: "Proxy protocol", Field: proxyProtocolField},
 			FormItem{Field: labelsField},
 		),
@@ -104,7 +100,7 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
 		s := settings
-		s.Tailscale = tailscaleSettings(f)
+		s.Tailscale = tailscaleSettings(f, s.Tailscale)
 		return func() tea.Msg { return SettingsSectionSubmitMsg{Settings: s} }
 	})
 	m.form.OnCancel(func(f *Form) tea.Cmd {
@@ -115,11 +111,6 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 }
 
 func (m SettingsFormTailscale) Update(msg tea.Msg) (SettingsSection, tea.Cmd) {
-	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
-		wsm.Height = formViewportHeight(wsm.Height)
-		msg = wsm
-	}
-
 	var cmd tea.Cmd
 	m.settingsFormBase, cmd = m.update(msg)
 	return m, cmd
@@ -129,13 +120,13 @@ func (m SettingsFormTailscale) Update(msg tea.Msg) (SettingsSection, tea.Cmd) {
 
 func (m SettingsFormTailscale) applicationSettings(f *Form) docker.ApplicationSettings {
 	settings := m.settings
-	settings.Tailscale = tailscaleSettings(f)
+	settings.Tailscale = tailscaleSettings(f, m.settings.Tailscale)
 	return settings
 }
 
 // Helpers
 
-func tailscaleSettings(f *Form) docker.TailscaleSettings {
+func tailscaleSettings(f *Form, original docker.TailscaleSettings) docker.TailscaleSettings {
 	if !f.CheckboxField(tailscaleEnabledField).Checked() {
 		return docker.TailscaleSettings{}
 	}
@@ -151,15 +142,11 @@ func tailscaleSettings(f *Form) docker.TailscaleSettings {
 		Tags:            f.TextField(tailscaleTagsField).Value(),
 		Network:         f.TextField(tailscaleNetworkField).Value(),
 		ProxyProtocol:   f.TextField(tailscaleProxyProtocolField).Value(),
+		Direct:          original.Direct,
 	}
 
 	settings.Port, _ = strconv.Atoi(f.TextField(tailscaleBackendPortField).Value())
 	settings.ServicePort, _ = strconv.Atoi(f.TextField(tailscaleServicePortField).Value())
-
-	if f.CheckboxField(tailscaleDirectField).Checked() {
-		direct := false
-		settings.Direct = &direct
-	}
 
 	return settings
 }
