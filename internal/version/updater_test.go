@@ -294,3 +294,81 @@ func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
+
+func TestUpdateBinary_PrefersBrowserDownloadURL(t *testing.T) {
+	dir := t.TempDir()
+
+	execPath := filepath.Join(dir, "once")
+	require.NoError(t, os.WriteFile(execPath, []byte("old"), 0o755))
+
+	binary := []byte("new binary content")
+	name := assetNameForPlatform()
+	checksums := fmt.Sprintf("%s  %s\n", sha256Hex(binary), name)
+
+	// The API asset URL answers with JSON metadata, as GitHub does without
+	// an octet-stream accept header. Only the browser URL has the bytes.
+	api := func() *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"name":"metadata"}`))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	files := func(body string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	checksumsAPI, checksumsFiles := api(), files(checksums)
+	binaryAPI, binaryFiles := api(), files(string(binary))
+
+	assets := []asset{
+		{Name: "checksums.txt", URL: checksumsAPI.URL + "/asset", BrowserURL: checksumsFiles.URL + "/checksums.txt"},
+		{Name: name, URL: binaryAPI.URL + "/asset", BrowserURL: binaryFiles.URL + "/" + name},
+	}
+	srv := releaseServer(t, "v2.0.0", assets)
+	u := newUpdater("v1.0.0", srv.URL, srv.Client())
+	u.execPath = func() (string, error) { return execPath, nil }
+
+	require.NoError(t, u.UpdateBinary())
+
+	got, err := os.ReadFile(execPath)
+	require.NoError(t, err)
+	assert.Equal(t, binary, got)
+}
+
+func TestUpdateBinary_ChecksumsRequestAcceptsOctetStream(t *testing.T) {
+	dir := t.TempDir()
+
+	execPath := filepath.Join(dir, "once")
+	require.NoError(t, os.WriteFile(execPath, []byte("old"), 0o755))
+
+	binary := []byte("new binary content")
+	name := assetNameForPlatform()
+
+	var accept string
+	checksumsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accept = r.Header.Get("Accept")
+		_, _ = fmt.Fprintf(w, "%s  %s\n", sha256Hex(binary), name)
+	}))
+	t.Cleanup(checksumsSrv.Close)
+
+	binSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(binary)
+	}))
+	t.Cleanup(binSrv.Close)
+
+	srv := releaseServer(t, "v2.0.0", []asset{
+		{Name: "checksums.txt", URL: checksumsSrv.URL},
+		{Name: name, URL: binSrv.URL},
+	})
+	u := newUpdater("v1.0.0", srv.URL, srv.Client())
+	u.execPath = func() (string, error) { return execPath, nil }
+
+	require.NoError(t, u.UpdateBinary())
+	assert.Equal(t, "application/octet-stream", accept)
+}

@@ -81,7 +81,7 @@ func (u *Updater) UpdateBinary() error {
 
 	fmt.Printf("Updating once from %s to %s...\n", u.currentVersion, rel.TagName)
 
-	body, err := u.downloadBinary(asset.URL)
+	body, err := u.downloadBinary(asset.downloadURL())
 	if err != nil {
 		return err
 	}
@@ -118,6 +118,19 @@ type release struct {
 type asset struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
+	// BrowserURL is the public download link. The API URL only returns the
+	// asset bytes when the request accepts application/octet-stream, so
+	// prefer this whenever GitHub supplies it.
+	BrowserURL string `json:"browser_download_url"`
+}
+
+// downloadURL prefers the public asset link and falls back to the API URL for
+// releases (or tests) that only provide that.
+func (a asset) downloadURL() string {
+	if a.BrowserURL != "" {
+		return a.BrowserURL
+	}
+	return a.URL
 }
 
 type progressReader struct {
@@ -140,7 +153,7 @@ func (p *progressReader) Read(b []byte) (int, error) {
 func (r *release) checksumsAssetURL() string {
 	for _, a := range r.Assets {
 		if a.Name == checksumsAssetName {
-			return a.URL
+			return a.downloadURL()
 		}
 	}
 	return ""
@@ -218,7 +231,18 @@ func (u *Updater) lookupChecksum(checksumsURL, assetName string) (string, error)
 }
 
 func (u *Updater) downloadChecksums(url string) ([]byte, error) {
-	resp, err := u.get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	// The API asset URL returns JSON metadata without this header; the
+	// public browser_download_url doesn't care either way.
+	req.Header.Set("Accept", "application/octet-stream")
+	if u.githubToken != "" {
+		req.Header.Set("Authorization", "token "+u.githubToken)
+	}
+
+	resp, err := u.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
