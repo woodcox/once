@@ -1105,7 +1105,6 @@ func TestSettingsFormEnvironment_MouseWheelScrollsWithoutMovingFocus(t *testing.
 
 	form := NewSettingsFormEnvironment(docker.ApplicationSettings{EnvVars: envVars})
 	environmentSendWindowSize(&form, 80, 12)
-	require.Less(t, form.maxVisibleRows(), form.rowCount(), "test precondition: the rows overflow the screen")
 
 	focused := form.form.Focused()
 	before := ansi.Strip(form.View())
@@ -1114,11 +1113,11 @@ func TestSettingsFormEnvironment_MouseWheelScrollsWithoutMovingFocus(t *testing.
 	after := ansi.Strip(form.View())
 
 	assert.Equal(t, focused, form.form.Focused(), "the wheel never moves focus")
-	assert.Greater(t, form.scroll, 0, "the wheel moved the row window")
+	assert.Greater(t, form.form.wheelSteps, 0, "the wheel moved the row window")
 	assert.NotEqual(t, before, after, "the visible rows changed")
 
 	updateSettingsForm(&form, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
-	assert.Zero(t, form.scroll, "wheeling back up returns to the top")
+	assert.Zero(t, form.form.wheelSteps, "wheeling back up cancels the wheel steps")
 	assert.Equal(t, focused, form.form.Focused())
 }
 

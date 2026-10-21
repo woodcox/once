@@ -20,3 +20,12 @@ func lineCountAt(view string) int {
 	}
 	return strings.Count(view, "\n") + 1
 }
+
+func lineContaining(view, needle string) string {
+	for line := range strings.SplitSeq(view, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
+}

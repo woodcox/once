@@ -205,6 +205,7 @@ type FormItem struct {
 	LabelTag    string
 	Required    bool
 	Field       FormField
+	RowGroup    int
 }
 
 // markerStyle styles the "(required)"/"(optional)" marker that follows a
@@ -280,6 +281,7 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 
 	case MouseEvent:
 		if msg.IsClick {
+			f.wheelSteps = 0
 			return f.handleClick(msg.Target)
 		}
 
@@ -298,9 +300,14 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 		}
 	}
 
+	_, isKey := msg.(tea.KeyPressMsg)
+	_, isPaste := msg.(tea.PasteMsg)
+	if isKey || isPaste {
+		// Any interaction with the focused field brings it back into view
+		// by discarding any wheel-induced shift.
+		f.wheelSteps = 0
+	}
 	if f.focused < len(f.items) {
-		_, isKey := msg.(tea.KeyPressMsg)
-		_, isPaste := msg.(tea.PasteMsg)
 		if isKey {
 			f.clearErrorOnInput()
 		}
@@ -316,23 +323,23 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 }
 
 func (f Form) View() string {
-	blocks := f.itemBlocks()
+	blocks, itemToBlock := f.itemBlocks()
 	buttons := f.renderButtons()
 
 	// A form that doesn't fit the terminal shows whole items around the
 	// focused one and keeps the buttons reachable.
 	if f.height > 0 && f.height < 3 {
-		return f.convergeBlock(blocks, buttons)
+		return f.convergeBlock(itemToBlock, buttons)
 	}
 
-	start, end, windowed := f.visibleRange(blocks)
+	start, end, windowed := f.visibleRange(blocks, itemToBlock)
 	if !windowed {
 		parts := make([]string, 0, len(blocks)+2)
 		parts = append(parts, blocks...)
 		parts = append(parts, "", buttons)
 		return lipgloss.JoinVertical(lipgloss.Left, parts...)
 	}
-	start, end = f.applyWindowStart(start, end)
+	start, end = f.applyWindowStart(start, end, itemToBlock)
 
 	parts := make([]string, 0, end-start+3)
 	if start > 0 {
@@ -350,17 +357,46 @@ func (f Form) View() string {
 // convergeBlock renders the focused field's input on a single line, plus the
 // buttons if they fit. Keystrokes still go to the focused field; this just makes
 // sure the field the user is editing is visible at all.
-func (f Form) convergeBlock(blocks []string, buttons string) string {
-	if f.focused >= len(blocks) {
+func (f Form) convergeBlock(itemToBlock []int, buttons string) string {
+	if f.focused >= len(f.items) {
 		return buttons
 	}
-	lines := strings.Split(blocks[f.focused], "\n")
-	// Each block is: [label, input_top, input_content, input_bottom, blank].
-	content := lines[2]
+	content := f.renderFocusedFieldLine(f.focused)
 	if f.height >= 4 {
 		return lipgloss.JoinVertical(lipgloss.Left, content, buttons)
 	}
 	return content
+}
+
+// renderFocusedFieldLine returns just the content line of the focused item,
+// used by convergeBlock when there is no room for the full bordered input.
+func (f Form) renderFocusedFieldLine(focusedIdx int) string {
+	item := f.items[focusedIdx]
+	var rendered string
+	if item.RowGroup == 0 {
+		inputStyle := Styles.WithError(Styles.Focus(Styles.Input, true), false)
+		rendered = inputStyle.Render(item.Field.View())
+	} else {
+		groupStart := focusedIdx
+		for groupStart > 0 && f.items[groupStart-1].RowGroup == item.RowGroup {
+			groupStart--
+		}
+		groupEnd := focusedIdx + 1
+		for groupEnd < len(f.items) && f.items[groupEnd].RowGroup == item.RowGroup {
+			groupEnd++
+		}
+		rendered = f.renderRowBlock(f.items[groupStart:groupEnd], groupStart)
+	}
+	lines := strings.Split(rendered, "\n")
+	// A bordered textinput is 3 lines tall (top, content, bottom); the
+	// middle one is the part the user is editing.
+	if len(lines) >= 3 {
+		return lines[1]
+	}
+	if len(lines) > 0 {
+		return lines[0]
+	}
+	return ""
 }
 
 func (f *Form) SetActionButton(label string, onPress func() tea.Msg) {
@@ -450,48 +486,94 @@ func (f Form) Error() string {
 
 // Private
 
-func (f Form) itemBlocks() []string {
+func (f Form) itemBlocks() ([]string, []int) {
 	blocks := make([]string, 0, len(f.items))
-	errorStyle := lipgloss.NewStyle().Foreground(Colors.Error)
+	itemToBlock := make([]int, len(f.items))
 
-	for i, item := range f.items {
+	blockIdx := 0
+	i := 0
+	for i < len(f.items) {
+		item := f.items[i]
 		if _, isStatic := item.Field.(*StaticField); isStatic {
 			blocks = append(blocks, item.Field.View())
+			itemToBlock[i] = blockIdx
+			blockIdx++
+			i++
 			continue
 		}
 
-		label := item.Label
-		requiredMarker := strings.HasSuffix(item.Label, "(required)") || strings.HasSuffix(item.Label, "(optional)")
-		switch {
-		case item.Label == "":
-			// Unlabelled inputs (the env-var value cell) carry no marker.
-		case item.Required && !requiredMarker:
-			label += markerStyle.Render(" (required)")
-		case !item.Required && item.Field.IsFocusable() && !requiredMarker:
-			label += markerStyle.Render(" (optional)")
-		}
-		if item.LabelTag != "" {
-			label += markerStyle.Render(" — ") + tagStyle.Render(item.LabelTag)
+		if item.RowGroup != 0 {
+			groupEnd := i + 1
+			for groupEnd < len(f.items) && f.items[groupEnd].RowGroup == item.RowGroup {
+				groupEnd++
+			}
+			blocks = append(blocks, f.renderRowBlock(f.items[i:groupEnd], i))
+			for k := i; k < groupEnd; k++ {
+				itemToBlock[k] = blockIdx
+			}
+			blockIdx++
+			i = groupEnd
+			continue
 		}
 
-		parts := []string{item.labelStyle().Render(label)}
-
-		hasError := f.error != "" && i == f.errorField
-		inputStyle := Styles.WithError(Styles.Focus(Styles.Input, f.focused == i), hasError)
-		parts = append(parts, mouse.Mark(fieldTarget(i), inputStyle.Render(item.Field.View())))
-
-		if item.Description != "" {
-			parts = append(parts, Styles.MutedText.Render(item.Description))
-		}
-		if hasError {
-			parts = append(parts, errorStyle.Render(f.error))
-		}
-		parts = append(parts, "")
-
-		blocks = append(blocks, lipgloss.JoinVertical(lipgloss.Left, parts...))
+		blocks = append(blocks, f.renderItemBlock(i, item))
+		itemToBlock[i] = blockIdx
+		blockIdx++
+		i++
 	}
 
-	return blocks
+	return blocks, itemToBlock
+}
+
+// renderItemBlock renders a single FormItem as a labelled block: label line,
+// bordered input, optional description and error, plus a trailing blank. The
+// input keeps its own mouse mark and its own focus highlight.
+func (f Form) renderItemBlock(i int, item FormItem) string {
+	errorStyle := lipgloss.NewStyle().Foreground(Colors.Error)
+
+	label := item.Label
+	requiredMarker := strings.HasSuffix(item.Label, "(required)") || strings.HasSuffix(item.Label, "(optional)")
+	switch {
+	case item.Label == "":
+		// Unlabelled inputs (the env-var value cell) carry no marker.
+	case item.Required && !requiredMarker:
+		label += markerStyle.Render(" (required)")
+	case !item.Required && item.Field.IsFocusable() && !requiredMarker:
+		label += markerStyle.Render(" (optional)")
+	}
+	if item.LabelTag != "" {
+		label += markerStyle.Render(" — ") + tagStyle.Render(item.LabelTag)
+	}
+
+	parts := []string{item.labelStyle().Render(label)}
+
+	hasError := f.error != "" && i == f.errorField
+	inputStyle := Styles.WithError(Styles.Focus(Styles.Input, f.focused == i), hasError)
+	parts = append(parts, mouse.Mark(fieldTarget(i), inputStyle.Render(item.Field.View())))
+
+	if item.Description != "" {
+		parts = append(parts, Styles.MutedText.Render(item.Description))
+	}
+	if hasError {
+		parts = append(parts, errorStyle.Render(f.error))
+	}
+	parts = append(parts, "")
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// renderRowBlock lays a row group out side by side, separated by a single
+// space. Each input keeps its own focus border and its own mouse mark; focus
+// still traverses the members individually and windowing treats the whole
+// row as one block.
+func (f Form) renderRowBlock(group []FormItem, startIdx int) string {
+	views := make([]string, 0, len(group))
+	for offset, item := range group {
+		i := startIdx + offset
+		inputStyle := Styles.Focus(Styles.Input, f.focused == i)
+		views = append(views, mouse.Mark(fieldTarget(i), inputStyle.Render(item.Field.View())))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, views...)
 }
 
 func (f Form) renderButtons() string {
@@ -514,9 +596,11 @@ func (f Form) renderButtons() string {
 }
 
 // visibleRange returns the slice of item blocks to render. When the form is
-// taller than the terminal it grows the window around the focused item, one
+// taller than the terminal it grows the window around the focused block, one
 // whole block at a time, and reserves a line for each hidden-fields indicator.
-func (f Form) visibleRange(blocks []string) (start, end int, windowed bool) {
+// itemToBlock maps each item index to its block index; focused items that
+// share a row group land on the same block.
+func (f Form) visibleRange(blocks []string, itemToBlock []int) (start, end int, windowed bool) {
 	n := len(blocks)
 	if f.height <= 0 || n == 0 {
 		return 0, n, false
@@ -530,8 +614,12 @@ func (f Form) visibleRange(blocks []string) (start, end int, windowed bool) {
 		return 0, n, false
 	}
 
-	focused := min(max(f.focused, 0), n-1)
-	start, end, _ = growWindow(blocks, focused, f.height)
+	anchor := f.focused
+	if anchor < len(itemToBlock) {
+		anchor = itemToBlock[anchor]
+	}
+	anchor = min(max(anchor, 0), n-1)
+	start, end, _ = growWindow(blocks, anchor, f.height)
 	return start, end, true
 }
 
@@ -541,7 +629,8 @@ func (f *Form) scrollWheel(msg tea.MouseWheelMsg) {
 	if f.height <= 0 || len(f.items) == 0 {
 		return
 	}
-	if _, _, windowed := f.visibleRange(f.itemBlocks()); !windowed {
+	blocks, itemToBlock := f.itemBlocks()
+	if _, _, windowed := f.visibleRange(blocks, itemToBlock); !windowed {
 		return
 	}
 
@@ -555,29 +644,27 @@ func (f *Form) scrollWheel(msg tea.MouseWheelMsg) {
 	}
 }
 
-// applyWindowStart renders the window the keyboard chose, shifted by however
-// many wheel steps the user has taken since. The focused item is always in the
-// window: the shift is clamped to the slack between the focused item and the
-// window edge.
-func (f Form) applyWindowStart(start, end int) (int, int) {
-	blocks := f.itemBlocks()
-	if f.wheelSteps == 0 {
+// applyWindowStart shifts the focus-anchored window by wheelSteps so a wheel
+// scroll moves the visible rows. The window is clamped to the content but may
+// briefly pass the focused row; typing or focus changes discard the shift so
+// the focused field comes back into view on the next interaction.
+func (f Form) applyWindowStart(start, end int, itemToBlock []int) (int, int) {
+	blocks, _ := f.itemBlocks()
+	n := len(blocks)
+	if n == 0 || f.wheelSteps == 0 {
 		return start, end
 	}
 
-	shift := f.wheelSteps
-	if start+shift > f.focused {
-		shift = f.focused - start
-	}
-	if end+shift <= f.focused {
-		shift = f.focused - end + 1
-	}
+	// The shifted window must stay inside the content; either edge is fine,
+	// since typing or focus changes will snap focus back into view.
+	minShift := -start
+	maxShift := n - end
 
-	shifted, shiftedEnd, _ := growWindow(blocks, start+shift, f.height)
-	if shiftedEnd-start+shift < end-start || shifted > f.focused {
+	shift := clamp(f.wheelSteps, minShift, maxShift)
+	if shift == 0 {
 		return start, end
 	}
-	return shifted, shiftedEnd
+	return growWindowAround(blocks, start+shift, end+shift, f.height)
 }
 
 func (f Form) focusNext() (Form, tea.Cmd) {
@@ -790,8 +877,67 @@ func growWindow(blocks []string, anchor, height int) (start, end int, windowed b
 	}
 }
 
+// growWindowAround returns the widest whole-block window that already covers
+// the given range and fits in the height, growing outward as budget allows.
+// Used by wheel scrolling so the shifted window keeps the focused row visible
+// while still filling the available height.
+func growWindowAround(blocks []string, start, end, height int) (int, int) {
+	n := len(blocks)
+	start = clamp(start, 0, n-1)
+	end = clamp(end, 1, n)
+	if end <= start {
+		end = min(start+1, n)
+	}
+	budget := height - 1
+
+	used := 0
+	for i := start; i < end; i++ {
+		used += lipgloss.Height(blocks[i])
+	}
+
+	for {
+		grew := false
+
+		if start > 0 {
+			grown := used + lipgloss.Height(blocks[start-1])
+			if grown+hiddenFieldsLines(start-1, end, n) <= budget {
+				start--
+				used = grown
+				grew = true
+			}
+		}
+
+		if end < n {
+			grown := used + lipgloss.Height(blocks[end])
+			if grown+hiddenFieldsLines(start, end+1, n) <= budget {
+				end++
+				used = grown
+				grew = true
+			}
+		}
+
+		if !grew {
+			return start, end
+		}
+	}
+}
+
 func fieldTarget(i int) string {
 	return "field:" + strconv.Itoa(i)
+}
+
+// assignRowGroupsFrom tags each adjacent (key, value) item pair starting at
+// the given index with a matching non-zero RowGroup so the Form lays them out
+// side by side. Items that lose their partner (e.g. after pruning) drop out
+// of grouping and render as ordinary single cells.
+func (f *Form) assignRowGroupsFrom(start int) {
+	for i := start; i+1 < len(f.items); i += 2 {
+		f.items[i].RowGroup = i + 1
+		f.items[i+1].RowGroup = i + 1
+	}
+	if len(f.items) > start && (len(f.items)-start)%2 == 1 {
+		f.items[len(f.items)-1].RowGroup = 0
+	}
 }
 
 func isDigitKey(k tea.Key) bool {

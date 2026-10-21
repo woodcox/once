@@ -67,12 +67,15 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 		envKeys:  keys,
 	}
 
+	m.form.assignRowGroupsFrom(advancedEnvStart)
+
 	m.form.OnRebuild(func(f *Form) {
 		pruneEnvRows(f)
 		lastKeyIdx := f.ItemCount() - 2
 		if lastKeyIdx >= advancedEnvStart && f.TextField(lastKeyIdx).Value() != "" {
 			f.AppendItems(newEnvKeyItem(""), newEnvValueItem(""))
 		}
+		f.assignRowGroupsFrom(advancedEnvStart)
 	})
 
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
@@ -170,12 +173,9 @@ func (m InstallAdvancedForm) setFieldWidths() {
 		m.form.TextField(i).SetWidth(fieldWidth)
 	}
 
-	for i := advancedEnvStart; i < m.form.ItemCount(); i++ {
-		if (i-advancedEnvStart)%2 == 0 {
-			m.form.TextField(i).SetWidth(max(keyWidth-4, 1))
-		} else {
-			m.form.TextField(i).SetWidth(max(valueWidth-4, 1))
-		}
+	for i := advancedEnvStart; i+1 < m.form.ItemCount(); i += 2 {
+		m.form.TextField(i).SetWidth(max(keyWidth-4, 1))
+		m.form.TextField(i + 1).SetWidth(max(valueWidth-4, 1))
 	}
 }
 

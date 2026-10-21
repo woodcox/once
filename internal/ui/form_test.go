@@ -470,8 +470,14 @@ func TestForm_MouseWheelKeepsTheFocusedFieldVisible(t *testing.T) {
 		form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 	}
 
-	assert.Contains(t, ansi.Strip(form.View()), "Field 1", "wheeling cannot scroll the focused field off screen")
-	assert.Equal(t, 0, form.Focused())
+	assert.Equal(t, 0, form.Focused(), "wheeling never moves focus into the buttons")
+	assert.NotZero(t, form.wheelSteps, "the wheel accumulated a scroll offset")
+
+	// Typing discards the wheel shift and snaps the focused field back into view.
+	formTypeText(&form, "a")
+
+	assert.Zero(t, form.wheelSteps, "typing resets the wheel offset")
+	assert.Contains(t, ansi.Strip(form.View()), "Field 1", "the focused field is back on screen after the user types")
 }
 
 func TestForm_MouseWheelNeverSubmitsOrReachesAHiddenField(t *testing.T) {
@@ -504,6 +510,111 @@ func TestForm_MouseWheelIsIgnoredWhenEverythingFits(t *testing.T) {
 	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 
 	assert.Equal(t, before, ansi.Strip(form.View()), "nothing is hidden, so the wheel does nothing")
+}
+
+func TestForm_RowGroupPlacesMembersOnTheSameLine(t *testing.T) {
+	key := NewTextField("KEY")
+	key.SetValue("DB_HOST")
+	value := NewTextField("value")
+	value.SetValue("localhost")
+	form := NewForm("Done",
+		FormItem{Label: "Solo", Field: NewTextField("solo")},
+		FormItem{Label: "Env", Field: key, RowGroup: 1},
+		FormItem{Field: value, RowGroup: 1},
+	)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	view := ansi.Strip(form.View())
+
+	dbHostLine := lineContaining(view, "DB_HOST")
+	require.NotEmpty(t, dbHostLine, "the key cell is rendered")
+	assert.Contains(t, dbHostLine, "localhost", "the value cell shares the same line as the key at wide widths")
+}
+
+func TestForm_RowGroupTabTraversal(t *testing.T) {
+	form := NewForm("Done",
+		FormItem{Label: "Solo", Field: NewTextField("solo")},
+		FormItem{Label: "Env", Field: NewTextField("a"), RowGroup: 1},
+		FormItem{Field: NewTextField("b"), RowGroup: 1},
+		FormItem{Label: "Solo 2", Field: NewTextField("solo2")},
+	)
+	assert.Equal(t, 0, form.Focused(), "focus starts on the solo field")
+
+	formPressTab(&form)
+	assert.Equal(t, 1, form.Focused(), "tab moves into the row group's key cell")
+
+	formPressTab(&form)
+	assert.Equal(t, 2, form.Focused(), "tab moves from key to value within the row group")
+
+	formPressTab(&form)
+	assert.Equal(t, 3, form.Focused(), "tab leaves the row group for the next row")
+
+	formPressShiftTab(&form)
+	assert.Equal(t, 2, form.Focused(), "shift+tab comes back into the row group's value cell")
+}
+
+func TestForm_RowGroupKeepsCellsOnSameLine(t *testing.T) {
+	key := NewTextField("KEY")
+	key.SetValue("K1")
+	value := NewTextField("value")
+	value.SetValue("V1")
+	form := NewForm("Done",
+		FormItem{Label: "Env", Field: key, RowGroup: 1},
+		FormItem{Field: value, RowGroup: 1},
+	)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	view := ansi.Strip(form.View())
+	lines := strings.Split(view, "\n")
+
+	var rowLine string
+	for _, line := range lines {
+		if strings.Contains(line, "K1") {
+			rowLine = line
+			break
+		}
+	}
+	require.NotEmpty(t, rowLine, "the key cell is rendered")
+	assert.Contains(t, rowLine, "V1", "the value cell is on the same line as the key cell")
+}
+
+func TestForm_UngroupedItemStillRendersAlone(t *testing.T) {
+	solo := NewTextField("alone")
+	solo.SetValue("alone")
+	form := NewForm("Done",
+		FormItem{Label: "Solo", Field: solo},
+	)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	view := ansi.Strip(form.View())
+	assert.Contains(t, view, "Solo", "the solo field's label is present")
+	assert.Contains(t, view, "alone", "the solo field's value is present")
+	assert.Equal(t, 0, form.Focused(), "the solo field is the focused item")
+}
+
+func TestForm_MouseWheelResetsOnTyping(t *testing.T) {
+	form := longForm(8)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	for range 3 {
+		formPressTab(&form)
+	}
+	require.Equal(t, 3, form.Focused())
+
+	natural := ansi.Strip(form.View())
+	require.Contains(t, natural, "Field 4", "the focused field is in the natural window")
+	require.NotContains(t, natural, "Field 6", "the natural window doesn't show Field 6")
+
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	require.NotZero(t, form.wheelSteps, "the wheel accumulated a scroll offset")
+	require.Contains(t, ansi.Strip(form.View()), "Field 6", "the wheel shifted Field 6 into view")
+
+	formTypeText(&form, "a")
+
+	assert.Equal(t, 0, form.wheelSteps, "a key press resets the wheel scroll offset")
+	restored := ansi.Strip(form.View())
+	assert.NotContains(t, restored, "Field 6", "typing snaps the window back so the focused field is on screen again")
+	assert.Equal(t, 3, form.Focused(), "typing keeps focus on the same field")
 }
 
 // Helpers

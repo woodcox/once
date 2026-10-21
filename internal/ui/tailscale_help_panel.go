@@ -107,7 +107,7 @@ func tailscaleHelpBoxStyle() lipgloss.Style {
 }
 
 func tailscaleHelpChrome(body string, width int) string {
-	titleStyle := lipgloss.NewStyle().Bold(true)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(Colors.Primary)
 	// Body text, not a caption: the intro reads as prose, so it keeps the
 	// normal foreground and only wraps to the panel width.
 	introStyle := lipgloss.NewStyle().Width(width)

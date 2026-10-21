@@ -92,9 +92,8 @@ var docktailFields = []docktailField{
 	{
 		title:       "Direct",
 		key:         "docktail.service.direct",
-		summary:     "When true, docktail proxies straight to the container IP.",
+		summary:     "When true, docktail proxies straight to the container IP. When false, ONCE publishes the backend port on loopback only and docktail proxies through that loopback binding.",
 		defaultLine: "Default: true.",
-		accepted:    "When false, ONCE publishes the backend port on loopback only and docktail proxies through that loopback binding instead.",
 	},
 }
 

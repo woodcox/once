@@ -87,7 +87,7 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 	base := settingsFormBase{
 		title: "Tailscale",
 		form: NewForm("Done",
-			FormItem{Label: "Tailscale Service", Field: enabledField},
+			FormItem{Label: "Tailscale Service (required)", Field: enabledField},
 			// Service name and Backend port are labelled "(required)"
 			// because they are the only fields users really must understand,
 			// but blank values still resolve to a working default.
