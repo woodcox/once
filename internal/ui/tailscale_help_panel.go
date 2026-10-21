@@ -38,7 +38,9 @@ func NewTailscaleHelpPanel(termWidth, termHeight int) TailscaleHelpPanel {
 	vp := viewport.New()
 	vp.SetWidth(innerWidth)
 	vp.SetHeight(vpHeight)
-	vp.SetContent(renderTailscaleHelpContent())
+	// Wrap here rather than leaving it to the viewport: its soft wrap
+	// breaks mid-word when a line exceeds the width.
+	vp.SetContent(lipgloss.NewStyle().Width(innerWidth).Render(renderTailscaleHelpContent()))
 	vp.SoftWrap = true
 	vp.MouseWheelEnabled = true
 	vp.KeyMap = viewport.KeyMap{
