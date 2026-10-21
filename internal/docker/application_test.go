@@ -379,3 +379,68 @@ func TestUsesProxy(t *testing.T) {
 		assert.True(t, app.usesProxy())
 	})
 }
+
+func TestLoopbackPortBinding(t *testing.T) {
+	boolPtr := func(v bool) *bool { return &v }
+
+	t.Run("public apps have no loopback binding", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{Name: "chat", AppPort: 5006}}
+		assert.Empty(t, app.loopbackPortBinding())
+	})
+
+	t.Run("docktail direct=true leaves the host untouched", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{
+			Name:    "budget",
+			AppPort: 5006,
+			Tailscale: TailscaleSettings{
+				Enabled: true,
+				Mode:    DocktailMode,
+				Service: "budget",
+				Direct:  boolPtr(true),
+			},
+		}}
+		assert.Empty(t, app.loopbackPortBinding(), "no host port binding when docktail speaks directly to the container IP")
+	})
+
+	t.Run("docktail direct=nil is docktail's default of true so nothing is published", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{
+			Name:    "budget",
+			AppPort: 5006,
+			Tailscale: TailscaleSettings{
+				Enabled: true,
+				Mode:    DocktailMode,
+				Service: "budget",
+			},
+		}}
+		assert.Empty(t, app.loopbackPortBinding())
+	})
+
+	t.Run("docktail direct=false publishes the backend port on loopback", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{
+			Name:    "budget",
+			AppPort: 5006,
+			Tailscale: TailscaleSettings{
+				Enabled: true,
+				Mode:    DocktailMode,
+				Service: "budget",
+				Direct:  boolPtr(false),
+			},
+		}}
+		assert.Equal(t, "5006", app.loopbackPortBinding())
+	})
+
+	t.Run("docktail direct=false honours an explicit backend port override", func(t *testing.T) {
+		app := &Application{Settings: ApplicationSettings{
+			Name:    "budget",
+			AppPort: 5006,
+			Tailscale: TailscaleSettings{
+				Enabled: true,
+				Mode:    DocktailMode,
+				Service: "budget",
+				Port:    8080,
+				Direct:  boolPtr(false),
+			},
+		}}
+		assert.Equal(t, "8080", app.loopbackPortBinding(), "loopback binding matches the docktail service port, not the app port")
+	})
+}

@@ -40,7 +40,8 @@ func TestInstallTailscaleForm_SubmitDefaults(t *testing.T) {
 	assert.Empty(t, settings.ServiceProtocol)
 	assert.Empty(t, settings.Network)
 	assert.Empty(t, settings.ProxyProtocol)
-	assert.Nil(t, settings.Direct)
+	require.NotNil(t, settings.Direct)
+	assert.True(t, *settings.Direct, "the Direct checkbox defaults to checked")
 }
 
 func TestInstallTailscaleForm_DefaultsReachTheLabels(t *testing.T) {
@@ -89,7 +90,12 @@ func TestInstallTailscaleForm_PrefillsExistingSettings(t *testing.T) {
 	assert.Equal(t, "tag:server", m.form.TextField(installTailscaleTagsField).Value())
 	assert.Equal(t, "tailnet0", m.form.TextField(installTailscaleNetworkField).Value())
 
-	assert.True(t, original.Equal(installTailscaleFormSubmit(t, m)))
+	checked := m.form.CheckboxField(installTailscaleDirectField).Checked()
+	assert.False(t, checked, "prefills an unchecked Direct")
+
+	result := installTailscaleFormSubmit(t, m)
+	require.NotNil(t, result.Direct)
+	assert.False(t, *result.Direct)
 }
 
 func TestInstallTailscaleForm_ProxyProtocolRoundTrip(t *testing.T) {
@@ -115,13 +121,15 @@ func TestInstallTailscaleForm_ProxyProtocolRoundTrip(t *testing.T) {
 func TestInstallTailscaleForm_DirectRoundTrip(t *testing.T) {
 	direct := true
 
-	t.Run("nil Direct is preserved through a settings round-trip", func(t *testing.T) {
+	t.Run("unset Direct defaults to checked=true after the round-trip", func(t *testing.T) {
 		m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{
 			Enabled: true,
 			Mode:    docker.DocktailMode,
 			Service: "budget",
 		})
-		assert.Nil(t, installTailscaleFormSubmit(t, m).Direct)
+		result := installTailscaleFormSubmit(t, m).Direct
+		require.NotNil(t, result)
+		assert.True(t, *result)
 	})
 
 	t.Run("explicit Direct=true is preserved through a settings round-trip", func(t *testing.T) {
@@ -134,6 +142,19 @@ func TestInstallTailscaleForm_DirectRoundTrip(t *testing.T) {
 		direct := installTailscaleFormSubmit(t, m).Direct
 		require.NotNil(t, direct)
 		assert.True(t, *direct)
+	})
+
+	t.Run("toggling the checkbox off round-trips Direct=false", func(t *testing.T) {
+		m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		})
+		require.True(t, m.form.CheckboxField(installTailscaleDirectField).Checked())
+		m.form.CheckboxField(installTailscaleDirectField).Toggle()
+		direct := installTailscaleFormSubmit(t, m).Direct
+		require.NotNil(t, direct)
+		assert.False(t, *direct)
 	})
 }
 
@@ -194,9 +215,9 @@ func TestInstallTailscaleForm_View(t *testing.T) {
 	view := ansi.Strip(m.View())
 
 	assert.Contains(t, view, "Tailscale Service")
-	assert.Contains(t, view, "Service name")
+	assert.Contains(t, view, "Service name (required)")
 	assert.Contains(t, view, "Description")
-	assert.Contains(t, view, "Backend port")
+	assert.Contains(t, view, "Backend port (required)")
 	assert.Contains(t, view, "Backend protocol")
 	assert.Contains(t, view, "Service port")
 	assert.Contains(t, view, "Service protocol")
@@ -205,6 +226,40 @@ func TestInstallTailscaleForm_View(t *testing.T) {
 	assert.Contains(t, view, "Network")
 	assert.Contains(t, view, "Proxy protocol")
 	assert.Contains(t, view, "Install")
+}
+
+func TestInstallTailscaleForm_ViewShowsDocktailLabels(t *testing.T) {
+	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
+	view := ansi.Strip(m.View())
+
+	for _, tag := range []string{
+		"docktail.service.name",
+		"docktail.service.description",
+		"docktail.service.port",
+		"docktail.service.protocol",
+		"docktail.service.service-port",
+		"docktail.service.service-protocol",
+		"docktail.service.path",
+		"docktail.tags",
+		"docktail.service.network",
+		"docktail.service.proxy-protocol",
+		"docktail.service.direct",
+	} {
+		assert.Contains(t, view, tag, "every field labels which docktail key it maps to")
+	}
+
+	assert.Contains(t, view, "Publishes this app as a Tailscale Service", "the screen advertises that it writes docktail labels")
+}
+
+func TestInstallTailscaleForm_ViewShowsFieldDescriptions(t *testing.T) {
+	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
+	view := ansi.Strip(m.View())
+
+	assert.Contains(t, view, "Defaults to the application name", "Service name describes its default")
+	assert.Contains(t, view, "Tailscale admin console", "Description describes where it appears")
+	assert.Contains(t, view, "blank uses the application port", "Backend port describes the empty-means-app-port rule")
+	assert.Contains(t, view, "443 for HTTPS", "Service port describes its default")
+	assert.Contains(t, view, "loopback only", "Direct explains what unchecking does")
 }
 
 // Helpers

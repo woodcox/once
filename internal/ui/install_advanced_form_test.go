@@ -135,12 +135,60 @@ func TestInstallAdvancedForm_FixedFieldFocusLeavesEnvScrollAlone(t *testing.T) {
 		m, _ = m.Update(keyPressMsg("tab"))
 	}
 	require.Equal(t, advancedEnvStart+6, m.form.Focused(), "scrolled deep into the env grid")
+	assert.Equal(t, advancedEnvStart, m.topSkip, "env focus slides the fixed fields off the top")
 
 	for m.form.Focused() != advancedHealthCheckField {
 		m, _ = m.Update(keyPressMsg("shift+tab"))
 	}
 	require.Equal(t, advancedHealthCheckField, m.form.Focused(), "back at the first fixed field")
-	assert.Zero(t, m.scroll, "fixed-field focus must not jump the env grid to its last row")
+	assert.Zero(t, m.topSkip, "returning to a fixed field brings everything back to the top")
+	assert.Zero(t, m.envScroll, "and the env row window snaps back to the top too")
+}
+
+func TestInstallAdvancedForm_FocusInsideEnvScrollsFixedFieldsOff(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+
+	view := ansi.Strip(m.View())
+	assert.Contains(t, view, "Health check path", "initially the fixed fields are visible")
+	assert.NotContains(t, view, "↑", "no hidden-fields indicator before scrolling")
+
+	for range advancedEnvStart {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	require.Equal(t, advancedEnvStart, m.form.Focused(), "focus has moved into the env grid")
+	assert.Equal(t, advancedEnvStart, m.topSkip)
+
+	view = ansi.Strip(m.View())
+	assert.NotContains(t, view, "Health check path", "the env grid scrolled the fixed fields off the top")
+	assert.Contains(t, view, "Environment variables")
+	assert.Contains(t, view, "↑ 4 more", "indicator names the fields scrolled away")
+}
+
+func TestInstallAdvancedForm_GrowingEnvBringsNewRowIntoView(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{
+		EnvVars: map[string]string{
+			"AAA": "1",
+			"BBB": "2",
+			"CCC": "3",
+			"DDD": "4",
+			"EEE": "5",
+			"FFF": "6",
+			"GGG": "7",
+			"HHH": "8",
+		},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	rows := m.envRowCount()
+	require.Equal(t, 9, rows, "8 user rows plus the empty trailing row")
+
+	for m.form.Focused() != m.form.ItemCount()-2 {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	_, _ = m.Update(keyPressMsg("Z"))
+
+	assert.Greater(t, m.envScroll, 0, "typing past the bottom of the list auto-scrolls the new row into view")
+	assert.True(t, m.envScroll+m.maxEnvRowsVisible() >= rows, "the new bottom row is in the visible window")
 }
 
 func TestInstallAdvancedForm_FitsFieldsAndButtonsAtSmallHeight(t *testing.T) {

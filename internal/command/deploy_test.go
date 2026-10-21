@@ -413,16 +413,21 @@ func TestBuildSettingsDocktailOptionalFlags(t *testing.T) {
 	assert.Equal(t, "once", s.DocktailLabels()["docktail.service.network"])
 }
 
-func TestBuildSettingsDocktailDirectFalseRejected(t *testing.T) {
+func TestBuildSettingsDocktailDirectFalseAccepted(t *testing.T) {
 	cmd := &cobra.Command{}
 	f := &settingsFlags{}
 	f.register(cmd)
 
 	require.NoError(t, cmd.Flags().Set("docktail", "true"))
+	require.NoError(t, cmd.Flags().Set("docktail-port", "5432"))
 	require.NoError(t, cmd.Flags().Set("docktail-direct", "false"))
 
-	_, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
-	assert.ErrorIs(t, err, docker.ErrDocktailDirectFalse)
+	s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
+	require.NoError(t, err)
+
+	require.NotNil(t, s.Tailscale.Direct)
+	assert.False(t, *s.Tailscale.Direct, "the false value round-trips through buildSettings")
+	assert.Equal(t, "false", s.DocktailLabels()["docktail.service.direct"], "the docktail label still records false")
 }
 
 func TestBuildSettingsDocktailProxyProtocol(t *testing.T) {
@@ -501,12 +506,15 @@ func TestApplyChangesDocktailOptionalFlags(t *testing.T) {
 		assert.Equal(t, existing.Tailscale, s.Tailscale)
 	})
 
-	t.Run("direct false is rejected", func(t *testing.T) {
+	t.Run("direct false is accepted and applied", func(t *testing.T) {
 		cmd, f := newCmd()
 		require.NoError(t, cmd.Flags().Set("docktail-direct", "false"))
 
-		_, err := f.applyChanges(cmd, existing, existing.Image)
-		assert.ErrorIs(t, err, docker.ErrDocktailDirectFalse)
+		s, err := f.applyChanges(cmd, existing, existing.Image)
+		require.NoError(t, err)
+
+		require.NotNil(t, s.Tailscale.Direct)
+		assert.False(t, *s.Tailscale.Direct)
 	})
 
 	t.Run("empty value clears direct", func(t *testing.T) {

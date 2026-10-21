@@ -104,7 +104,7 @@ ONCE_REDUCED_MOTION=true once
 
 ONCE can advertise an application to your tailnet as a native [Tailscale Service](https://tailscale.com/docs/features/tailscale-services) through [docktail](https://docktail.org/).
 
-ONCE doesn't talk to Tailscale itself: it bundles no Tailscale client, holds no auth keys, and never writes Tailscale configuration (that needs root). It only adds `docktail.*` labels to the application container, as you would in a `docker-compose.yml`, and the docktail container on the host does the rest. No ports are published on the host, and the application ends up at `https://<service>.<tailnet>.ts.net`.
+ONCE doesn't talk to Tailscale itself: it bundles no Tailscale client, holds no auth keys, and never writes Tailscale configuration (that needs root). It only adds `docktail.*` labels to the application container, as you would in a `docker-compose.yml`, and the docktail container on the host does the rest. By default no ports are published off the host, and the application ends up at `https://<service>.<tailnet>.ts.net`. With `--docktail-direct=false` the backend port is published on the loopback interface only so docktail can reach it; it never escapes the host.
 
 Requirements on the host:
 
@@ -150,7 +150,7 @@ ONCE sets these labels, and only these; anything unset is left to docktail's def
 | `docktail.service.name` | `--docktail-service` | application name | lowercased DNS label |
 | `docktail.service.port` | `--docktail-port` | app port | backend container port |
 | `docktail.service.description` | `--docktail-description` | unset | user-set only; synced to the Service comment; needs API credentials |
-| `docktail.service.direct` | `--docktail-direct` | `true` | user-set only; `false` proxies published host ports instead of the container IP |
+| `docktail.service.direct` | `--docktail-direct` | `true` | user-set only; `false` publishes the backend port on loopback only, and docktail proxies through that binding |
 | `docktail.service.network` | `--docktail-network` | `bridge` or first available | user-set only; network used for container IP detection |
 | `docktail.service.protocol` | `--docktail-protocol` | `https` on port 443, else `http` | backend: `http`, `https`, `https+insecure`, `tcp` or `tls-terminated-tcp` |
 | `docktail.service.service-port` | `--docktail-service-port` | `443` for HTTPS, `80` otherwise | port Tailscale listens on |

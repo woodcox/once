@@ -19,6 +19,7 @@ type styles struct {
 	Input         lipgloss.Style
 	Button        lipgloss.Style
 	ButtonPrimary lipgloss.Style
+	MutedText     lipgloss.Style
 }
 
 var Styles = buildStyles()
@@ -55,6 +56,9 @@ func buildStyles() styles {
 			MarginRight(1).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(Colors.Primary),
+		MutedText: lipgloss.NewStyle().
+			Foreground(Colors.Muted).
+			Italic(true),
 	}
 }
 

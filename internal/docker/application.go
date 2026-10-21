@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -42,7 +43,6 @@ var (
 	ErrInvalidDocktailProxyProtocol    = errors.New("docktail proxy protocol must be 1 or 2")
 	ErrDocktailProxyProtocolWithoutTCP = errors.New("docktail proxy protocol requires a TCP service protocol")
 	ErrDocktailPathOnTCP               = errors.New("docktail path is not supported for a TCP service protocol")
-	ErrDocktailDirectFalse             = errors.New("docktail's direct=false mode needs published host ports, which ONCE does not create; leave --docktail-direct unset (it defaults to true)")
 	ErrDocktailServiceRequired         = errors.New("a Tailscale service name is required when docktail mode is enabled")
 	ErrSetupFailed                     = errors.New("setup failed")
 	ErrPullFailed                      = &describedError{
@@ -401,6 +401,19 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 		NanoCPUs: int64(a.Settings.Resources.CPUs) * 1e9,
 	}
 
+	// For docktail `direct=false` mode, publish the backend port on
+	// loopback only so docktail can proxy through it without needing to
+	// reach the container IP. The host binding never escapes the host.
+	if port := a.loopbackPortBinding(); port != "" {
+		portKey := network.MustParsePort(port + "/tcp")
+		hostConfig.PortBindings = network.PortMap{
+			portKey: []network.PortBinding{{
+				HostIP:   netip.MustParseAddr("127.0.0.1"),
+				HostPort: port,
+			}},
+		}
+	}
+
 	resp, err := a.namespace.client.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name:       containerName,
 		Config:     a.containerConfig(env),
@@ -545,6 +558,17 @@ func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 		})
 	}
 	return mounts
+}
+
+// loopbackPortBinding is the host-side port number to publish for the
+// backend container port when the docktail Service runs in `direct=false`
+// mode. It returns the empty string when docktail should talk directly to
+// the container IP and no host binding is needed.
+func (a *Application) loopbackPortBinding() string {
+	if !a.Settings.DocktailEnabled() || a.Settings.effectiveDirect() {
+		return ""
+	}
+	return strconv.Itoa(a.Settings.EffectiveTailscalePort())
 }
 
 func (a *Application) BuildEnv() []string {

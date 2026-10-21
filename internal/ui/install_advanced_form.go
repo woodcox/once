@@ -23,12 +23,14 @@ const (
 )
 
 type InstallAdvancedForm struct {
-	form     Form
-	width    int
-	height   int
-	scroll   int
-	settings docker.ApplicationSettings
-	envKeys  []string
+	form      Form
+	width     int
+	height    int
+	topSkip   int
+	envScroll int
+	lastRows  int
+	settings  docker.ApplicationSettings
+	envKeys   []string
 }
 
 func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvancedForm {
@@ -194,23 +196,50 @@ func (m InstallAdvancedForm) setFieldWidths() {
 	}
 }
 
+// adjustScroll keeps the focused row visible: when the cursor is inside the
+// environment grid the four fixed fields slide off the top, and inside the
+// grid itself the row window follows the focused row. Returning to a fixed
+// field brings everything back to the top. Typing into the trailing empty row
+// grows the list; we keep that row on screen so the user sees the form grow.
 func (m *InstallAdvancedForm) adjustScroll() {
-	maxVisible := m.maxVisibleRows()
-	if maxVisible <= 0 {
+	focused := m.form.Focused()
+	if focused < advancedEnvStart {
+		m.topSkip = 0
+	} else {
+		m.topSkip = advancedEnvStart
+	}
+
+	maxRows := m.maxEnvRowsVisible()
+	if maxRows <= 0 {
+		return
+	}
+
+	rows := m.envRowCount()
+	if rows == 0 {
+		m.envScroll = 0
 		return
 	}
 
 	focusedRow := m.focusedEnvRow()
 	if focusedRow < 0 {
+		m.envScroll = 0
 		return
 	}
 
-	if focusedRow < m.scroll {
-		m.scroll = focusedRow
+	if focusedRow < m.envScroll {
+		m.envScroll = focusedRow
 	}
-	if focusedRow >= m.scroll+maxVisible {
-		m.scroll = focusedRow - maxVisible + 1
+	if focusedRow >= m.envScroll+maxRows {
+		m.envScroll = focusedRow - maxRows + 1
 	}
+
+	// When the trailing empty row absorbs a typed key, the form grows by
+	// one row. Make sure that new row is visible: snap the window so it
+	// ends right at the bottom of the list.
+	if rows > m.lastRows && m.envScroll+maxRows < rows {
+		m.envScroll = max(0, rows-maxRows)
+	}
+	m.lastRows = rows
 }
 
 func (m InstallAdvancedForm) focusedEnvRow() int {
@@ -221,13 +250,14 @@ func (m InstallAdvancedForm) focusedEnvRow() int {
 	return -1
 }
 
-func (m InstallAdvancedForm) maxVisibleRows() int {
+// maxEnvRowsVisible is the number of env rows that fit under the env heading
+// once the four fixed fields have scrolled off.
+func (m InstallAdvancedForm) maxEnvRowsVisible() int {
 	if m.height <= 0 {
 		return m.envRowCount()
 	}
-	// Title (2) + fixed fields and checkbox (12) + env header (2) + buttons (4)
-	// + help (1)
-	available := m.height - 38
+	// Title (2) + header (2) + buttons (3) + button gap (1) = 8
+	available := m.height - 8
 	rowHeight := 4 // bordered input (3) + gap (1)
 	return max(available/rowHeight, 1)
 }
@@ -235,10 +265,19 @@ func (m InstallAdvancedForm) maxVisibleRows() int {
 func (m InstallAdvancedForm) renderContent() string {
 	var parts []string
 
-	parts = append(parts, m.renderField(advancedHealthCheckField, "Health check path")...)
-	parts = append(parts, m.renderField(advancedAppPortField, "App port")...)
-	parts = append(parts, m.renderField(advancedVolumePathsField, "Volume paths")...)
-	parts = append(parts, m.renderCheckbox(advancedSkipRailsEnvField, "Rails environment")...)
+	if m.topSkip == 0 {
+		parts = append(parts, m.renderField(advancedHealthCheckField, "Health check path")...)
+		parts = append(parts, m.renderField(advancedAppPortField, "App port")...)
+		parts = append(parts, m.renderField(advancedVolumePathsField, "Volume paths")...)
+		parts = append(parts, m.renderCheckbox(advancedSkipRailsEnvField, "Rails environment")...)
+	} else {
+		keyWidth, valueWidth := m.columnWidths()
+		indicatorWidth := keyWidth + valueWidth + 1
+		indicator := lipgloss.NewStyle().Width(indicatorWidth).Align(lipgloss.Center).
+			Foreground(Colors.Border).
+			Render(fmt.Sprintf("↑ %d more", m.topSkip))
+		parts = append(parts, indicator, "")
+	}
 
 	parts = append(parts, m.renderEnvGrid()...)
 	parts = append(parts, m.renderButtons())
@@ -270,17 +309,12 @@ func (m InstallAdvancedForm) renderEnvGrid() []string {
 
 	parts := []string{header, ""}
 
-	maxVisible := m.maxVisibleRows()
+	maxRows := m.maxEnvRowsVisible()
 	rows := m.envRowCount()
-	end := min(m.scroll+maxVisible, rows)
-
-	if m.scroll > 0 {
-		parts = append(parts, lipgloss.NewStyle().Foreground(Colors.Border).
-			Render(fmt.Sprintf("↑ %d more above", m.scroll)))
-	}
+	end := min(m.envScroll+maxRows, rows)
 
 	focused := m.form.Focused()
-	for i := m.scroll; i < end; i++ {
+	for i := m.envScroll; i < end; i++ {
 		keyIdx := advancedEnvStart + i*2
 		valIdx := keyIdx + 1
 
@@ -294,8 +328,11 @@ func (m InstallAdvancedForm) renderEnvGrid() []string {
 	}
 
 	if end < rows {
-		parts = append(parts, lipgloss.NewStyle().Foreground(Colors.Border).
-			Render(fmt.Sprintf("↓ %d more below", rows-end)))
+		keyWidth, valueWidth := m.columnWidths()
+		headerWidth := keyWidth + valueWidth + 1
+		parts = append(parts, lipgloss.NewStyle().Width(headerWidth).Align(lipgloss.Center).
+			Foreground(Colors.Border).Render(fmt.Sprintf("↓ %d more below", rows-end)))
+		parts = append(parts, "")
 	}
 
 	return parts

@@ -77,7 +77,7 @@ func (f *settingsFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.docktailServiceProtocol, "docktail-service-protocol", "", "Tailscale-facing protocol (http, https, tcp or tls-terminated-tcp)")
 	cmd.Flags().StringVar(&f.docktailProxyProtocol, "docktail-proxy-protocol", "", "PROXY protocol version to prepend on TCP forwards (1 or 2)")
 	cmd.Flags().StringVar(&f.docktailNetwork, "docktail-network", "", "Docker network used for container IP detection")
-	cmd.Flags().StringVar(&f.docktailDirect, "docktail-direct", "", "proxy directly to the container IP (leave unset for the default of true; only true is supported here)")
+	cmd.Flags().StringVar(&f.docktailDirect, "docktail-direct", "", "proxy directly to the container IP (default true); false publishes the backend port on loopback for docktail to reach")
 	cmd.Flags().StringVar(&f.registryUsername, "registry-username", "", "registry username for pulling the application image")
 	cmd.Flags().StringVar(&f.registryPassword, "registry-password", "", "registry password for pulling the application image")
 	cmd.Flags().BoolVar(&f.registryPasswordStdin, "registry-password-stdin", false, "read the registry password from stdin")

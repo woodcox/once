@@ -50,6 +50,20 @@ func TestForm_ShiftTabCycling(t *testing.T) {
 	assert.Equal(t, 0, form.Focused())
 }
 
+func TestForm_ShiftTabReachesFieldsThroughStaticTail(t *testing.T) {
+	form := NewForm("Submit",
+		FormItem{Label: "First", Field: NewTextField("first")},
+		FormItem{Label: "Second", Field: NewTextField("second")},
+		FormItem{Field: NewStaticField("labels preview", func(s string) string { return s })},
+	)
+
+	formFocusSubmit(&form)
+	assert.Equal(t, 3, form.Focused(), "submit button")
+
+	formPressShiftTab(&form)
+	assert.Equal(t, 1, form.Focused(), "skipped the non-focusable tail and reached the last field")
+}
+
 func TestForm_EnterAdvancesFocus(t *testing.T) {
 	form := NewForm("Submit",
 		FormItem{Label: "First", Field: NewTextField("first")},

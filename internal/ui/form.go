@@ -200,9 +200,11 @@ type FormActionButton struct {
 // Form
 
 type FormItem struct {
-	Label    string
-	Field    FormField
-	Required bool
+	Label       string
+	Description string
+	LabelTag    string
+	Required    bool
+	Field       FormField
 }
 
 type FormSubmitMsg struct{}
@@ -394,6 +396,7 @@ func (f Form) Error() string {
 func (f Form) itemBlocks() []string {
 	blocks := make([]string, 0, len(f.items))
 	errorStyle := lipgloss.NewStyle().Foreground(Colors.Error)
+	tagStyle := lipgloss.NewStyle().Foreground(Colors.Border)
 
 	for i, item := range f.items {
 		if _, isStatic := item.Field.(*StaticField); isStatic {
@@ -401,12 +404,27 @@ func (f Form) itemBlocks() []string {
 			continue
 		}
 
-		parts := []string{Styles.Label.Render(item.Label)}
+		label := item.Label
+		requiredMarker := strings.HasSuffix(item.Label, "(required)") || strings.HasSuffix(item.Label, "(optional)")
+		switch {
+		case item.Required && !requiredMarker:
+			label += tagStyle.Render(" (required)")
+		case !item.Required && item.Field.IsFocusable() && !requiredMarker:
+			label += tagStyle.Render(" (optional)")
+		}
+		if item.LabelTag != "" {
+			label += tagStyle.Render(" — ") + tagStyle.Render(item.LabelTag)
+		}
+
+		parts := []string{Styles.Label.Render(label)}
 
 		hasError := f.error != "" && i == f.errorField
 		inputStyle := Styles.WithError(Styles.Focus(Styles.Input, f.focused == i), hasError)
 		parts = append(parts, mouse.Mark(fieldTarget(i), inputStyle.Render(item.Field.View())))
 
+		if item.Description != "" {
+			parts = append(parts, Styles.MutedText.Render(item.Description))
+		}
 		if hasError {
 			parts = append(parts, errorStyle.Render(f.error))
 		}
@@ -489,13 +507,13 @@ func (f Form) visibleRange(blocks []string) (start, end int, windowed bool) {
 func (f Form) focusNext() (Form, tea.Cmd) {
 	f.blurCurrent()
 	f.focused = (f.focused + 1) % f.totalCount()
-	return f.focusToNextFocusable()
+	return f.focusToNextFocusable(1)
 }
 
 func (f Form) focusPrev() (Form, tea.Cmd) {
 	f.blurCurrent()
 	f.focused = (f.focused - 1 + f.totalCount()) % f.totalCount()
-	return f.focusToNextFocusable()
+	return f.focusToNextFocusable(-1)
 }
 
 func (f Form) blurCurrent() {
@@ -511,22 +529,29 @@ func (f Form) focusCurrent() tea.Cmd {
 	return nil
 }
 
-func (f Form) focusToNextFocusable() (Form, tea.Cmd) {
+// focusToNextFocusable walks the focusable positions in the given direction (+1
+// or -1) and stops on the first one it finds, so that shift+tab from a button
+// reaches the last focusable field even when the form ends with non-focusable
+// decorations like a label preview.
+func (f Form) focusToNextFocusable(direction int) (Form, tea.Cmd) {
+	total := f.totalCount()
+	if total == 0 {
+		return f, nil
+	}
 	start := f.focused
-	for {
-		if f.focused < len(f.items) {
-			if f.items[f.focused].Field.IsFocusable() {
-				return f, f.focusCurrent()
-			}
-			f.focused = (f.focused + 1) % f.totalCount()
-		} else {
+	for range total {
+		if f.focused >= len(f.items) {
 			return f, nil
 		}
-
+		if f.items[f.focused].Field.IsFocusable() {
+			return f, f.focusCurrent()
+		}
+		f.focused = (f.focused + direction + total) % total
 		if f.focused == start {
 			return f, nil
 		}
 	}
+	return f, nil
 }
 
 func (f Form) handleEnter() (Form, tea.Cmd) {

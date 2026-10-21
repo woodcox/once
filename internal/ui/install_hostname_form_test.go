@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"sync"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -84,82 +83,37 @@ func TestInstallHostnameForm_NoTitleWhenEmpty(t *testing.T) {
 }
 
 func TestInstallHostnameForm_PublicTargetAsksForAHostname(t *testing.T) {
-	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
-
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetPublic)
 	hostnameFormSendWindowSize(&form)
 	view := ansi.Strip(form.View())
 
 	assert.Contains(t, view, "Hostname")
 	assert.Contains(t, view, "once-campfire.example.com")
+	assert.Contains(t, view, "Install")
 }
 
 func TestInstallHostnameForm_TailnetTargetAsksForATailnetName(t *testing.T) {
-	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
-
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetTailnet)
 	hostnameFormSendWindowSize(&form)
 	view := ansi.Strip(form.View())
 
 	assert.Contains(t, view, "Tailnet name")
-	assert.Contains(t, view, "once-campfire.tail1234.ts.net")
+	assert.Contains(t, view, "once-campfire.example.ts.net")
+	assert.Contains(t, view, "Next", "submit label changes for tailnet installs")
+	assert.NotContains(t, view, "Install")
 	assert.NotContains(t, view, "Hostname")
 }
 
-func TestInstallHostnameForm_TailnetTargetFallsBackWithoutSuffix(t *testing.T) {
-	stubTailnetMagicDNSSuffix(t, "")
+func TestInstallHostnameForm_TailnetPlaceholderIsGeneric(t *testing.T) {
+	assert.Equal(t, "once-campfire.example.ts.net", tailnetNamePlaceholder("ghcr.io/basecamp/once-campfire:latest"))
+	assert.Equal(t, "app.example.ts.net", tailnetNamePlaceholder(""), "no image ref leaves the generic placeholder")
 
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetTailnet)
-	hostnameFormSendWindowSize(&form)
 	view := ansi.Strip(form.View())
-
-	assert.Contains(t, view, "once-campfire.example.com")
-}
-
-func TestTailnetNamePlaceholder(t *testing.T) {
-	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
-
-	assert.Equal(t, "once-campfire.tail1234.ts.net", tailnetNamePlaceholder("ghcr.io/basecamp/once-campfire:latest"))
-	assert.Equal(t, "app.example.com", tailnetNamePlaceholder(""), "no image ref leaves the generic placeholder")
-}
-
-func TestTailnetMagicDNSSuffixIsCached(t *testing.T) {
-	stubTailnetMagicDNSSuffix(t, "tail1234.ts.net")
-
-	first := tailnetMagicDNSSuffix()
-	second := tailnetMagicDNSSuffix()
-	third := tailnetMagicDNSSuffix()
-
-	assert.Equal(t, "tail1234.ts.net", first)
-	assert.Equal(t, first, second)
-	assert.Equal(t, first, third)
-}
-
-func TestTailnetMagicDNSSuffixCachesAfterFirstRead(t *testing.T) {
-	calls := 0
-	suffix := sync.OnceValue(func() string {
-		calls++
-		return "tail1234.ts.net"
-	})
-	original := tailnetMagicDNSSuffix
-	tailnetMagicDNSSuffix = suffix
-	t.Cleanup(func() { tailnetMagicDNSSuffix = original })
-
-	for range 3 {
-		_ = tailnetMagicDNSSuffix()
-	}
-	assert.Equal(t, 1, calls, "the lookup should happen exactly once when cached")
+	assert.NotContains(t, view, "lemur-carat", "the placeholder must never leak the live tailnet name")
 }
 
 // Helpers
-
-func stubTailnetMagicDNSSuffix(t *testing.T, suffix string) {
-	t.Helper()
-
-	original := tailnetMagicDNSSuffix
-	tailnetMagicDNSSuffix = func() string { return suffix }
-	t.Cleanup(func() { tailnetMagicDNSSuffix = original })
-}
 
 func hostnameFormTypeText(form *InstallHostnameForm, text string) {
 	for _, r := range text {

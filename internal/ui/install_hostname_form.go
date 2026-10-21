@@ -1,20 +1,11 @@
 package ui
 
 import (
-	"context"
-	"encoding/json"
-	"os/exec"
-	"strings"
-	"sync"
-	"time"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/basecamp/once/internal/docker"
 )
-
-const tailnetLookupTimeout = 2 * time.Second
 
 type InstallHostnameBackMsg struct{}
 
@@ -43,8 +34,13 @@ func NewInstallHostnameForm(imageRef, title string, target InstallTarget) Instal
 
 	hostnameField := NewTextField(placeholder)
 
+	submitLabel := "Install"
+	if target == InstallTargetTailnet {
+		submitLabel = "Next"
+	}
+
 	m := InstallHostnameForm{
-		form: NewForm("Install",
+		form: NewForm(submitLabel,
 			FormItem{
 				Label:    label,
 				Field:    hostnameField,
@@ -101,41 +97,14 @@ func (m InstallHostnameForm) Hostname() string {
 
 // Helpers
 
-// tailnetMagicDNSSuffix returns the MagicDNS suffix of the tailnet this host
-// belongs to, or "" when the tailscale CLI isn't available. It is a variable
-// so tests can substitute a stub, and a sync.OnceValue so a slow tailscaled
-// only freezes the first hostname screen instead of every one we render.
-var tailnetMagicDNSSuffix = sync.OnceValue(func() string { return readTailnetMagicDNSSuffix() })
-
 // tailnetNamePlaceholder suggests the name a Service for this app would take
-// on the tailnet, falling back to the usual hostname when the suffix can't be
-// read.
+// on a generic tailnet. The example suffix keeps the live tailnet's MagicDNS
+// value out of the screen: the real net varies by user and the form always
+// starts empty.
 func tailnetNamePlaceholder(imageRef string) string {
 	appName := docker.SanitizeDNSLabel(docker.NameFromImageRef(imageRef))
 	if appName == "" {
-		return "app.example.com"
+		return "app.example.ts.net"
 	}
-	if suffix := tailnetMagicDNSSuffix(); suffix != "" {
-		return appName + "." + suffix
-	}
-	return appName + ".example.com"
-}
-
-func readTailnetMagicDNSSuffix() string {
-	ctx, cancel := context.WithTimeout(context.Background(), tailnetLookupTimeout)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
-	if err != nil {
-		return ""
-	}
-
-	var status struct {
-		MagicDNSSuffix string `json:"MagicDNSSuffix"`
-	}
-	if err := json.Unmarshal(out, &status); err != nil {
-		return ""
-	}
-
-	return strings.Trim(status.MagicDNSSuffix, ".")
+	return appName + ".example.ts.net"
 }

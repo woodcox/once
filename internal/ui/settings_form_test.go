@@ -296,13 +296,15 @@ func TestSettingsFormTailscale_ProxyProtocolRoundTrip(t *testing.T) {
 func TestSettingsFormTailscale_DirectRoundTrip(t *testing.T) {
 	direct := true
 
-	t.Run("nil Direct is preserved through a settings round-trip", func(t *testing.T) {
+	t.Run("unset Direct defaults to checked=true after the round-trip", func(t *testing.T) {
 		form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget", Tailscale: docker.TailscaleSettings{
 			Enabled: true,
 			Mode:    docker.DocktailMode,
 			Service: "budget",
 		}})
-		assert.Nil(t, tailscaleSubmit(t, &form).Tailscale.Direct)
+		result := tailscaleSubmit(t, &form).Tailscale.Direct
+		require.NotNil(t, result)
+		assert.True(t, *result)
 	})
 
 	t.Run("explicit Direct=true is preserved through a settings round-trip", func(t *testing.T) {
@@ -315,6 +317,19 @@ func TestSettingsFormTailscale_DirectRoundTrip(t *testing.T) {
 		result := tailscaleSubmit(t, &form).Tailscale.Direct
 		require.NotNil(t, result)
 		assert.True(t, *result)
+	})
+
+	t.Run("toggling the checkbox off round-trips Direct=false", func(t *testing.T) {
+		form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget", Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		}})
+		require.True(t, form.form.CheckboxField(tailscaleDirectField).Checked())
+		form.form.CheckboxField(tailscaleDirectField).Toggle()
+		direct := tailscaleSubmit(t, &form).Tailscale.Direct
+		require.NotNil(t, direct)
+		assert.False(t, *direct)
 	})
 }
 
@@ -345,6 +360,33 @@ func TestSettingsFormTailscale_ShowsTheLabelsItWillSet(t *testing.T) {
 	updated := ansi.Strip(form.View())
 	assert.Contains(t, updated, "docktail.service.network=tailnet0")
 	assert.Contains(t, updated, "docktail.service.direct=true")
+}
+
+func TestSettingsFormTailscale_ViewShowsDocktailLabels(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{
+		Name: "budget",
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		},
+	})
+
+	view := ansi.Strip(form.View())
+
+	for _, tag := range []string{
+		"docktail.service.name",
+		"docktail.service.port",
+		"docktail.service.direct",
+	} {
+		assert.Contains(t, view, tag, "every field labels which docktail key it maps to")
+	}
+
+	assert.Contains(t, view, "Service name (required)")
+	assert.Contains(t, view, "Backend port (required)")
+	assert.Contains(t, view, "Defaults to the application name")
+	assert.Contains(t, view, "loopback only")
+	assert.Contains(t, view, "Publishes this app as a Tailscale Service")
 }
 
 func TestSettingsFormTailscale_DisablingHidesTheLabels(t *testing.T) {

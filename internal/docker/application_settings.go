@@ -254,9 +254,6 @@ func (s ApplicationSettings) ValidateTailscale() error {
 	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" && isTCPProtocol(serviceProtocol) {
 		return ErrDocktailPathOnTCP
 	}
-	if s.Tailscale.Direct != nil && !*s.Tailscale.Direct {
-		return ErrDocktailDirectFalse
-	}
 
 	if !s.Tailscale.Enabled {
 		return nil
