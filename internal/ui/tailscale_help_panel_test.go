@@ -149,6 +149,43 @@ func TestTailscaleHelpPanel_SettingsForm_OmitsInlineDescriptions(t *testing.T) {
 	assert.Contains(t, view, "Service name (required)", "labels and tags stay on the form")
 }
 
+func TestTailscaleHelpPanel_ColoursItsEntries(t *testing.T) {
+	content := renderTailscaleHelpContent()
+
+	name := docktailHelpHeading(docktailFields[0])
+	assert.NotEqual(t, "Service name (required)", name, "the field name is styled, not plain")
+	assert.Contains(t, ansi.Strip(name), "Service name (required)")
+	assert.Contains(t, name, "\x1b[", "the styled heading carries colour codes")
+
+	optional := docktailHelpHeading(docktailFields[1])
+	assert.NotEqual(t, "Description (optional)", optional)
+	assert.Contains(t, ansi.Strip(optional), "Description (optional)")
+
+	key := docktailHelpKey("docktail.service.name")
+	assert.NotEqual(t, "docktail.service.name", key, "the docktail key is styled in the primary colour")
+	assert.Contains(t, ansi.Strip(key), "docktail.service.name")
+
+	note := docktailHelpNote("Default: the application's port.")
+	assert.NotEqual(t, "Default: the application's port.", note)
+	assert.Contains(t, ansi.Strip(note), "Default: the application's port.")
+	assert.Contains(t, strings.SplitN(note, "\x1b[m", 2)[0], "Default", "the label prefix carries the muted style")
+
+	assert.Contains(t, content, "\x1b[", "the panel content is styled throughout")
+}
+
+func TestTailscaleHelpPanel_FormLabelsMatchThePanelColours(t *testing.T) {
+	form := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 100, Height: 34})
+	view := form.View()
+
+	assert.Contains(t, view, "\x1b[", "the form view is styled")
+	assert.Contains(t, ansi.Strip(view), "Service name (required)", "the required marker stays with the name")
+	assert.Contains(t, ansi.Strip(view), "docktail.service.name", "the docktail key still names the field")
+
+	styledName := docktailHelpHeading(docktailFields[0])
+	assert.Contains(t, view, ansi.Strip(styledName), "the form uses the same name text as the panel")
+}
+
 func TestTailscaleHelpPanel_FormIsMateriallyShorter(t *testing.T) {
 	before := lineCountAt(ansi.Strip(NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{}).View()))
 

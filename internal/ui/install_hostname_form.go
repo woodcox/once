@@ -10,9 +10,20 @@ import (
 type InstallHostnameBackMsg struct{}
 
 type InstallAdvancedMsg struct {
-	ImageRef string
-	Hostname string
+	ImageRef  string
+	Hostname  string
+	FromStage InstallAdvancedStage
 }
+
+// InstallAdvancedStage records which screen asked for the advanced settings, so
+// submitting them can return there instead of starting the install. Only a
+// tailnet install reaches them from the Tailscale Service screen.
+type InstallAdvancedStage int
+
+const (
+	InstallAdvancedFromHostname InstallAdvancedStage = iota
+	InstallAdvancedFromTailscale
+)
 
 type InstallHostnameForm struct {
 	form     Form
@@ -34,9 +45,11 @@ func NewInstallHostnameForm(imageRef, title string, target InstallTarget) Instal
 
 	hostnameField := NewTextField(placeholder)
 
+	// A tailnet install has a Tailscale Service screen to fill in next, and
+	// its advanced settings live there too, so this screen just moves on.
 	submitLabel := "Install"
 	if target == InstallTargetTailnet {
-		submitLabel = "Next"
+		submitLabel = "Tailnet settings"
 	}
 
 	m := InstallHostnameForm{
@@ -63,12 +76,16 @@ func NewInstallHostnameForm(imageRef, title string, target InstallTarget) Instal
 	m.form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return InstallHostnameBackMsg{} }
 	})
-	m.form.SetActionButton("Advanced settings", func() tea.Msg {
-		return InstallAdvancedMsg{
-			ImageRef: imageRef,
-			Hostname: hostnameField.Value(),
-		}
-	})
+
+	if target == InstallTargetPublic {
+		m.form.SetActionButton("Advanced settings", func() tea.Msg {
+			return InstallAdvancedMsg{
+				ImageRef:  imageRef,
+				Hostname:  hostnameField.Value(),
+				FromStage: InstallAdvancedFromHostname,
+			}
+		})
+	}
 
 	return m
 }

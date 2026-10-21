@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -11,7 +10,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/basecamp/once/internal/docker"
-	"github.com/basecamp/once/internal/mouse"
 )
 
 const (
@@ -19,18 +17,15 @@ const (
 	advancedAppPortField
 	advancedVolumePathsField
 	advancedSkipRailsEnvField
+	advancedEnvHeading
 	advancedEnvStart
 )
 
 type InstallAdvancedForm struct {
-	form      Form
-	width     int
-	height    int
-	topSkip   int
-	envScroll int
-	lastRows  int
-	settings  docker.ApplicationSettings
-	envKeys   []string
+	form     Form
+	width    int
+	settings docker.ApplicationSettings
+	envKeys  []string
 }
 
 func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvancedForm {
@@ -55,6 +50,9 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 		{Label: "App port", Field: appPortField},
 		{Label: "Volume paths", Field: volumePathsField},
 		{Label: "Rails environment", Field: skipRailsEnvField},
+		{Field: NewStaticField("Environment variables", func(s string) string {
+			return lipgloss.NewStyle().Bold(true).Render(s)
+		})},
 	}
 
 	keys := slices.Sorted(maps.Keys(settings.EnvVars))
@@ -70,6 +68,7 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 	}
 
 	m.form.OnRebuild(func(f *Form) {
+		pruneEnvRows(f)
 		lastKeyIdx := f.ItemCount() - 2
 		if lastKeyIdx >= advancedEnvStart && f.TextField(lastKeyIdx).Value() != "" {
 			f.AppendItems(newEnvKeyItem(""), newEnvValueItem(""))
@@ -93,17 +92,7 @@ func NewInstallAdvancedForm(settings docker.ApplicationSettings) InstallAdvanced
 
 		s.SkipRailsEnv = f.CheckboxField(advancedSkipRailsEnvField).Checked()
 
-		s.EnvVars = nil
-		for i := advancedEnvStart; i < f.ItemCount(); i += 2 {
-			k := f.TextField(i).Value()
-			if k == "" {
-				continue
-			}
-			if s.EnvVars == nil {
-				s.EnvVars = make(map[string]string)
-			}
-			s.EnvVars[k] = f.TextField(i + 1).Value()
-		}
+		s.EnvVars = envVarsFromForm(f)
 
 		return func() tea.Msg { return SettingsSectionSubmitMsg{Settings: s} }
 	})
@@ -122,7 +111,6 @@ func (m InstallAdvancedForm) Init() tea.Cmd {
 func (m InstallAdvancedForm) Update(msg tea.Msg) (InstallAdvancedForm, tea.Cmd) {
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
-		m.height = wsm.Height
 		wsm.Height = formViewportHeight(wsm.Height)
 		msg = wsm
 	}
@@ -130,7 +118,6 @@ func (m InstallAdvancedForm) Update(msg tea.Msg) (InstallAdvancedForm, tea.Cmd) 
 	var cmd tea.Cmd
 	m.form, cmd = m.form.Update(msg)
 	m.setFieldWidths()
-	m.adjustScroll()
 	return m, cmd
 }
 
@@ -165,10 +152,6 @@ func (m InstallAdvancedForm) matches(settings docker.ApplicationSettings) bool {
 
 // Private
 
-func (m InstallAdvancedForm) envRowCount() int {
-	return (m.form.ItemCount() - advancedEnvStart) / 2
-}
-
 func (m InstallAdvancedForm) columnWidths() (int, int) {
 	totalWidth := max(min(m.width, 64), 6)
 	keyWidth := totalWidth / 3
@@ -180,7 +163,7 @@ func (m InstallAdvancedForm) setFieldWidths() {
 	keyWidth, valueWidth := m.columnWidths()
 	fieldWidth := max(keyWidth+valueWidth-3, 1)
 
-	for i := range advancedEnvStart {
+	for i := range advancedEnvHeading {
 		if i == advancedSkipRailsEnvField {
 			continue
 		}
@@ -196,155 +179,47 @@ func (m InstallAdvancedForm) setFieldWidths() {
 	}
 }
 
-// adjustScroll keeps the focused row visible: when the cursor is inside the
-// environment grid the four fixed fields slide off the top, and inside the
-// grid itself the row window follows the focused row. Returning to a fixed
-// field brings everything back to the top. Typing into the trailing empty row
-// grows the list; we keep that row on screen so the user sees the form grow.
-func (m *InstallAdvancedForm) adjustScroll() {
-	focused := m.form.Focused()
-	if focused < advancedEnvStart {
-		m.topSkip = 0
-	} else {
-		m.topSkip = advancedEnvStart
-	}
-
-	maxRows := m.maxEnvRowsVisible()
-	if maxRows <= 0 {
-		return
-	}
-
-	rows := m.envRowCount()
-	if rows == 0 {
-		m.envScroll = 0
-		return
-	}
-
-	focusedRow := m.focusedEnvRow()
-	if focusedRow < 0 {
-		m.envScroll = 0
-		return
-	}
-
-	if focusedRow < m.envScroll {
-		m.envScroll = focusedRow
-	}
-	if focusedRow >= m.envScroll+maxRows {
-		m.envScroll = focusedRow - maxRows + 1
-	}
-
-	// When the trailing empty row absorbs a typed key, the form grows by
-	// one row. Make sure that new row is visible: snap the window so it
-	// ends right at the bottom of the list.
-	if rows > m.lastRows && m.envScroll+maxRows < rows {
-		m.envScroll = max(0, rows-maxRows)
-	}
-	m.lastRows = rows
-}
-
-func (m InstallAdvancedForm) focusedEnvRow() int {
-	focused := m.form.Focused()
-	if focused >= advancedEnvStart && focused < m.form.ItemCount() {
-		return (focused - advancedEnvStart) / 2
-	}
-	return -1
-}
-
-// maxEnvRowsVisible is the number of env rows that fit under the env heading
-// once the four fixed fields have scrolled off.
-func (m InstallAdvancedForm) maxEnvRowsVisible() int {
-	if m.height <= 0 {
-		return m.envRowCount()
-	}
-	// Title (2) + header (2) + buttons (3) + button gap (1) = 8
-	available := m.height - 8
-	rowHeight := 4 // bordered input (3) + gap (1)
-	return max(available/rowHeight, 1)
-}
-
+// renderContent puts the whole form through Form's own windowing: the four
+// fixed fields and the env grid share the screen, and nothing scrolls out of
+// reach until the content genuinely doesn't fit.
 func (m InstallAdvancedForm) renderContent() string {
-	var parts []string
+	return m.form.View()
+}
 
-	if m.topSkip == 0 {
-		parts = append(parts, m.renderField(advancedHealthCheckField, "Health check path")...)
-		parts = append(parts, m.renderField(advancedAppPortField, "App port")...)
-		parts = append(parts, m.renderField(advancedVolumePathsField, "Volume paths")...)
-		parts = append(parts, m.renderCheckbox(advancedSkipRailsEnvField, "Rails environment")...)
-	} else {
-		keyWidth, valueWidth := m.columnWidths()
-		indicatorWidth := keyWidth + valueWidth + 1
-		indicator := lipgloss.NewStyle().Width(indicatorWidth).Align(lipgloss.Center).
-			Foreground(Colors.Border).
-			Render(fmt.Sprintf("↑ %d more", m.topSkip))
-		parts = append(parts, indicator, "")
+// Helpers
+
+// pruneEnvRows drops env rows whose key and value are both empty, always
+// leaving exactly one blank row at the end to start a new variable in.
+func pruneEnvRows(f *Form) {
+	rows := (f.ItemCount() - advancedEnvStart) / 2
+	empty := make([]bool, f.ItemCount())
+
+	for row := range rows {
+		if row == rows-1 {
+			break // the trailing blank row stays
+		}
+		key := advancedEnvStart + row*2
+		value := key + 1
+		if f.TextField(key).Value() == "" && f.TextField(value).Value() == "" {
+			empty[key] = true
+			empty[value] = true
+		}
 	}
 
-	parts = append(parts, m.renderEnvGrid()...)
-	parts = append(parts, m.renderButtons())
-
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	f.PruneItems(func(i int, item FormItem) bool { return empty[i] })
 }
 
-func (m InstallAdvancedForm) renderField(idx int, label string) []string {
-	inputStyle := Styles.Focus(Styles.Input, m.form.Focused() == idx)
-	field := mouse.Mark(fieldTarget(idx), inputStyle.Render(m.form.Field(idx).View()))
-	return []string{Styles.Label.Render(label), field, ""}
-}
-
-func (m InstallAdvancedForm) renderCheckbox(idx int, label string) []string {
-	checkboxStyle := Styles.Focus(Styles.Input, m.form.Focused() == idx)
-	checkbox := mouse.Mark(fieldTarget(idx), checkboxStyle.Render(m.form.CheckboxField(idx).View()))
-	return []string{Styles.Label.Render(label), checkbox, ""}
-}
-
-func (m InstallAdvancedForm) renderEnvGrid() []string {
-	keyWidth, valueWidth := m.columnWidths()
-
-	headerStyle := lipgloss.NewStyle().Bold(true)
-	header := lipgloss.JoinHorizontal(lipgloss.Top,
-		headerStyle.Width(keyWidth).Render("Environment variables"),
-		" ",
-		headerStyle.Width(valueWidth).Render(""),
-	)
-
-	parts := []string{header, ""}
-
-	maxRows := m.maxEnvRowsVisible()
-	rows := m.envRowCount()
-	end := min(m.envScroll+maxRows, rows)
-
-	focused := m.form.Focused()
-	for i := m.envScroll; i < end; i++ {
-		keyIdx := advancedEnvStart + i*2
-		valIdx := keyIdx + 1
-
-		keyStyle := Styles.Focus(Styles.Input, focused == keyIdx).Width(keyWidth)
-		valueStyle := Styles.Focus(Styles.Input, focused == valIdx).Width(valueWidth)
-
-		keyView := mouse.Mark(fieldTarget(keyIdx), keyStyle.Render(m.form.TextField(keyIdx).View()))
-		valueView := mouse.Mark(fieldTarget(valIdx), valueStyle.Render(m.form.TextField(valIdx).View()))
-
-		parts = append(parts, lipgloss.JoinHorizontal(lipgloss.Top, keyView, " ", valueView), "")
+func envVarsFromForm(f *Form) map[string]string {
+	var vars map[string]string
+	for i := advancedEnvStart; i < f.ItemCount(); i += 2 {
+		k := f.TextField(i).Value()
+		if k == "" {
+			continue
+		}
+		if vars == nil {
+			vars = make(map[string]string)
+		}
+		vars[k] = f.TextField(i + 1).Value()
 	}
-
-	if end < rows {
-		keyWidth, valueWidth := m.columnWidths()
-		headerWidth := keyWidth + valueWidth + 1
-		parts = append(parts, lipgloss.NewStyle().Width(headerWidth).Align(lipgloss.Center).
-			Foreground(Colors.Border).Render(fmt.Sprintf("↓ %d more below", rows-end)))
-		parts = append(parts, "")
-	}
-
-	return parts
-}
-
-func (m InstallAdvancedForm) renderButtons() string {
-	focused := m.form.Focused()
-
-	submitButton := mouse.Mark("submit", Styles.Focus(Styles.ButtonPrimary, focused == m.form.ItemCount()).
-		Render("Install"))
-	cancelButton := mouse.Mark("cancel", Styles.Focus(Styles.Button, focused == m.form.ItemCount()+1).
-		Render("Cancel"))
-
-	return lipgloss.JoinHorizontal(lipgloss.Center, submitButton, cancelButton)
+	return vars
 }

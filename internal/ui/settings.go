@@ -35,7 +35,7 @@ var settingsKeys = struct {
 }{
 	Back:  WithHelp(NewKeyBinding("esc"), "esc", "back"),
 	Enter: NewKeyBinding("enter"),
-	Help:  WithHelp(NewKeyBinding("f1"), "F1", "labels"),
+	Help:  WithHelp(NewKeyBinding("f1"), "F1", "label help"),
 }
 
 type settingsState int

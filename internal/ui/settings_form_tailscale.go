@@ -10,11 +10,13 @@ import (
 	"github.com/basecamp/once/internal/docker"
 )
 
+// The Service screen asks for the fields users must understand first, then the
+// optional ones, with the read-only Labels preview last.
 const (
 	tailscaleEnabledField = iota
 	tailscaleServiceNameField
-	tailscaleDescriptionField
 	tailscaleBackendPortField
+	tailscaleDescriptionField
 	tailscaleBackendProtocolField
 	tailscaleServicePortField
 	tailscaleServiceProtocolField
@@ -90,8 +92,8 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 			// because they are the only fields users really must understand,
 			// but blank values still resolve to a working default.
 			FormItem{Label: "Service name (required)", LabelTag: "docktail.service.name", Field: serviceField},
-			FormItem{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField},
 			FormItem{Label: "Backend port (required)", LabelTag: "docktail.service.port", Field: portField},
+			FormItem{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField},
 			FormItem{Label: "Backend protocol", LabelTag: "docktail.service.protocol", Field: backendProtocolField},
 			FormItem{Label: "Service port", LabelTag: "docktail.service.service-port", Field: servicePortField},
 			FormItem{Label: "Service protocol", LabelTag: "docktail.service.service-protocol", Field: serviceProtocolField},
@@ -182,6 +184,13 @@ func (m SettingsFormTailscale) updateWithPanel(msg tea.Msg) (SettingsSection, te
 			m.panel = nil
 			return m, nil
 		}
+		var cmd tea.Cmd
+		panel := *m.panel
+		panel, cmd = panel.Update(msg)
+		m.panel = &panel
+		return m, cmd
+
+	case tea.MouseWheelMsg:
 		var cmd tea.Cmd
 		panel := *m.panel
 		panel, cmd = panel.Update(msg)

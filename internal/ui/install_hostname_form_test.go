@@ -99,9 +99,31 @@ func TestInstallHostnameForm_TailnetTargetAsksForATailnetName(t *testing.T) {
 
 	assert.Contains(t, view, "Tailnet name")
 	assert.Contains(t, view, "once-campfire.example.ts.net")
-	assert.Contains(t, view, "Next", "submit label changes for tailnet installs")
+	assert.Contains(t, view, "Tailnet settings", "submit label names the next screen")
 	assert.NotContains(t, view, "Install")
+	assert.NotContains(t, view, "Next")
 	assert.NotContains(t, view, "Hostname")
+	assert.NotContains(t, view, "Advanced settings", "the tailnet flow reaches advanced settings from the Service screen")
+}
+
+func TestInstallHostnameForm_TailnetFocusOrderSkipsTheActionButton(t *testing.T) {
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetTailnet)
+	hostnameFormTypeText(&form, "app.example.ts.net")
+
+	hostnameFormPressTab(&form)
+	require.Equal(t, form.form.ItemCount(), form.form.Focused(), "tab lands on the submit button")
+
+	hostnameFormPressTab(&form)
+	require.Equal(t, form.form.ItemCount()+1, form.form.Focused(), "then straight to cancel")
+}
+
+func TestInstallHostnameForm_PublicKeepsInstallAndAdvancedSettings(t *testing.T) {
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetPublic)
+	hostnameFormSendWindowSize(&form)
+	view := ansi.Strip(form.View())
+
+	assert.Contains(t, view, "Install")
+	assert.Contains(t, view, "Advanced settings")
 }
 
 func TestInstallHostnameForm_TailnetPlaceholderIsGeneric(t *testing.T) {

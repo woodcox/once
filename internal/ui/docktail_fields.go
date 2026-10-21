@@ -1,6 +1,10 @@
 package ui
 
-import "strings"
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
 
 // docktailField describes one docktail.* label the install and settings
 // Tailscale forms can write and its F1 help panel entry. The title is what
@@ -97,23 +101,43 @@ var docktailFields = []docktailField{
 func renderTailscaleHelpContent() string {
 	var lines []string
 	for _, entry := range docktailFields {
-		var header string
-		switch {
-		case entry.required:
-			header = entry.title + " (required)"
-		default:
-			header = entry.title + " (optional)"
-		}
-		lines = append(lines, header, entry.key, entry.summary)
+		lines = append(lines,
+			docktailHelpHeading(entry),
+			docktailHelpKey(entry.key),
+			entry.summary,
+		)
 		if entry.defaultLine != "" {
-			lines = append(lines, entry.defaultLine)
+			lines = append(lines, docktailHelpNote(entry.defaultLine))
 		}
 		if entry.accepted != "" {
-			lines = append(lines, entry.accepted)
+			lines = append(lines, docktailHelpNote(entry.accepted))
 		}
 		lines = append(lines, "")
 	}
 	return joinLines(lines)
+}
+
+// docktailHelpHeading renders the field name in the focus colour, with its
+// required/optional marker following the same colour for required fields.
+func docktailHelpHeading(entry docktailField) string {
+	nameStyle := lipgloss.NewStyle().Bold(true).Foreground(Colors.Focused)
+
+	if !entry.required {
+		return nameStyle.Render(entry.title) + lipgloss.NewStyle().Foreground(Colors.Muted).Render(" (optional)")
+	}
+	return nameStyle.Render(entry.title + " (required)")
+}
+
+// docktailHelpNote renders a "Default:"/"Accepted:" line with the label muted
+// and the value in the normal foreground, so the two read differently.
+func docktailHelpNote(line string) string {
+	label, value, found := strings.Cut(line, ": ")
+	if !found {
+		return line
+	}
+
+	muted := lipgloss.NewStyle().Foreground(Colors.Muted)
+	return muted.Render(label+": ") + value
 }
 
 func joinLines(lines []string) string {
@@ -125,4 +149,10 @@ func joinLines(lines []string) string {
 		sb.WriteString(line)
 	}
 	return sb.String()
+}
+
+// Helpers
+
+func docktailHelpKey(key string) string {
+	return lipgloss.NewStyle().Foreground(Colors.Primary).Render(key)
 }

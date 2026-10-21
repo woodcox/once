@@ -75,6 +75,9 @@ func (m SettingsFormEnvironment) Update(msg tea.Msg) (SettingsSection, tea.Cmd) 
 	m.settingsFormBase, cmd = m.update(msg)
 	m.setFieldWidths()
 	m.adjustScroll()
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		m.scrollWheel(wheel)
+	}
 	return m, cmd
 }
 
@@ -122,6 +125,22 @@ func (m *SettingsFormEnvironment) adjustScroll() {
 	}
 	if focusedRow >= m.scroll+maxVisible {
 		m.scroll = focusedRow - maxVisible + 1
+	}
+}
+
+// scrollWheel moves the row window without touching focus, so wheeling never
+// jumps the cursor into a row the user can't see.
+func (m *SettingsFormEnvironment) scrollWheel(msg tea.MouseWheelMsg) {
+	maxVisible := m.maxVisibleRows()
+	if maxVisible <= 0 || m.rowCount() <= maxVisible {
+		return
+	}
+
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		m.scroll = max(0, m.scroll-1)
+	case tea.MouseWheelDown:
+		m.scroll = min(m.scroll+1, m.rowCount()-maxVisible)
 	}
 }
 

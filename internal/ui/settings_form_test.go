@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -387,6 +389,21 @@ func TestSettingsFormTailscale_ViewShowsDocktailLabels(t *testing.T) {
 	assert.NotContains(t, view, "Defaults to the application name", "field description moved to the help panel")
 	assert.NotContains(t, view, "loopback only", "field description moved to the help panel")
 	assert.Contains(t, view, "Publishes this app as a Tailscale Service")
+}
+
+func TestSettingsFormTailscale_RequiredFieldsComeFirst(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{
+		Name:      "budget",
+		Tailscale: docker.TailscaleSettings{Enabled: true, Mode: docker.DocktailMode, Service: "budget"},
+	})
+
+	assert.Less(t, tailscaleServiceNameField, tailscaleBackendPortField, "Service name comes first")
+	assert.Less(t, tailscaleBackendPortField, tailscaleDescriptionField, "Backend port comes before the optional fields")
+	assert.Less(t, tailscaleDirectField, tailscaleLabelsField, "the read-only Labels preview stays last")
+
+	view := ansi.Strip(form.View())
+	assert.Less(t, strings.Index(view, "Service name (required)"), strings.Index(view, "Description"))
+	assert.Less(t, strings.Index(view, "Backend port (required)"), strings.Index(view, "Backend protocol"))
 }
 
 func TestSettingsFormTailscale_DisablingHidesTheLabels(t *testing.T) {
@@ -1078,6 +1095,31 @@ func TestSettingsFormEnvironment_FocusBorder_MovesOnTab(t *testing.T) {
 	view2 := form.View()
 
 	assert.NotEqual(t, view1, view2, "view changes when focus moves")
+}
+
+func TestSettingsFormEnvironment_MouseWheelScrollsWithoutMovingFocus(t *testing.T) {
+	envVars := make(map[string]string, 20)
+	for i := range 20 {
+		envVars[fmt.Sprintf("KEY_%02d", i)] = fmt.Sprintf("%d", i)
+	}
+
+	form := NewSettingsFormEnvironment(docker.ApplicationSettings{EnvVars: envVars})
+	environmentSendWindowSize(&form, 80, 12)
+	require.Less(t, form.maxVisibleRows(), form.rowCount(), "test precondition: the rows overflow the screen")
+
+	focused := form.form.Focused()
+	before := ansi.Strip(form.View())
+
+	updateSettingsForm(&form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	after := ansi.Strip(form.View())
+
+	assert.Equal(t, focused, form.form.Focused(), "the wheel never moves focus")
+	assert.Greater(t, form.scroll, 0, "the wheel moved the row window")
+	assert.NotEqual(t, before, after, "the visible rows changed")
+
+	updateSettingsForm(&form, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	assert.Zero(t, form.scroll, "wheeling back up returns to the top")
+	assert.Equal(t, focused, form.form.Focused())
 }
 
 func environmentPressTab(form *SettingsFormEnvironment) {

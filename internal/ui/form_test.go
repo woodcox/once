@@ -8,7 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestForm_FocusCycling(t *testing.T) {
@@ -432,6 +434,76 @@ func TestForm_TinyHeightShowsFocusedField(t *testing.T) {
 	view = form.View()
 	assert.Equal(t, 1, lipgloss.Height(view), "buttons only fit once the height covers them")
 	assert.Contains(t, view, "chat.example.com", "the focused field's input is still visible at height 2")
+}
+
+func TestForm_MouseWheelScrollsWithoutMovingFocus(t *testing.T) {
+	form := longForm(8)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	// Start in the middle of the form so the wheel has room to move the
+	// window in both directions without losing the focused field.
+	for range 3 {
+		formPressTab(&form)
+	}
+	focused := form.Focused()
+	before := ansi.Strip(form.View())
+	require.Contains(t, before, "↑", "test precondition: the form windows its fields")
+
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	after := ansi.Strip(form.View())
+
+	assert.Equal(t, focused, form.Focused(), "the wheel never moves focus")
+	assert.Contains(t, after, "Field 4", "the focused field stays visible")
+	assert.NotContains(t, after, "Field 1", "the top of the window moved down")
+
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	assert.Equal(t, before, ansi.Strip(form.View()), "wheeling back up restores the window")
+	assert.Equal(t, focused, form.Focused())
+}
+
+func TestForm_MouseWheelKeepsTheFocusedFieldVisible(t *testing.T) {
+	form := longForm(8)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	require.Equal(t, 0, form.Focused())
+
+	for range 4 {
+		form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	}
+
+	assert.Contains(t, ansi.Strip(form.View()), "Field 1", "wheeling cannot scroll the focused field off screen")
+	assert.Equal(t, 0, form.Focused())
+}
+
+func TestForm_MouseWheelNeverSubmitsOrReachesAHiddenField(t *testing.T) {
+	form := NewForm("Done",
+		FormItem{Label: "Name", Field: NewTextField("name"), Required: true},
+	)
+	submitted := false
+	form.OnSubmit(func(f *Form) tea.Cmd {
+		submitted = true
+		return nil
+	})
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	for range 4 {
+		form, _ = form.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	}
+
+	assert.False(t, submitted, "wheeling must not submit")
+	assert.Equal(t, 0, form.Focused(), "wheeling must not move focus into the buttons")
+}
+
+func TestForm_MouseWheelIsIgnoredWhenEverythingFits(t *testing.T) {
+	form := NewForm("Done",
+		FormItem{Label: "First", Field: NewTextField("first")},
+		FormItem{Label: "Second", Field: NewTextField("second")},
+	)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 100})
+	before := ansi.Strip(form.View())
+
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+
+	assert.Equal(t, before, ansi.Strip(form.View()), "nothing is hidden, so the wheel does nothing")
 }
 
 // Helpers

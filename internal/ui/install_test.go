@@ -458,6 +458,105 @@ func TestInstall_HelpKeyShownOnHostnameScreenNonFirstRun(t *testing.T) {
 	assert.Contains(t, view, "help")
 }
 
+func TestInstall_AdvancedFromTailscaleReturnsToTheServiceScreen(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetTailnet)
+	require.Equal(t, installStateHostname, m.state)
+	require.Nil(t, m.hostnameForm.form.actionButton, "the tailnet name screen has no Advanced settings button")
+
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "campfire.example.ts.net"})
+	require.Equal(t, installStateTailscale, m.state)
+
+	view := ansi.Strip(m.View())
+	assert.Contains(t, view, "Advanced settings", "the Service screen offers the advanced settings action")
+
+	m.tailscaleForm.form.TextField(installTailscaleServiceField).SetValue("budget")
+	m.tailscaleForm.form.TextField(installTailscalePathField).SetValue("/budget")
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{
+		ImageRef:  "ghcr.io/basecamp/once-campfire",
+		Hostname:  "campfire.example.ts.net",
+		FromStage: InstallAdvancedFromTailscale,
+	})
+	require.Equal(t, installStateAdvanced, m.state)
+
+	m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: docker.ApplicationSettings{AppPort: 5006}})
+
+	require.Equal(t, installStateTailscale, m.state, "submitting returns to the Service screen")
+	assert.Nil(t, m.activity, "and does not start the install")
+	assert.Equal(t, "budget", m.tailscaleForm.form.TextField(installTailscaleServiceField).Value(),
+		"the Service values typed before opening advanced settings are preserved")
+	assert.Equal(t, "/budget", m.tailscaleForm.form.TextField(installTailscalePathField).Value())
+
+	m, _ = updateInstall(m, InstallTailscaleSubmitMsg{Tailscale: docker.TailscaleSettings{
+		Enabled: true,
+		Mode:    docker.DocktailMode,
+		Service: "budget",
+	}})
+
+	require.Equal(t, installStateActivity, m.state, "the Service screen's Install starts the install")
+	require.NotNil(t, m.activity)
+	assert.Equal(t, 5006, m.activity.settings.AppPort, "the advanced settings are carried through")
+	assert.Equal(t, "budget", m.activity.settings.EffectiveServiceName())
+}
+
+func TestInstall_AdvancedCancelFromTailscaleReturnsToTheServiceScreen(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetTailnet)
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "campfire.example.ts.net"})
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{
+		ImageRef:  "ghcr.io/basecamp/once-campfire",
+		Hostname:  "campfire.example.ts.net",
+		FromStage: InstallAdvancedFromTailscale,
+	})
+	require.Equal(t, installStateAdvanced, m.state)
+
+	m, _ = updateInstall(m, SettingsSectionCancelMsg{})
+
+	assert.Equal(t, installStateTailscale, m.state)
+	assert.Nil(t, m.activity)
+}
+
+func TestInstall_EscFromAdvancedReturnsToTheOpeningScreen(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetTailnet)
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "campfire.example.ts.net"})
+	m, _ = updateInstall(m, InstallAdvancedMsg{
+		ImageRef:  "ghcr.io/basecamp/once-campfire",
+		Hostname:  "campfire.example.ts.net",
+		FromStage: InstallAdvancedFromTailscale,
+	})
+
+	m, _ = updateInstall(m, keyPressMsg("esc"))
+
+	assert.Equal(t, installStateTailscale, m.state)
+}
+
+func TestInstall_AdvancedFromHostnameStillInstallsAPublicApp(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetPublic)
+
+	m, _ = updateInstall(m, InstallAdvancedMsg{
+		ImageRef:  "ghcr.io/basecamp/once-campfire",
+		Hostname:  "app.example.com",
+		FromStage: InstallAdvancedFromHostname,
+	})
+	require.Equal(t, installStateAdvanced, m.state)
+
+	m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: docker.ApplicationSettings{AppPort: 5006}})
+
+	require.Equal(t, installStateActivity, m.state, "a public app still installs straight from advanced settings")
+}
+
 func TestInstall_HelpKeyShownOnTailscaleScreen(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -468,7 +567,7 @@ func TestInstall_HelpKeyShownOnTailscaleScreen(t *testing.T) {
 	require.Equal(t, installStateTailscale, m.state)
 	view := ansi.Strip(m.View())
 	assert.Contains(t, view, "F1", "the Tailscale screen advertises F1")
-	assert.Contains(t, view, "labels", "the help description is labels for the Tailscale screen")
+	assert.Contains(t, view, "label help", "the help description names what F1 opens")
 
 	m, _ = updateInstall(m, keyPressMsg("f1"))
 	assert.NotNil(t, m.tailscaleForm.panel, "F1 opens the panel inside the Tailscale form")

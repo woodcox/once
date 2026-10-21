@@ -13,13 +13,15 @@ import (
 var installTailscaleFormKeys = struct {
 	Help key.Binding
 }{
-	Help: WithHelp(NewKeyBinding("f1"), "F1", "labels"),
+	Help: WithHelp(NewKeyBinding("f1"), "F1", "label help"),
 }
 
+// The Service screen asks for the fields users must understand first, then the
+// optional ones, with the read-only Labels preview last.
 const (
 	installTailscaleServiceField = iota
-	installTailscaleDescriptionField
 	installTailscalePortField
+	installTailscaleDescriptionField
 	installTailscaleBackendProtocolField
 	installTailscaleServicePortField
 	installTailscaleServiceProtocolField
@@ -38,12 +40,13 @@ type InstallTailscaleSubmitMsg struct {
 type InstallTailscaleBackMsg struct{}
 
 type InstallTailscaleForm struct {
-	form     Form
-	panel    *TailscaleHelpPanel
-	width    int
-	height   int
-	imageRef string
-	appPort  int
+	form          Form
+	panel         *TailscaleHelpPanel
+	width         int
+	height        int
+	imageRef      string
+	appPort       int
+	actionMessage *func() InstallAdvancedMsg
 }
 
 func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.TailscaleSettings) InstallTailscaleForm {
@@ -102,8 +105,8 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 		// values still resolve to a working default, so the form lets the
 		// user submit without filling them in.
 		{Label: "Service name (required)", LabelTag: "docktail.service.name", Field: serviceField},
-		{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField},
 		{Label: "Backend port (required)", LabelTag: "docktail.service.port", Field: portField},
+		{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField},
 		{Label: "Backend protocol", LabelTag: "docktail.service.protocol", Field: backendProtocolField},
 		{Label: "Service port", LabelTag: "docktail.service.service-port", Field: servicePortField},
 		{Label: "Service protocol", LabelTag: "docktail.service.service-protocol", Field: serviceProtocolField},
@@ -116,9 +119,13 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 	}
 
 	m := InstallTailscaleForm{
-		imageRef: imageRef,
-		appPort:  appPort,
-		form:     NewForm("Install", items...),
+		imageRef:      imageRef,
+		appPort:       appPort,
+		form:          NewForm("Install", items...),
+		actionMessage: new(func() InstallAdvancedMsg),
+	}
+	*m.actionMessage = func() InstallAdvancedMsg {
+		return InstallAdvancedMsg{ImageRef: imageRef}
 	}
 
 	refreshLabels := func(f *Form) {
@@ -132,6 +139,11 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 	})
 	m.form.OnCancel(func(f *Form) tea.Cmd {
 		return func() tea.Msg { return InstallTailscaleBackMsg{} }
+	})
+	m.form.SetActionButton("Advanced settings", func() tea.Msg {
+		msg := (*m.actionMessage)()
+		msg.FromStage = InstallAdvancedFromTailscale
+		return msg
 	})
 
 	return m
@@ -171,6 +183,18 @@ func (m InstallTailscaleForm) View() string {
 	title := Styles.Title.Render("Tailscale Service")
 	heading := Styles.MutedText.Render("Publishes this app as a Tailscale Service by adding docktail.* labels to the container.")
 	return lipgloss.JoinVertical(lipgloss.Center, title, "", heading, "", m.form.View())
+}
+
+// Settings reads the Service options currently on the form, so the install
+// screen can carry them across a rebuild.
+func (m InstallTailscaleForm) Settings() docker.TailscaleSettings {
+	return installTailscaleSettings(&m.form, docker.TailscaleSettings{})
+}
+
+// SetActionMessage is the message the form's Advanced settings button emits.
+// The install screen fills in the hostname, which only it knows.
+func (m *InstallTailscaleForm) SetActionMessage(fn func() InstallAdvancedMsg) {
+	*m.actionMessage = fn
 }
 
 // Private

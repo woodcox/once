@@ -201,16 +201,16 @@ func TestSettings_TailscaleSectionAdvertisesF1(t *testing.T) {
 	other := NewSettings(ns, app, SettingsSectionApplication)
 
 	assert.Equal(t, "f1", tailscale.help.bindings[0].Keys()[0])
-	assert.Equal(t, "labels", tailscale.help.bindings[0].Help().Desc)
+	assert.Equal(t, "label help", tailscale.help.bindings[0].Help().Desc)
 
-	var sawLabels bool
+	var sawLabelsHelp bool
 	for _, b := range other.help.bindings {
-		if b.Help().Desc == "labels" {
-			sawLabels = true
+		if b.Help().Desc == "label help" {
+			sawLabelsHelp = true
 			break
 		}
 	}
-	assert.False(t, sawLabels, "non-Tailscale sections must not advertise the labels panel")
+	assert.False(t, sawLabelsHelp, "non-Tailscale sections must not advertise the label help panel")
 }
 
 func TestSettings_TailscalePanelEscDoesNotNavigate(t *testing.T) {

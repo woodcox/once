@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,12 +75,12 @@ func TestInstallAdvancedForm_DefaultVolumePathsSubmitAsUnset(t *testing.T) {
 func TestInstallAdvancedForm_CoversAppShapeOnly(t *testing.T) {
 	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
 
-	assert.Equal(t, 6, m.form.ItemCount(), "four fixed fields plus one empty env row")
+	assert.Equal(t, 7, m.form.ItemCount(), "four fixed fields, the env heading, and one empty env row")
 	assert.Equal(t, 0, advancedHealthCheckField)
 	assert.Equal(t, 1, advancedAppPortField)
 	assert.Equal(t, 2, advancedVolumePathsField)
 	assert.Equal(t, 3, advancedSkipRailsEnvField)
-	assert.Equal(t, 4, advancedEnvStart)
+	assert.Equal(t, 5, advancedEnvStart)
 }
 
 func TestInstallAdvancedForm_HasNoTailscaleFields(t *testing.T) {
@@ -109,7 +111,7 @@ func TestInstallAdvancedForm_GrowsEnvRows(t *testing.T) {
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	initial := m.form.ItemCount()
 
-	for range advancedEnvStart {
+	for m.form.Focused() != advancedEnvStart {
 		m, _ = m.Update(keyPressMsg("tab"))
 	}
 	require.Equal(t, advancedEnvStart, m.form.Focused())
@@ -120,75 +122,68 @@ func TestInstallAdvancedForm_GrowsEnvRows(t *testing.T) {
 	assert.Equal(t, initial+2, m.form.ItemCount(), "typing a new key appends an empty row")
 }
 
-func TestInstallAdvancedForm_FixedFieldFocusLeavesEnvScrollAlone(t *testing.T) {
-	m := NewInstallAdvancedForm(docker.ApplicationSettings{
-		EnvVars: map[string]string{
-			"AAA": "1",
-			"BBB": "2",
-			"CCC": "3",
-			"DDD": "4",
-		},
-	})
-	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+func TestInstallAdvancedForm_FixedFieldFocusKeepsTheWholeFormOnScreen(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 
-	for range 10 {
+	view := ansi.Strip(m.View())
+	assert.Contains(t, view, "Health check path")
+	assert.Contains(t, view, "Environment variables")
+	assert.NotContains(t, view, "more fields", "everything fits, so nothing is hidden")
+
+	for m.form.Focused() != advancedEnvStart {
 		m, _ = m.Update(keyPressMsg("tab"))
 	}
-	require.Equal(t, advancedEnvStart+6, m.form.Focused(), "scrolled deep into the env grid")
-	assert.Equal(t, advancedEnvStart, m.topSkip, "env focus slides the fixed fields off the top")
+
+	view = ansi.Strip(m.View())
+	assert.Contains(t, view, "Health check path", "entering the env grid hides nothing")
+	assert.Contains(t, view, "Environment variables")
+	assert.NotContains(t, view, "more fields", "no hidden-fields indicator before it overflows")
 
 	for m.form.Focused() != advancedHealthCheckField {
 		m, _ = m.Update(keyPressMsg("shift+tab"))
 	}
 	require.Equal(t, advancedHealthCheckField, m.form.Focused(), "back at the first fixed field")
-	assert.Zero(t, m.topSkip, "returning to a fixed field brings everything back to the top")
-	assert.Zero(t, m.envScroll, "and the env row window snaps back to the top too")
+
+	view = ansi.Strip(m.View())
+	assert.Contains(t, view, "Health check path")
+	assert.Contains(t, view, "Environment variables")
 }
 
-func TestInstallAdvancedForm_FocusInsideEnvScrollsFixedFieldsOff(t *testing.T) {
+func TestInstallAdvancedForm_ShortSettingsFitWithoutWindowing(t *testing.T) {
 	m := NewInstallAdvancedForm(docker.ApplicationSettings{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 
 	view := ansi.Strip(m.View())
-	assert.Contains(t, view, "Health check path", "initially the fixed fields are visible")
-	assert.NotContains(t, view, "↑", "no hidden-fields indicator before scrolling")
 
-	for range advancedEnvStart {
-		m, _ = m.Update(keyPressMsg("tab"))
-	}
-	require.Equal(t, advancedEnvStart, m.form.Focused(), "focus has moved into the env grid")
-	assert.Equal(t, advancedEnvStart, m.topSkip)
-
-	view = ansi.Strip(m.View())
-	assert.NotContains(t, view, "Health check path", "the env grid scrolled the fixed fields off the top")
+	assert.Contains(t, view, "Health check path")
+	assert.Contains(t, view, "App port")
+	assert.Contains(t, view, "Volume paths")
+	assert.Contains(t, view, "Rails environment")
 	assert.Contains(t, view, "Environment variables")
-	assert.Contains(t, view, "↑ 4 more", "indicator names the fields scrolled away")
+	assert.Contains(t, view, "Install")
+	assert.Contains(t, view, "Cancel")
+	assert.NotContains(t, view, "more fields", "everything fits, so no hidden-fields indicator")
 }
 
-func TestInstallAdvancedForm_GrowingEnvBringsNewRowIntoView(t *testing.T) {
-	m := NewInstallAdvancedForm(docker.ApplicationSettings{
-		EnvVars: map[string]string{
-			"AAA": "1",
-			"BBB": "2",
-			"CCC": "3",
-			"DDD": "4",
-			"EEE": "5",
-			"FFF": "6",
-			"GGG": "7",
-			"HHH": "8",
-		},
-	})
-	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
-	rows := m.envRowCount()
-	require.Equal(t, 9, rows, "8 user rows plus the empty trailing row")
+func TestInstallAdvancedForm_TallSettingsWindowAndKeepFocusVisible(t *testing.T) {
+	m := tallAdvancedForm(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	for m.form.Focused() != m.form.ItemCount()-2 {
+	view := ansi.Strip(m.View())
+	assert.Contains(t, view, "more fields", "the form windows itself")
+	assert.Contains(t, view, "Install", "the buttons stay reachable")
+	assert.Contains(t, view, "Cancel")
+
+	for m.form.Focused() != advancedEnvStart+6 {
 		m, _ = m.Update(keyPressMsg("tab"))
 	}
-	_, _ = m.Update(keyPressMsg("Z"))
+	require.Equal(t, advancedEnvStart+6, m.form.Focused())
 
-	assert.Greater(t, m.envScroll, 0, "typing past the bottom of the list auto-scrolls the new row into view")
-	assert.True(t, m.envScroll+m.maxEnvRowsVisible() >= rows, "the new bottom row is in the visible window")
+	view = ansi.Strip(m.View())
+	assert.Contains(t, view, "2", "the focused env row's value stays on screen")
+	assert.Contains(t, view, "Cancel")
+	assert.LessOrEqual(t, lipgloss.Height(view), 24, "the window still fits the viewport")
 }
 
 func TestInstallAdvancedForm_FitsFieldsAndButtonsAtSmallHeight(t *testing.T) {
@@ -201,6 +196,87 @@ func TestInstallAdvancedForm_FitsFieldsAndButtonsAtSmallHeight(t *testing.T) {
 	assert.Contains(t, view, "Environment variables")
 	assert.Contains(t, view, "Install")
 	assert.Contains(t, view, "Cancel")
+}
+
+func TestInstallAdvancedForm_PrunesEmptiedEnvRows(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{
+		EnvVars: map[string]string{
+			"AAA": "1",
+			"BBB": "2",
+		},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	require.Equal(t, 3, envRowCount(m), "two rows plus the blank one")
+
+	for m.form.Focused() != advancedEnvStart {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	// The row prunes itself the moment both cells are empty.
+	clearEnvRow(&m, advancedEnvStart, len("AAA"), len("1"))
+
+	assert.Equal(t, 2, envRowCount(m), "the emptied row disappears as soon as it is edited")
+	assert.Equal(t, "BBB", m.form.TextField(advancedEnvStart).Value(), "the next row slides up")
+	assert.Equal(t, "2", m.form.TextField(advancedEnvStart+1).Value())
+	assert.Equal(t, advancedEnvStart, m.form.Focused(), "focus follows the row into the emptied slot")
+}
+
+func TestInstallAdvancedForm_KeepsABlankEnvRowAfterPruning(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{
+		EnvVars: map[string]string{"AAA": "1", "BBB": "2"},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+
+	for m.form.Focused() != advancedEnvStart {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	clearEnvRow(&m, advancedEnvStart, len("AAA"), len("1"))
+	for m.form.Focused() != advancedEnvStart {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	clearEnvRow(&m, advancedEnvStart, len("BBB"), len("2"))
+
+	rows := envRowCount(m)
+	require.Equal(t, 1, rows, "every real row pruned, leaving only the blank add row")
+
+	lastKey := m.form.TextField(m.form.ItemCount() - 2)
+	assert.Empty(t, lastKey.Value(), "the trailing row stays blank and ready for a new variable")
+	assert.Empty(t, m.form.TextField(m.form.ItemCount()-1).Value())
+}
+
+func TestInstallAdvancedForm_PrunesEveryEnvRowButTheBlankOne(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{
+		EnvVars: map[string]string{"AAA": "1", "BBB": "2"},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+
+	for m.form.Focused() != advancedEnvStart {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	clearEnvRow(&m, advancedEnvStart, len("AAA"), len("1"))
+	for m.form.Focused() != advancedEnvStart {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	clearEnvRow(&m, advancedEnvStart, len("BBB"), len("2"))
+
+	assert.Equal(t, 1, envRowCount(m), "only the blank add row survives")
+	assert.Nil(t, advancedFormSubmit(t, m).EnvVars)
+}
+
+func TestInstallAdvancedForm_KeepsARowWhoseValueIsStillSet(t *testing.T) {
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{
+		EnvVars: map[string]string{"AAA": "1", "BBB": "2"},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+
+	for m.form.Focused() != advancedEnvStart {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+	for range len("AAA") {
+		m, _ = m.Update(keyPressMsg("backspace"))
+	}
+
+	assert.Equal(t, 3, envRowCount(m), "a row with a value but no key is still a variable")
+	assert.Equal(t, "1", m.form.TextField(advancedEnvStart+1).Value())
 }
 
 func TestInstallAdvancedForm_Cancel(t *testing.T) {
@@ -232,6 +308,34 @@ func TestInstallAdvancedForm_View(t *testing.T) {
 }
 
 // Helpers
+
+// clearEnvRow backspaces over a row's key and value so the form prunes it.
+func clearEnvRow(m *InstallAdvancedForm, keyIdx, keyLen, valueLen int) {
+	for range keyLen {
+		*m, _ = m.Update(keyPressMsg("backspace"))
+	}
+	*m, _ = m.Update(keyPressMsg("tab"))
+	for range valueLen {
+		*m, _ = m.Update(keyPressMsg("backspace"))
+	}
+}
+
+func envRowCount(m InstallAdvancedForm) int {
+	return (m.form.ItemCount() - advancedEnvStart) / 2
+}
+
+func tallAdvancedForm(t *testing.T) InstallAdvancedForm {
+	t.Helper()
+
+	envVars := make(map[string]string, 12)
+	for i := range 12 {
+		envVars[fmt.Sprintf("VAR_%02d", i)] = fmt.Sprintf("%d", i)
+	}
+
+	m := NewInstallAdvancedForm(docker.ApplicationSettings{EnvVars: envVars})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	return m
+}
 
 func advancedFormSubmit(t *testing.T, m InstallAdvancedForm) docker.ApplicationSettings {
 	t.Helper()

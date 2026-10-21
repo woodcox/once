@@ -108,7 +108,9 @@ func tailscaleHelpBoxStyle() lipgloss.Style {
 
 func tailscaleHelpChrome(body string, width int) string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(Colors.Primary)
-	introStyle := lipgloss.NewStyle().Foreground(Colors.Muted).Width(width)
+	// Body text, not a caption: the intro reads as prose, so it keeps the
+	// normal foreground and only wraps to the panel width.
+	introStyle := lipgloss.NewStyle().Width(width)
 
 	parts := []string{
 		titleStyle.Render("Tailscale Service labels (docktail)"),

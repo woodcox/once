@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -199,7 +200,7 @@ func TestInstallTailscaleForm_LabelPreviewFollowsEdits(t *testing.T) {
 func TestInstallTailscaleForm_Cancel(t *testing.T) {
 	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
 
-	for m.form.Focused() != m.form.ItemCount()+1 {
+	for m.form.Focused() != m.form.cancelIndex() {
 		m, _ = m.Update(keyPressMsg("tab"))
 	}
 
@@ -208,6 +209,60 @@ func TestInstallTailscaleForm_Cancel(t *testing.T) {
 
 	_, ok := cmd().(InstallTailscaleBackMsg)
 	assert.True(t, ok)
+}
+
+func TestInstallTailscaleForm_AdvancedSettingsAction(t *testing.T) {
+	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
+	m.SetActionMessage(func() InstallAdvancedMsg {
+		return InstallAdvancedMsg{ImageRef: "example/budget", Hostname: "budget.example.ts.net"}
+	})
+
+	for m.form.Focused() != m.form.actionIndex() {
+		m, _ = m.Update(keyPressMsg("tab"))
+	}
+
+	_, cmd := m.Update(keyPressMsg("enter"))
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	advanced, ok := msg.(InstallAdvancedMsg)
+	require.True(t, ok, "expected InstallAdvancedMsg, got %T", msg)
+	assert.Equal(t, InstallAdvancedFromTailscale, advanced.FromStage, "advanced settings knows where it was opened from")
+	assert.Equal(t, "budget.example.ts.net", advanced.Hostname)
+}
+
+func TestInstallTailscaleForm_RequiredFieldsComeFirst(t *testing.T) {
+	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
+
+	required := []int{
+		installTailscaleServiceField,
+		installTailscalePortField,
+	}
+
+	for i, field := range required {
+		assert.Equal(t, i, field, "required fields come first, in order")
+	}
+
+	optional := []int{
+		installTailscaleDescriptionField,
+		installTailscaleBackendProtocolField,
+		installTailscaleServicePortField,
+		installTailscaleServiceProtocolField,
+		installTailscalePathField,
+		installTailscaleTagsField,
+		installTailscaleNetworkField,
+		installTailscaleProxyProtocolField,
+		installTailscaleDirectField,
+		installTailscaleLabelsField,
+	}
+	for i, field := range optional {
+		assert.Equal(t, len(required)+i, field)
+	}
+
+	view := ansi.Strip(m.View())
+	assert.Less(t, strings.Index(view, "Service name (required)"), strings.Index(view, "Description"))
+	assert.Less(t, strings.Index(view, "Backend port (required)"), strings.Index(view, "Backend protocol"))
+	assert.Less(t, strings.Index(view, "Direct"), strings.Index(view, "Labels"), "the read-only preview stays last")
 }
 
 func TestInstallTailscaleForm_View(t *testing.T) {
@@ -226,6 +281,7 @@ func TestInstallTailscaleForm_View(t *testing.T) {
 	assert.Contains(t, view, "Network")
 	assert.Contains(t, view, "Proxy protocol")
 	assert.Contains(t, view, "Install")
+	assert.Contains(t, view, "Advanced settings")
 }
 
 func TestInstallTailscaleForm_ViewShowsDocktailLabels(t *testing.T) {

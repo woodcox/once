@@ -207,6 +207,24 @@ type FormItem struct {
 	Field       FormField
 }
 
+// markerStyle styles the "(required)"/"(optional)" marker that follows a
+// label. Fields naming a docktail key get the focus orange, matching the F1
+// help panel; every other form keeps the muted border colour.
+var markerStyle = lipgloss.NewStyle().Foreground(Colors.Border)
+
+// tagStyle styles the docktail key a field maps to, in the primary colour so
+// it stands apart from the field name beside it.
+var tagStyle = lipgloss.NewStyle().Foreground(Colors.Primary)
+
+// labelStyle is the style for the field name itself: the focus colour on the
+// Tailscale screens, the default bold label everywhere else.
+func (item FormItem) labelStyle() lipgloss.Style {
+	if item.LabelTag == "" {
+		return Styles.Label
+	}
+	return lipgloss.NewStyle().Bold(true).Foreground(Colors.Focused)
+}
+
 type FormSubmitMsg struct{}
 type FormCancelMsg struct{}
 type FormActionMsg struct{ Msg tea.Msg }
@@ -218,6 +236,7 @@ type Form struct {
 	focused      int
 	width        int
 	height       int
+	wheelSteps   int
 	errorField   int
 	error        string
 	onSubmit     func(f *Form) tea.Cmd
@@ -264,6 +283,10 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 			return f.handleClick(msg.Target)
 		}
 
+	case tea.MouseWheelMsg:
+		f.scrollWheel(msg)
+		return f, nil
+
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, formKeys.Tab):
@@ -309,6 +332,7 @@ func (f Form) View() string {
 		parts = append(parts, "", buttons)
 		return lipgloss.JoinVertical(lipgloss.Left, parts...)
 	}
+	start, end = f.applyWindowStart(start, end)
 
 	parts := make([]string, 0, end-start+3)
 	if start > 0 {
@@ -363,6 +387,39 @@ func (f *Form) AppendItems(items ...FormItem) {
 	f.items = append(f.items, items...)
 }
 
+// PruneItems drops the items the predicate reports as empty, moving focus off
+// a removed item to the one that takes its place (or the last remaining item).
+// Used by forms that build their fields from what the user has typed.
+func (f *Form) PruneItems(empty func(i int, item FormItem) bool) {
+	kept := make([]FormItem, 0, len(f.items))
+	removed := 0
+	focusRemoved := false
+
+	for i, item := range f.items {
+		if !empty(i, item) {
+			kept = append(kept, item)
+			continue
+		}
+		if i <= f.focused {
+			removed++
+			focusRemoved = i == f.focused
+		}
+	}
+
+	f.items = kept
+	switch {
+	case removed == 0:
+		return
+	case focusRemoved:
+		// Focus lands on whatever shifted into the removed slot, or on the
+		// last item when the removed slot was the tail.
+		f.focused = min(f.focused-removed+1, len(f.items))
+	default:
+		f.focused = max(0, f.focused-removed)
+	}
+	f.focusCurrent()
+}
+
 func (f Form) ItemCount() int {
 	return len(f.items)
 }
@@ -396,7 +453,6 @@ func (f Form) Error() string {
 func (f Form) itemBlocks() []string {
 	blocks := make([]string, 0, len(f.items))
 	errorStyle := lipgloss.NewStyle().Foreground(Colors.Error)
-	tagStyle := lipgloss.NewStyle().Foreground(Colors.Border)
 
 	for i, item := range f.items {
 		if _, isStatic := item.Field.(*StaticField); isStatic {
@@ -408,15 +464,15 @@ func (f Form) itemBlocks() []string {
 		requiredMarker := strings.HasSuffix(item.Label, "(required)") || strings.HasSuffix(item.Label, "(optional)")
 		switch {
 		case item.Required && !requiredMarker:
-			label += tagStyle.Render(" (required)")
+			label += markerStyle.Render(" (required)")
 		case !item.Required && item.Field.IsFocusable() && !requiredMarker:
-			label += tagStyle.Render(" (optional)")
+			label += markerStyle.Render(" (optional)")
 		}
 		if item.LabelTag != "" {
-			label += tagStyle.Render(" — ") + tagStyle.Render(item.LabelTag)
+			label += markerStyle.Render(" — ") + tagStyle.Render(item.LabelTag)
 		}
 
-		parts := []string{Styles.Label.Render(label)}
+		parts := []string{item.labelStyle().Render(label)}
 
 		hasError := f.error != "" && i == f.errorField
 		inputStyle := Styles.WithError(Styles.Focus(Styles.Input, f.focused == i), hasError)
@@ -472,46 +528,66 @@ func (f Form) visibleRange(blocks []string) (start, end int, windowed bool) {
 		return 0, n, false
 	}
 
-	budget := f.height - 1
 	focused := min(max(f.focused, 0), n-1)
-	start, end = focused, focused+1
-	used := lipgloss.Height(blocks[focused])
+	start, end, _ = growWindow(blocks, focused, f.height)
+	return start, end, true
+}
 
-	for {
-		grew := false
-
-		if start > 0 {
-			height := used + lipgloss.Height(blocks[start-1])
-			if height+hiddenFieldsLines(start-1, end, n) <= budget {
-				start--
-				used = height
-				grew = true
-			}
-		}
-
-		if end < n {
-			height := used + lipgloss.Height(blocks[end])
-			if height+hiddenFieldsLines(start, end+1, n) <= budget {
-				end++
-				used = height
-				grew = true
-			}
-		}
-
-		if !grew {
-			return start, end, true
-		}
+// scrollWheel nudges the visible window of item blocks without touching focus,
+// so wheeling over a form never jumps the cursor into a hidden field.
+func (f *Form) scrollWheel(msg tea.MouseWheelMsg) {
+	if f.height <= 0 || len(f.items) == 0 {
+		return
 	}
+	if _, _, windowed := f.visibleRange(f.itemBlocks()); !windowed {
+		return
+	}
+
+	switch msg.Button {
+	case tea.MouseWheelUp:
+		f.wheelSteps--
+	case tea.MouseWheelDown:
+		f.wheelSteps++
+	default:
+		return
+	}
+}
+
+// applyWindowStart renders the window the keyboard chose, shifted by however
+// many wheel steps the user has taken since. The focused item is always in the
+// window: the shift is clamped to the slack between the focused item and the
+// window edge.
+func (f Form) applyWindowStart(start, end int) (int, int) {
+	blocks := f.itemBlocks()
+	if f.wheelSteps == 0 {
+		return start, end
+	}
+
+	shift := f.wheelSteps
+	if start+shift > f.focused {
+		shift = f.focused - start
+	}
+	if end+shift <= f.focused {
+		shift = f.focused - end + 1
+	}
+
+	shifted, shiftedEnd, _ := growWindow(blocks, start+shift, f.height)
+	if shiftedEnd-start+shift < end-start || shifted > f.focused {
+		return start, end
+	}
+	return shifted, shiftedEnd
 }
 
 func (f Form) focusNext() (Form, tea.Cmd) {
 	f.blurCurrent()
+	f.wheelSteps = 0
 	f.focused = (f.focused + 1) % f.totalCount()
 	return f.focusToNextFocusable(1)
 }
 
 func (f Form) focusPrev() (Form, tea.Cmd) {
 	f.blurCurrent()
+	f.wheelSteps = 0
 	f.focused = (f.focused - 1 + f.totalCount()) % f.totalCount()
 	return f.focusToNextFocusable(-1)
 }
@@ -650,6 +726,7 @@ func (f Form) focusIndex(i int) (Form, tea.Cmd) {
 	}
 	f.blurCurrent()
 	f.focused = i
+	f.wheelSteps = 0
 	return f, f.focusCurrent()
 }
 
@@ -669,6 +746,47 @@ func (f Form) totalCount() int {
 }
 
 // Helpers
+
+func clamp(v, low, high int) int {
+	return min(max(v, low), high)
+}
+
+// growWindow returns the widest whole-block window around the anchor item that
+// fits in the given height, reserving a line for each hidden-fields indicator.
+func growWindow(blocks []string, anchor, height int) (start, end int, windowed bool) {
+	n := len(blocks)
+	anchor = clamp(anchor, 0, n-1)
+	budget := height - 1
+
+	start, end = anchor, anchor+1
+	used := lipgloss.Height(blocks[anchor])
+
+	for {
+		grew := false
+
+		if start > 0 {
+			grown := used + lipgloss.Height(blocks[start-1])
+			if grown+hiddenFieldsLines(start-1, end, n) <= budget {
+				start--
+				used = grown
+				grew = true
+			}
+		}
+
+		if end < n {
+			grown := used + lipgloss.Height(blocks[end])
+			if grown+hiddenFieldsLines(start, end+1, n) <= budget {
+				end++
+				used = grown
+				grew = true
+			}
+		}
+
+		if !grew {
+			return start, end, true
+		}
+	}
+}
 
 func fieldTarget(i int) string {
 	return "field:" + strconv.Itoa(i)

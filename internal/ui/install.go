@@ -66,6 +66,7 @@ type Install struct {
 	pendingSettings    docker.ApplicationSettings
 	pendingTailscale   docker.TailscaleSettings
 	tailscaleConfirmed bool
+	advancedFrom       InstallAdvancedStage
 }
 
 func NewInstall(ns *docker.Namespace, imageRef string) Install {
@@ -264,9 +265,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		m.pendingImage = msg.ImageRef
 		m.pendingHost = msg.Hostname
 		if m.target == InstallTargetTailnet {
-			if m.tailscaleForm.imageRef != m.pendingImage || m.tailscaleForm.appPort != m.pendingSettings.AppPort {
-				m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
-			}
+			m.prepareTailscaleForm()
 			m.state = installStateTailscale
 			return m, m.initScreenWithSize()
 		}
@@ -285,7 +284,10 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		return m, nil
 
 	case InstallAdvancedMsg:
-		if m.state != installStateHostname {
+		if m.state != installStateHostname && m.state != installStateTailscale {
+			break
+		}
+		if msg.FromStage == InstallAdvancedFromTailscale && m.state != installStateTailscale {
 			break
 		}
 		if msg.Hostname == "" {
@@ -298,6 +300,12 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 		m.pendingImage = msg.ImageRef
 		m.pendingHost = msg.Hostname
+		m.advancedFrom = msg.FromStage
+		if m.advancedFrom == InstallAdvancedFromTailscale {
+			// Remember what the Service screen holds, so a rebuild after the
+			// app port changes doesn't discard it.
+			m.pendingTailscale = m.tailscaleForm.Settings()
+		}
 		if !m.advancedForm.matches(m.pendingSettings) {
 			m.advancedForm = NewInstallAdvancedForm(m.pendingSettings)
 		}
@@ -316,10 +324,16 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingSettings = settings
+		// Reached from the Tailscale Service screen: the Service options the
+		// user already typed stay put, and it is that screen's Install button
+		// that starts the install.
+		if m.advancedFrom == InstallAdvancedFromTailscale {
+			m.prepareTailscaleForm()
+			m.state = installStateTailscale
+			return m, m.initScreenWithSize()
+		}
 		if m.target == InstallTargetTailnet && !m.tailscaleConfirmed {
-			if m.tailscaleForm.imageRef != m.pendingImage || m.tailscaleForm.appPort != m.pendingSettings.AppPort {
-				m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
-			}
+			m.prepareTailscaleForm()
 			m.state = installStateTailscale
 			return m, m.initScreenWithSize()
 		}
@@ -329,7 +343,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		if m.state != installStateAdvanced {
 			break
 		}
-		m.state = installStateHostname
+		m.state = m.advancedReturnState()
 		return m, nil
 
 	case InstallActivityFailedMsg:
@@ -494,7 +508,10 @@ func (m Install) handleBack() (Install, tea.Cmd) {
 		}
 		m.state = installStateWhere
 		return m, nil
-	case installStateAdvanced, installStateTailscale:
+	case installStateAdvanced:
+		m.state = m.advancedReturnState()
+		return m, nil
+	case installStateTailscale:
 		m.state = installStateHostname
 		return m, nil
 	}
@@ -529,7 +546,29 @@ func (m *Install) resetTarget() {
 	m.pendingSettings = docker.ApplicationSettings{}
 	m.pendingTailscale = docker.TailscaleSettings{}
 	m.tailscaleConfirmed = false
+	m.advancedFrom = InstallAdvancedFromHostname
 	m.whereForm = NewInstallWhereForm()
+}
+
+// prepareTailscaleForm rebuilds the Service screen when it is aimed at a
+// different image or app port than the settings collected so far, and always
+// hands its Advanced settings action the hostname collected on the way here.
+func (m *Install) prepareTailscaleForm() {
+	if m.tailscaleForm.imageRef != m.pendingImage || m.tailscaleForm.appPort != m.pendingSettings.AppPort {
+		m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
+	}
+	m.tailscaleForm.SetActionMessage(func() InstallAdvancedMsg {
+		return InstallAdvancedMsg{ImageRef: m.pendingImage, Hostname: m.pendingHost}
+	})
+}
+
+// advancedReturnState is where the advanced settings screen goes back to: the
+// screen that opened it.
+func (m Install) advancedReturnState() installState {
+	if m.advancedFrom == InstallAdvancedFromTailscale {
+		return installStateTailscale
+	}
+	return installStateHostname
 }
 
 func (m Install) imageErrorState() installState {
