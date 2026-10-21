@@ -214,7 +214,7 @@ var markerStyle = lipgloss.NewStyle().Foreground(Colors.Border)
 
 // tagStyle styles the docktail key a field maps to, in the primary colour so
 // it stands apart from the field name beside it.
-var tagStyle = lipgloss.NewStyle().Foreground(Colors.Primary)
+var tagStyle = lipgloss.NewStyle().Foreground(Colors.Muted)
 
 // labelStyle is the style for the field name itself: the focus colour on the
 // Tailscale screens, the default bold label everywhere else.
@@ -222,7 +222,7 @@ func (item FormItem) labelStyle() lipgloss.Style {
 	if item.LabelTag == "" {
 		return Styles.Label
 	}
-	return lipgloss.NewStyle().Bold(true).Foreground(Colors.Focused)
+	return lipgloss.NewStyle().Bold(true)
 }
 
 type FormSubmitMsg struct{}
@@ -463,6 +463,8 @@ func (f Form) itemBlocks() []string {
 		label := item.Label
 		requiredMarker := strings.HasSuffix(item.Label, "(required)") || strings.HasSuffix(item.Label, "(optional)")
 		switch {
+		case item.Label == "":
+			// Unlabelled inputs (the env-var value cell) carry no marker.
 		case item.Required && !requiredMarker:
 			label += markerStyle.Render(" (required)")
 		case !item.Required && item.Field.IsFocusable() && !requiredMarker:
@@ -797,8 +799,12 @@ func isDigitKey(k tea.Key) bool {
 }
 
 func hiddenFieldsIndicator(arrow string, count int) string {
+	noun := "fields"
+	if count == 1 {
+		noun = "field"
+	}
 	return lipgloss.NewStyle().Foreground(Colors.Border).
-		Render(fmt.Sprintf("%s %d more fields", arrow, count))
+		Render(fmt.Sprintf("%s %d more %s", arrow, count, noun))
 }
 
 func hiddenFieldsLines(start, end, total int) int {

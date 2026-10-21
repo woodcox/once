@@ -117,10 +117,11 @@ func renderTailscaleHelpContent() string {
 	return joinLines(lines)
 }
 
-// docktailHelpHeading renders the field name in the focus colour, with its
-// required/optional marker following the same colour for required fields.
+// docktailHelpHeading renders the field name in bold with its
+// required/optional marker following it. The panel stays hue-free so the only
+// colour on screen is the focus ring.
 func docktailHelpHeading(entry docktailField) string {
-	nameStyle := lipgloss.NewStyle().Bold(true).Foreground(Colors.Focused)
+	nameStyle := lipgloss.NewStyle().Bold(true)
 
 	if !entry.required {
 		return nameStyle.Render(entry.title) + lipgloss.NewStyle().Foreground(Colors.Muted).Render(" (optional)")
@@ -128,16 +129,10 @@ func docktailHelpHeading(entry docktailField) string {
 	return nameStyle.Render(entry.title + " (required)")
 }
 
-// docktailHelpNote renders a "Default:"/"Accepted:" line with the label muted
-// and the value in the normal foreground, so the two read differently.
+// docktailHelpNote renders a "Default:"/"Accepted:" reference line dimmed and
+// italic, so it recedes behind the description without losing its value.
 func docktailHelpNote(line string) string {
-	label, value, found := strings.Cut(line, ": ")
-	if !found {
-		return line
-	}
-
-	muted := lipgloss.NewStyle().Foreground(Colors.Muted)
-	return muted.Render(label+": ") + value
+	return lipgloss.NewStyle().Foreground(Colors.Muted).Italic(true).Render(line)
 }
 
 func joinLines(lines []string) string {
@@ -154,5 +149,5 @@ func joinLines(lines []string) string {
 // Helpers
 
 func docktailHelpKey(key string) string {
-	return lipgloss.NewStyle().Foreground(Colors.Primary).Render(key)
+	return lipgloss.NewStyle().Foreground(Colors.Muted).Render(key)
 }
