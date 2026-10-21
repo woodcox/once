@@ -22,7 +22,7 @@ const (
 var docktailFieldDescriptions = map[docktailField]string{
 	docktailFieldServiceName:     "Tailscale Service name. Defaults to the application name, sanitised to a DNS label.",
 	docktailFieldDescription:     "Shown in the Tailscale admin console. Synced only when docktail has API credentials.",
-	docktailFieldBackendPort:     "Container port docktail proxies to. Required to mean something — blank uses the application port.",
+	docktailFieldBackendPort:     "Container port docktail proxies to. Leave blank to use the application port.",
 	docktailFieldBackendProtocol: "Backend protocol. Blank = https on port 443, otherwise http. One of http, https, https+insecure, tcp, tls-terminated-tcp.",
 	docktailFieldServicePort:     "Port Tailscale listens on. Blank = 443 for HTTPS, 80 for HTTP, 80 for TCP.",
 	docktailFieldServiceProtocol: "Tailscale-facing protocol. Blank is derived from the chosen port. One of http, https, tcp, tls-terminated-tcp.",
