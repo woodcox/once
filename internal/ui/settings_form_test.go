@@ -384,8 +384,8 @@ func TestSettingsFormTailscale_ViewShowsDocktailLabels(t *testing.T) {
 
 	assert.Contains(t, view, "Service name (required)")
 	assert.Contains(t, view, "Backend port (required)")
-	assert.Contains(t, view, "Defaults to the application name")
-	assert.Contains(t, view, "loopback only")
+	assert.NotContains(t, view, "Defaults to the application name", "field description moved to the help panel")
+	assert.NotContains(t, view, "loopback only", "field description moved to the help panel")
 	assert.Contains(t, view, "Publishes this app as a Tailscale Service")
 }
 
@@ -463,6 +463,30 @@ func TestSettingsFormTailscale_Cancel(t *testing.T) {
 	msg := cmd()
 	_, ok := msg.(SettingsSectionCancelMsg)
 	assert.True(t, ok, "expected SettingsSectionCancelMsg, got %T", msg)
+}
+
+func TestSettingsFormTailscale_HelpPanelF1AndEsc(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget"})
+	updateSettingsForm(&form, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	form = updateTailscaleKey(form, keyPressMsg("f1"))
+	require.NotNil(t, form.panel, "F1 opens the panel")
+
+	panel := *form.panel
+	_, cmd := panel.Update(keyPressMsg("esc"))
+	require.NotNil(t, cmd)
+	closeMsg := cmd().(TailscaleHelpCloseMsg)
+	form = updateTailscaleKey(form, closeMsg)
+	assert.Nil(t, form.panel, "Esc dismisses the panel without submitting the section")
+
+	form = updateTailscaleKey(form, keyPressMsg("f1"))
+	form = updateTailscaleKey(form, keyPressMsg("f1"))
+	assert.Nil(t, form.panel, "F1 toggles the panel")
+}
+
+func updateTailscaleKey(form SettingsFormTailscale, msg tea.Msg) SettingsFormTailscale {
+	result, _ := form.Update(msg)
+	return result.(SettingsFormTailscale)
 }
 
 func TestSettingsFormEmail_InitialState(t *testing.T) {

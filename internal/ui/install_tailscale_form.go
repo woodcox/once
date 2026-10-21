@@ -3,11 +3,18 @@ package ui
 import (
 	"strconv"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/basecamp/once/internal/docker"
 )
+
+var installTailscaleFormKeys = struct {
+	Help key.Binding
+}{
+	Help: WithHelp(NewKeyBinding("f1"), "F1", "labels"),
+}
 
 const (
 	installTailscaleServiceField = iota
@@ -32,6 +39,9 @@ type InstallTailscaleBackMsg struct{}
 
 type InstallTailscaleForm struct {
 	form     Form
+	panel    *TailscaleHelpPanel
+	width    int
+	height   int
 	imageRef string
 	appPort  int
 }
@@ -91,17 +101,17 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 		// they are the only fields users really must understand, but blank
 		// values still resolve to a working default, so the form lets the
 		// user submit without filling them in.
-		{Label: "Service name (required)", LabelTag: "docktail.service.name", Field: serviceField, Description: docktailFieldDescriptions[docktailFieldServiceName]},
-		{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField, Description: docktailFieldDescriptions[docktailFieldDescription]},
-		{Label: "Backend port (required)", LabelTag: "docktail.service.port", Field: portField, Description: docktailFieldDescriptions[docktailFieldBackendPort]},
-		{Label: "Backend protocol", LabelTag: "docktail.service.protocol", Field: backendProtocolField, Description: docktailFieldDescriptions[docktailFieldBackendProtocol]},
-		{Label: "Service port", LabelTag: "docktail.service.service-port", Field: servicePortField, Description: docktailFieldDescriptions[docktailFieldServicePort]},
-		{Label: "Service protocol", LabelTag: "docktail.service.service-protocol", Field: serviceProtocolField, Description: docktailFieldDescriptions[docktailFieldServiceProtocol]},
-		{Label: "Service path", LabelTag: "docktail.service.path", Field: pathField, Description: docktailFieldDescriptions[docktailFieldPath]},
-		{Label: "Service tags", LabelTag: "docktail.tags", Field: tagsField, Description: docktailFieldDescriptions[docktailFieldTags]},
-		{Label: "Network", LabelTag: "docktail.service.network", Field: networkField, Description: docktailFieldDescriptions[docktailFieldNetwork]},
-		{Label: "Proxy protocol", LabelTag: "docktail.service.proxy-protocol", Field: proxyProtocolField, Description: docktailFieldDescriptions[docktailFieldProxyProtocol]},
-		{Label: "Direct", LabelTag: "docktail.service.direct", Field: directField, Description: docktailFieldDescriptions[docktailFieldDirect]},
+		{Label: "Service name (required)", LabelTag: "docktail.service.name", Field: serviceField},
+		{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField},
+		{Label: "Backend port (required)", LabelTag: "docktail.service.port", Field: portField},
+		{Label: "Backend protocol", LabelTag: "docktail.service.protocol", Field: backendProtocolField},
+		{Label: "Service port", LabelTag: "docktail.service.service-port", Field: servicePortField},
+		{Label: "Service protocol", LabelTag: "docktail.service.service-protocol", Field: serviceProtocolField},
+		{Label: "Service path", LabelTag: "docktail.service.path", Field: pathField},
+		{Label: "Service tags", LabelTag: "docktail.tags", Field: tagsField},
+		{Label: "Network", LabelTag: "docktail.service.network", Field: networkField},
+		{Label: "Proxy protocol", LabelTag: "docktail.service.proxy-protocol", Field: proxyProtocolField},
+		{Label: "Direct", LabelTag: "docktail.service.direct", Field: directField},
 		{Field: labelsField},
 	}
 
@@ -133,8 +143,19 @@ func (m InstallTailscaleForm) Init() tea.Cmd {
 
 func (m InstallTailscaleForm) Update(msg tea.Msg) (InstallTailscaleForm, tea.Cmd) {
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = wsm.Width
+		m.height = wsm.Height
+		m.panel = nil
 		wsm.Height = formViewportHeight(wsm.Height)
 		msg = wsm
+	}
+
+	if m.panel != nil {
+		return m.updateWithPanel(msg)
+	}
+
+	if kp, ok := msg.(tea.KeyPressMsg); ok && key.Matches(kp, installTailscaleFormKeys.Help) {
+		return m.openHelp(), nil
 	}
 
 	var cmd tea.Cmd
@@ -143,9 +164,42 @@ func (m InstallTailscaleForm) Update(msg tea.Msg) (InstallTailscaleForm, tea.Cmd
 }
 
 func (m InstallTailscaleForm) View() string {
+	if m.panel != nil {
+		return m.panel.View()
+	}
+
 	title := Styles.Title.Render("Tailscale Service")
 	heading := Styles.MutedText.Render("Publishes this app as a Tailscale Service by adding docktail.* labels to the container.")
 	return lipgloss.JoinVertical(lipgloss.Center, title, "", heading, "", m.form.View())
+}
+
+// Private
+
+func (m InstallTailscaleForm) openHelp() InstallTailscaleForm {
+	panel := NewTailscaleHelpPanel(m.width, m.height)
+	m.panel = &panel
+	return m
+}
+
+func (m InstallTailscaleForm) updateWithPanel(msg tea.Msg) (InstallTailscaleForm, tea.Cmd) {
+	switch msg := msg.(type) {
+	case TailscaleHelpCloseMsg:
+		m.panel = nil
+		return m, nil
+
+	case tea.KeyPressMsg:
+		if key.Matches(msg, installTailscaleFormKeys.Help) {
+			m.panel = nil
+			return m, nil
+		}
+		var cmd tea.Cmd
+		panel := *m.panel
+		panel, cmd = panel.Update(msg)
+		m.panel = &panel
+		return m, cmd
+	}
+
+	return m, nil
 }
 
 // Helpers

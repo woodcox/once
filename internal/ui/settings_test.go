@@ -187,6 +187,48 @@ func TestSettings_TailscaleSectionIsWired(t *testing.T) {
 	assert.Equal(t, "Tailscale", s.section.Title())
 }
 
+func TestSettings_TailscaleSectionAdvertisesF1(t *testing.T) {
+	ns, _ := docker.NewNamespace("test")
+	app := &docker.Application{
+		Settings: docker.ApplicationSettings{
+			Name:  "budget",
+			Host:  "budget.example.com",
+			Image: "example/app:latest",
+		},
+	}
+
+	tailscale := NewSettings(ns, app, SettingsSectionTailscale)
+	other := NewSettings(ns, app, SettingsSectionApplication)
+
+	assert.Equal(t, "f1", tailscale.help.bindings[0].Keys()[0])
+	assert.Equal(t, "labels", tailscale.help.bindings[0].Help().Desc)
+
+	var sawLabels bool
+	for _, b := range other.help.bindings {
+		if b.Help().Desc == "labels" {
+			sawLabels = true
+			break
+		}
+	}
+	assert.False(t, sawLabels, "non-Tailscale sections must not advertise the labels panel")
+}
+
+func TestSettings_TailscalePanelEscDoesNotNavigate(t *testing.T) {
+	s, _ := updateSettings(testSettingsWithTailscale(t), tea.WindowSizeMsg{Width: 80, Height: 24})
+	s, _ = updateSettings(s, keyPressMsg("f1"))
+
+	require.NotNil(t, tailscalePanel(t, s).panel, "F1 opens the Tailscale panel")
+
+	s, cmd := updateSettings(s, keyPressMsg("esc"))
+	require.NotNil(t, cmd)
+	closeMsg, ok := cmd().(TailscaleHelpCloseMsg)
+	require.True(t, ok, "Esc on the panel produces a close command, not a dashboard navigation")
+
+	s, navCmd := updateSettings(s, closeMsg)
+	assert.Nil(t, tailscalePanel(t, s).panel, "Esc dismisses the panel")
+	assert.Nil(t, navCmd, "the close command must not navigate away")
+}
+
 // Helpers
 
 func testSettings() Settings {
@@ -201,6 +243,27 @@ func testSettings() Settings {
 	}
 
 	return NewSettings(ns, app, SettingsSectionApplication)
+}
+
+func testSettingsWithTailscale(t *testing.T) Settings {
+	t.Helper()
+	ns, _ := docker.NewNamespace("test")
+	app := &docker.Application{
+		Running: true,
+		Settings: docker.ApplicationSettings{
+			Name:  "test-app",
+			Host:  "app.example.com",
+			Image: "ghcr.io/basecamp/once-campfire:latest",
+		},
+	}
+	return NewSettings(ns, app, SettingsSectionTailscale)
+}
+
+func tailscalePanel(t *testing.T, s Settings) SettingsFormTailscale {
+	t.Helper()
+	section, ok := s.section.(SettingsFormTailscale)
+	require.True(t, ok, "expected the Tailscale section")
+	return section
 }
 
 func updateSettings(s Settings, msg tea.Msg) (Settings, tea.Cmd) {

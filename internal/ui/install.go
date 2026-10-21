@@ -120,6 +120,23 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 	}
 
+	if m.state == installStateTailscale && m.tailscaleForm.panel != nil {
+		switch msg := msg.(type) {
+		case TailscaleHelpCloseMsg:
+			var cmd tea.Cmd
+			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
+			return m, cmd
+		case tea.WindowSizeMsg:
+			var cmd tea.Cmd
+			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
+			return m, cmd
+		case tea.KeyPressMsg, MouseEvent, tea.MouseWheelMsg:
+			var cmd tea.Cmd
+			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
+			return m, cmd
+		}
+	}
+
 	m.updateHelpBindings()
 
 	switch msg := msg.(type) {
@@ -640,9 +657,13 @@ func (m Install) writeOverlayRow(sb *strings.Builder, row, left, width int, line
 func (m *Install) updateHelpBindings() {
 	if _, content := m.helpForState(); content != "" {
 		m.help.SetBindings([]key.Binding{installKeys.Help, installKeys.Back})
-	} else {
-		m.help.SetBindings([]key.Binding{installKeys.Back})
+		return
 	}
+	if m.state == installStateTailscale {
+		m.help.SetBindings([]key.Binding{installTailscaleFormKeys.Help, installKeys.Back})
+		return
+	}
+	m.help.SetBindings([]key.Binding{installKeys.Back})
 }
 
 func (m Install) helpForState() (string, string) {

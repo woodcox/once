@@ -1,6 +1,10 @@
 package ui
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+)
 
 func keyPressMsg(s string) tea.KeyPressMsg {
 	k := tea.Key{Text: s}
@@ -8,4 +12,11 @@ func keyPressMsg(s string) tea.KeyPressMsg {
 		k.Code = r[0]
 	}
 	return tea.KeyPressMsg(k)
+}
+
+func lineCountAt(view string) int {
+	if view == "" {
+		return 0
+	}
+	return strings.Count(view, "\n") + 1
 }

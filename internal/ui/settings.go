@@ -31,9 +31,11 @@ type SettingsSectionCancelMsg struct{}
 var settingsKeys = struct {
 	Back  key.Binding
 	Enter key.Binding
+	Help  key.Binding
 }{
 	Back:  WithHelp(NewKeyBinding("esc"), "esc", "back"),
 	Enter: NewKeyBinding("enter"),
+	Help:  WithHelp(NewKeyBinding("f1"), "F1", "labels"),
 }
 
 type settingsState int
@@ -100,7 +102,7 @@ func NewSettings(ns *docker.Namespace, app *docker.Application, sectionType Sett
 	}
 
 	h := NewHelp()
-	h.SetBindings([]key.Binding{settingsKeys.Back})
+	h.SetBindings(settingsHelpBindings(sectionType))
 	return Settings{
 		namespace:   ns,
 		app:         app,
@@ -157,6 +159,12 @@ func (m Settings) Update(msg tea.Msg) (Component, tea.Cmd) {
 			if m.err != nil {
 				m.err = nil
 			}
+			if tailscalePanelOpen(m.section) {
+				var cmd tea.Cmd
+				m.section, cmd = m.section.Update(msg)
+				cmds = append(cmds, cmd)
+				return m, tea.Batch(cmds...)
+			}
 			if key.Matches(msg, settingsKeys.Back) {
 				return m, m.navigateToDashboard()
 			}
@@ -164,6 +172,13 @@ func (m Settings) Update(msg tea.Msg) (Component, tea.Cmd) {
 
 	case SettingsSectionCancelMsg:
 		return m, m.navigateToDashboard()
+
+	case TailscaleHelpCloseMsg:
+		if m.state == settingsStateForm {
+			var cmd tea.Cmd
+			m.section, cmd = m.section.Update(msg)
+			return m, cmd
+		}
 
 	case SettingsSectionSubmitMsg:
 		return m.handleFormSubmit(msg)
@@ -304,7 +319,22 @@ func (m Settings) runDeploy() tea.Cmd {
 	}
 }
 
+func tailscalePanelOpen(section SettingsSection) bool {
+	tailscale, ok := section.(SettingsFormTailscale)
+	if !ok {
+		return false
+	}
+	return tailscale.panel != nil
+}
+
 // Helpers
+
+func settingsHelpBindings(section SettingsSectionType) []key.Binding {
+	if section == SettingsSectionTailscale {
+		return []key.Binding{settingsKeys.Help, settingsKeys.Back}
+	}
+	return []key.Binding{settingsKeys.Back}
+}
 
 func formatOperationStatus(label string, result *docker.OperationResult) string {
 	if result == nil {

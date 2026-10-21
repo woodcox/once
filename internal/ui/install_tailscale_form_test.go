@@ -255,11 +255,11 @@ func TestInstallTailscaleForm_ViewShowsFieldDescriptions(t *testing.T) {
 	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
 	view := ansi.Strip(m.View())
 
-	assert.Contains(t, view, "Defaults to the application name", "Service name describes its default")
-	assert.Contains(t, view, "Tailscale admin console", "Description describes where it appears")
-	assert.Contains(t, view, "Leave blank to use the application port", "Backend port describes the empty-means-app-port rule")
-	assert.Contains(t, view, "443 for HTTPS", "Service port describes its default")
-	assert.Contains(t, view, "loopback only", "Direct explains what unchecking does")
+	assert.NotContains(t, view, "Defaults to the application name", "Service name's description moved to the help panel")
+	assert.NotContains(t, view, "Tailscale admin console", "Description's description moved to the help panel")
+	assert.NotContains(t, view, "Leave blank to use the application port", "Backend port's description moved to the help panel")
+	assert.NotContains(t, view, "443 for HTTPS", "Service port's description moved to the help panel")
+	assert.NotContains(t, view, "loopback only", "Direct's description moved to the help panel")
 }
 
 // Helpers

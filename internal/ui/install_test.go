@@ -458,6 +458,39 @@ func TestInstall_HelpKeyShownOnHostnameScreenNonFirstRun(t *testing.T) {
 	assert.Contains(t, view, "help")
 }
 
+func TestInstall_HelpKeyShownOnTailscaleScreen(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetTailnet)
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "campfire.example.com"})
+
+	require.Equal(t, installStateTailscale, m.state)
+	view := ansi.Strip(m.View())
+	assert.Contains(t, view, "F1", "the Tailscale screen advertises F1")
+	assert.Contains(t, view, "labels", "the help description is labels for the Tailscale screen")
+
+	m, _ = updateInstall(m, keyPressMsg("f1"))
+	assert.NotNil(t, m.tailscaleForm.panel, "F1 opens the panel inside the Tailscale form")
+	overlay := ansi.Strip(m.View())
+	assert.Contains(t, overlay, "Tailscale Service labels (docktail)")
+	assert.NotContains(t, overlay, "Install", "the form's submit button is hidden behind the panel")
+
+	m, _ = updateInstall(m, keyPressMsg("f1"))
+	assert.Nil(t, m.tailscaleForm.panel, "F1 toggles the panel closed again")
+
+	m, _ = updateInstall(m, keyPressMsg("f1"))
+	require.NotNil(t, m.tailscaleForm.panel, "F1 reopens the panel")
+
+	m, cmd := updateInstall(m, keyPressMsg("esc"))
+	require.NotNil(t, cmd, "Esc on the panel returns a close command")
+	closeMsg, ok := cmd().(TailscaleHelpCloseMsg)
+	require.True(t, ok)
+	m, _ = updateInstall(m, closeMsg)
+	assert.Nil(t, m.tailscaleForm.panel, "Esc dismisses the panel")
+	assert.Equal(t, installStateTailscale, m.state, "Esc did not navigate back")
+}
+
 func TestOverlayBlockContainsRow(t *testing.T) {
 	block := newOverlayBlock("hello\nworld", 5, 10)
 	assert.Equal(t, 5, block.width) // "hello" and "world" are both 5 chars

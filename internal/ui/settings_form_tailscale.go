@@ -3,6 +3,7 @@ package ui
 import (
 	"strconv"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -28,6 +29,9 @@ const (
 type SettingsFormTailscale struct {
 	settingsFormBase
 	settings docker.ApplicationSettings
+	panel    *TailscaleHelpPanel
+	width    int
+	height   int
 }
 
 func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormTailscale {
@@ -85,17 +89,17 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 			// Service name and Backend port are labelled "(required)"
 			// because they are the only fields users really must understand,
 			// but blank values still resolve to a working default.
-			FormItem{Label: "Service name (required)", LabelTag: "docktail.service.name", Field: serviceField, Description: docktailFieldDescriptions[docktailFieldServiceName]},
-			FormItem{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField, Description: docktailFieldDescriptions[docktailFieldDescription]},
-			FormItem{Label: "Backend port (required)", LabelTag: "docktail.service.port", Field: portField, Description: docktailFieldDescriptions[docktailFieldBackendPort]},
-			FormItem{Label: "Backend protocol", LabelTag: "docktail.service.protocol", Field: backendProtocolField, Description: docktailFieldDescriptions[docktailFieldBackendProtocol]},
-			FormItem{Label: "Service port", LabelTag: "docktail.service.service-port", Field: servicePortField, Description: docktailFieldDescriptions[docktailFieldServicePort]},
-			FormItem{Label: "Service protocol", LabelTag: "docktail.service.service-protocol", Field: serviceProtocolField, Description: docktailFieldDescriptions[docktailFieldServiceProtocol]},
-			FormItem{Label: "Service path", LabelTag: "docktail.service.path", Field: pathField, Description: docktailFieldDescriptions[docktailFieldPath]},
-			FormItem{Label: "Service tags", LabelTag: "docktail.tags", Field: tagsField, Description: docktailFieldDescriptions[docktailFieldTags]},
-			FormItem{Label: "Network", LabelTag: "docktail.service.network", Field: networkField, Description: docktailFieldDescriptions[docktailFieldNetwork]},
-			FormItem{Label: "Proxy protocol", LabelTag: "docktail.service.proxy-protocol", Field: proxyProtocolField, Description: docktailFieldDescriptions[docktailFieldProxyProtocol]},
-			FormItem{Label: "Direct", LabelTag: "docktail.service.direct", Field: directField, Description: docktailFieldDescriptions[docktailFieldDirect]},
+			FormItem{Label: "Service name (required)", LabelTag: "docktail.service.name", Field: serviceField},
+			FormItem{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField},
+			FormItem{Label: "Backend port (required)", LabelTag: "docktail.service.port", Field: portField},
+			FormItem{Label: "Backend protocol", LabelTag: "docktail.service.protocol", Field: backendProtocolField},
+			FormItem{Label: "Service port", LabelTag: "docktail.service.service-port", Field: servicePortField},
+			FormItem{Label: "Service protocol", LabelTag: "docktail.service.service-protocol", Field: serviceProtocolField},
+			FormItem{Label: "Service path", LabelTag: "docktail.service.path", Field: pathField},
+			FormItem{Label: "Service tags", LabelTag: "docktail.tags", Field: tagsField},
+			FormItem{Label: "Network", LabelTag: "docktail.service.network", Field: networkField},
+			FormItem{Label: "Proxy protocol", LabelTag: "docktail.service.proxy-protocol", Field: proxyProtocolField},
+			FormItem{Label: "Direct", LabelTag: "docktail.service.direct", Field: directField},
 			FormItem{Field: labelsField},
 		),
 	}
@@ -124,12 +128,31 @@ func NewSettingsFormTailscale(settings docker.ApplicationSettings) SettingsFormT
 }
 
 func (m SettingsFormTailscale) Update(msg tea.Msg) (SettingsSection, tea.Cmd) {
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = wsm.Width
+		m.height = wsm.Height
+		m.panel = nil
+		wsm.Height = formViewportHeight(wsm.Height)
+		msg = wsm
+	}
+
+	if m.panel != nil {
+		return m.updateWithPanel(msg)
+	}
+
+	if kp, ok := msg.(tea.KeyPressMsg); ok && key.Matches(kp, settingsKeys.Help) {
+		return m.openHelp(), nil
+	}
+
 	var cmd tea.Cmd
 	m.settingsFormBase, cmd = m.update(msg)
 	return m, cmd
 }
 
 func (m SettingsFormTailscale) View() string {
+	if m.panel != nil {
+		return m.panel.View()
+	}
 	heading := Styles.MutedText.Render("Publishes this app as a Tailscale Service by adding docktail.* labels to the container.")
 	return lipgloss.JoinVertical(lipgloss.Center, heading, "", m.form.View())
 }
@@ -140,6 +163,33 @@ func (m SettingsFormTailscale) applicationSettings(f *Form) docker.ApplicationSe
 	settings := m.settings
 	settings.Tailscale = tailscaleSettings(f, m.settings.Tailscale)
 	return settings
+}
+
+func (m SettingsFormTailscale) openHelp() SettingsFormTailscale {
+	panel := NewTailscaleHelpPanel(m.width, m.height)
+	m.panel = &panel
+	return m
+}
+
+func (m SettingsFormTailscale) updateWithPanel(msg tea.Msg) (SettingsSection, tea.Cmd) {
+	switch msg := msg.(type) {
+	case TailscaleHelpCloseMsg:
+		m.panel = nil
+		return m, nil
+
+	case tea.KeyPressMsg:
+		if key.Matches(msg, settingsKeys.Help) {
+			m.panel = nil
+			return m, nil
+		}
+		var cmd tea.Cmd
+		panel := *m.panel
+		panel, cmd = panel.Update(msg)
+		m.panel = &panel
+		return m, cmd
+	}
+
+	return m, nil
 }
 
 // Helpers
