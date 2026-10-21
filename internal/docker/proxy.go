@@ -180,8 +180,25 @@ func (p *Proxy) Exec(ctx context.Context, cmd []string) error {
 	return err
 }
 
+// Remove deletes the app's route from the proxy. kamal-proxy exits non-zero
+// when the service was never registered, which is the normal case for an app
+// that has always been served through docktail, so that response is success.
 func (p *Proxy) Remove(ctx context.Context, appName string) error {
-	return p.Exec(ctx, []string{"kamal-proxy", "remove", appName})
+	return removeProxyService(ctx, appName, p.Exec)
+}
+
+// Helpers
+
+func removeProxyService(ctx context.Context, appName string, exec func(context.Context, []string) error) error {
+	err := exec(ctx, []string{"kamal-proxy", "remove", appName})
+	if isProxyServiceNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+func isProxyServiceNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "service not found")
 }
 
 func (p *Proxy) Deploy(ctx context.Context, opts DeployOptions) error {
