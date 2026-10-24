@@ -161,7 +161,8 @@ func (m *Doctor) rebuildContent() {
 		return
 	}
 
-	m.viewport.SetContent(m.reportContent())
+	// Wrap here: the viewport's own soft wrap breaks mid-word.
+	m.viewport.SetContent(lipgloss.NewStyle().Width(m.viewport.Width()).Render(m.reportContent()))
 }
 
 func (m Doctor) reportContent() string {
