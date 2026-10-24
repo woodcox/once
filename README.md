@@ -169,6 +169,15 @@ ONCE doesn't register a docktail app with its proxy, so it's not reachable on th
 
 After deploying, ONCE waits up to 30 seconds for `tailscale serve status` to show the Service. If it doesn't appear -- docktail isn't running, the node has no tags, or the Service is still awaiting approval in the admin console -- ONCE asks whether to retry the check or roll the application back. In non-interactive use it warns and keeps the application, because docktail reconciles continuously and picks it up once that's fixed.
 
+If a Service doesn't work once it's deployed, `once doctor` will tell you why. It checks that the container is running, that the application answers its health check, that the `docktail.*` labels match your settings, that the backend port the Service advertises is really listening in the container, that docktail is running, and that the Service points at the current container. It only inspects: it never changes anything.
+
+```sh
+once doctor                        # check every deployed application
+once doctor myapp.example.com      # check just one, by hostname
+```
+
+It exits non-zero when a check fails, so it can be used in a script.
+
 ## Making a ONCE-compatible application
 
 Fundamentally, ONCE works with any web application that:
