@@ -27,7 +27,6 @@ var dashboardKeys = struct {
 	NewApp   key.Binding
 	Logs     key.Binding
 	Details  key.Binding
-	Diagnose key.Binding
 	Quit     key.Binding
 }{
 	Up:       WithHelp(NewKeyBinding("up", "k"), "↑/k", "up"),
@@ -37,7 +36,6 @@ var dashboardKeys = struct {
 	NewApp:   WithHelp(NewKeyBinding("n"), "n", "new app"),
 	Logs:     WithHelp(NewKeyBinding("g"), "g", "logs"),
 	Details:  WithHelp(NewKeyBinding("d"), "d", "toggle details"),
-	Diagnose: WithHelp(NewKeyBinding("i"), "i", "diagnose"),
 	Quit:     WithHelp(NewKeyBinding("esc"), "esc", "quit"),
 }
 
@@ -170,10 +168,6 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.selectPanel(m.selectedIndex)
 			return m, nil
 		}
-		if key.Matches(msg, dashboardKeys.Diagnose) && len(m.apps) > 0 {
-			return m, func() tea.Msg { return NavigateToDoctorMsg{App: m.apps[m.selectedIndex]} }
-		}
-
 	case SettingsMenuCloseMsg:
 		m.overlay = nil
 
@@ -292,7 +286,7 @@ func (m Dashboard) helpBindings() []key.Binding {
 		return []key.Binding{
 			dashboardKeys.Up, dashboardKeys.Down, dashboardKeys.Actions,
 			dashboardKeys.Settings, dashboardKeys.Logs, dashboardKeys.Details,
-			dashboardKeys.Diagnose, dashboardKeys.NewApp, dashboardKeys.Quit,
+			dashboardKeys.NewApp, dashboardKeys.Quit,
 		}
 	}
 	return []key.Binding{dashboardKeys.NewApp, dashboardKeys.Quit}
