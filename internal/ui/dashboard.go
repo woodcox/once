@@ -192,6 +192,8 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.updateViewportSize()
 			m.rebuildViewportContent()
 			return m, tea.Batch(m.progress.Init(), m.runStartStop(app))
+		case ActionsMenuDiagnose:
+			return m, func() tea.Msg { return NavigateToDoctorMsg{App: msg.app} }
 		case ActionsMenuRemove:
 			return m, func() tea.Msg { return NavigateToRemoveMsg{App: msg.app} }
 		}

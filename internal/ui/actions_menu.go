@@ -21,6 +21,7 @@ type ActionsMenuAction int
 
 const (
 	ActionsMenuStartStop ActionsMenuAction = iota
+	ActionsMenuDiagnose
 	ActionsMenuRemove
 )
 
@@ -42,6 +43,7 @@ func NewActionsMenu(app *docker.Application) ActionsMenu {
 		app: app,
 		menu: NewMenu(
 			MenuItem{Label: startStopLabel, Key: int(ActionsMenuStartStop), Shortcut: WithHelp(NewKeyBinding("s"), "s", "")},
+			MenuItem{Label: "Diagnose", Key: int(ActionsMenuDiagnose), Shortcut: WithHelp(NewKeyBinding("d"), "d", "")},
 			MenuItem{Label: "Remove", Key: int(ActionsMenuRemove), Shortcut: WithHelp(NewKeyBinding("r"), "r", "")},
 		),
 		help: h,
