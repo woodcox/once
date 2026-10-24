@@ -358,3 +358,17 @@ func healthyCards() [3]MetricCard {
 		NewTrafficCard([]float64{10}, []float64{0}, ChartScale{max: 100}, 0, trafficWarningPct, trafficErrorPct),
 	}
 }
+
+func TestRenderStateInfoReflectsContainerState(t *testing.T) {
+	state := func(s string, running bool, exit int) *docker.Application {
+		return &docker.Application{State: s, Running: running, ExitCode: exit}
+	}
+
+	assert.Contains(t, renderStateInfo(state("running", true, 0), false), "running")
+	assert.Contains(t, renderStateInfo(state("restarting", true, 0), false), "restarting")
+	assert.Contains(t, renderStateInfo(state("exited", false, 1), false), "crashed")
+	assert.Contains(t, renderStateInfo(state("exited", false, 0), false), "stopped")
+	assert.Contains(t, renderStateInfo(state("paused", false, 0), false), "paused")
+	assert.Contains(t, renderStateInfo(state("running", true, 0), true), "stopping")
+	assert.Contains(t, renderStateInfo(state("exited", false, 0), true), "starting")
+}

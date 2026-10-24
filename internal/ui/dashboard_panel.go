@@ -359,16 +359,26 @@ func fitIssues(texts []string, width int) (shown []string, more int) {
 func renderStateInfo(app *docker.Application, toggling bool) string {
 	var status string
 	var statusColor color.Color
-	if toggling && app.Running {
+	switch {
+	case toggling && app.Running:
 		status = "stopping..."
 		statusColor = Colors.LightText
-	} else if toggling {
+	case toggling:
 		status = "starting..."
 		statusColor = Colors.LightText
-	} else if app.Running {
+	case app.State == "restarting":
+		status = "restarting"
+		statusColor = Colors.Warning
+	case !app.Running && app.ExitCode != 0:
+		status = "crashed"
+		statusColor = Colors.Error
+	case app.State == "paused":
+		status = "paused"
+		statusColor = Colors.Warning
+	case app.Running:
 		status = "running"
 		statusColor = Colors.Success
-	} else {
+	default:
 		status = "stopped"
 		statusColor = Colors.LightText
 	}
