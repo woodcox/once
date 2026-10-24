@@ -39,6 +39,12 @@ type InstallFormSubmitMsg struct {
 	Hostname string
 }
 
+// installTailnetWarningsMsg carries the result of the tailnet readiness
+// check that runs when the user picks "Tailnet only".
+type installTailnetWarningsMsg struct {
+	warnings []string
+}
+
 type Install struct {
 	namespace          *docker.Namespace
 	width, height      int
@@ -67,6 +73,7 @@ type Install struct {
 	pendingTailscale   docker.TailscaleSettings
 	tailscaleConfirmed bool
 	advancedFrom       InstallAdvancedStage
+	tailnetWarnings    []string
 }
 
 func NewInstall(ns *docker.Namespace, imageRef string) Install {
@@ -240,8 +247,20 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.hostnameForm = NewInstallHostnameForm(m.pendingImage, "", msg.Target)
 		}
 		m.target = msg.Target
+		m.tailnetWarnings = nil
 		m.state = installStateHostname
-		return m, m.initScreenWithSize()
+		cmds := []tea.Cmd{m.initScreenWithSize()}
+		if msg.Target == InstallTargetTailnet {
+			// The check touches Docker and may run the tailscale CLI, so it
+			// happens in the background: the user can carry on typing while
+			// it runs.
+			cmds = append(cmds, m.checkTailnetReadiness())
+		}
+		return m, tea.Batch(cmds...)
+
+	case installTailnetWarningsMsg:
+		m.tailnetWarnings = msg.warnings
+		return m, nil
 
 	case InstallImageBackMsg:
 		m.state = installStateAppList
@@ -382,6 +401,9 @@ func (m Install) View() string {
 			errorLine := lipgloss.NewStyle().Foreground(Colors.Error).Width(m.width).Align(lipgloss.Center).Render(docker.ErrorMessage(m.err))
 			formView = lipgloss.JoinVertical(lipgloss.Center, errorLine, "", formView)
 		}
+		if banner := m.warningBanner(); banner != "" {
+			formView = lipgloss.JoinVertical(lipgloss.Center, banner, "", formView)
+		}
 		contentView = formView
 	}
 
@@ -413,6 +435,27 @@ func (m Install) View() string {
 }
 
 // Private
+
+// warningBanner renders the tailnet readiness warnings. They sit above the
+// tailnet name screen: advice the user can act on, not a gate on the install.
+func (m Install) warningBanner() string {
+	if m.state != installStateHostname || m.target != InstallTargetTailnet {
+		return ""
+	}
+	if len(m.tailnetWarnings) == 0 {
+		return ""
+	}
+
+	style := lipgloss.NewStyle().Foreground(Colors.Warning)
+	width := max(m.width-4, 20)
+
+	var lines []string
+	for _, warning := range m.tailnetWarnings {
+		lines = append(lines, style.Render("⚠ "+warning))
+	}
+
+	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
+}
 
 func (m Install) initCurrentScreen() tea.Cmd {
 	switch m.state {
@@ -548,6 +591,18 @@ func (m *Install) resetTarget() {
 	m.tailscaleConfirmed = false
 	m.advancedFrom = InstallAdvancedFromHostname
 	m.whereForm = NewInstallWhereForm()
+	m.tailnetWarnings = nil
+}
+
+// checkTailnetReadiness looks for the host-level problems that would keep
+// this host from advertising the app as a Tailscale Service. It runs in the
+// background, and its warnings are advice rather than a gate.
+func (m *Install) checkTailnetReadiness() tea.Cmd {
+	ns := m.namespace
+
+	return func() tea.Msg {
+		return installTailnetWarningsMsg{warnings: ns.TailnetReadiness(context.Background())}
+	}
 }
 
 // prepareTailscaleForm rebuilds the Service screen when it is aimed at a

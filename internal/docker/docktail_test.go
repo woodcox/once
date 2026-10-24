@@ -298,6 +298,74 @@ func TestDocktailWarningsNoneWhenDisabled(t *testing.T) {
 	assert.Nil(t, app.DocktailWarnings(context.Background()))
 }
 
+func TestTailnetReadiness(t *testing.T) {
+	ready := TailnetProbes{
+		TailscaleCLIInstalled: func() bool { return true },
+		DocktailRunning:       func(context.Context) (bool, error) { return true, nil },
+		NodeTags:              func(context.Context) ([]string, error) { return []string{"tag:server"}, nil },
+	}
+
+	ns := &Namespace{name: "test"}
+
+	t.Run("a ready host has no warnings", func(t *testing.T) {
+		assert.Empty(t, ns.tailnetReadiness(context.Background(), ready))
+	})
+
+	t.Run("a missing tailscale CLI is reported", func(t *testing.T) {
+		probes := ready
+		probes.TailscaleCLIInstalled = func() bool { return false }
+
+		warnings := ns.tailnetReadiness(context.Background(), probes)
+
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "tailscale CLI isn't installed")
+	})
+
+	t.Run("a docktail container that isn't running is reported", func(t *testing.T) {
+		probes := ready
+		probes.DocktailRunning = func(context.Context) (bool, error) { return false, nil }
+
+		warnings := ns.tailnetReadiness(context.Background(), probes)
+
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "no running docktail container")
+	})
+
+	t.Run("an untagged node is reported", func(t *testing.T) {
+		probes := ready
+		probes.NodeTags = func(context.Context) ([]string, error) { return nil, nil }
+
+		warnings := ns.tailnetReadiness(context.Background(), probes)
+
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "no tags")
+	})
+
+	t.Run("every problem is reported", func(t *testing.T) {
+		probes := TailnetProbes{
+			TailscaleCLIInstalled: func() bool { return false },
+			DocktailRunning:       func(context.Context) (bool, error) { return false, nil },
+			NodeTags:              func(context.Context) ([]string, error) { return nil, nil },
+		}
+
+		assert.Len(t, ns.tailnetReadiness(context.Background(), probes), 3)
+	})
+
+	t.Run("a probe that can't run is left alone", func(t *testing.T) {
+		warnings := ns.tailnetReadiness(context.Background(), TailnetProbes{})
+
+		assert.Empty(t, warnings)
+	})
+}
+
+func TestTailnetCLIInstalled(t *testing.T) {
+	original := tailscaleCommand
+	tailscaleCommand = filepath.Join(t.TempDir(), "missing-tailscale")
+	t.Cleanup(func() { tailscaleCommand = original })
+
+	assert.False(t, tailscaleCLIInstalled())
+}
+
 func TestImageIsDocktail(t *testing.T) {
 	assert.True(t, imageIsDocktail("ghcr.io/marvinvr/docktail:latest"))
 	assert.True(t, imageIsDocktail("docktail"))

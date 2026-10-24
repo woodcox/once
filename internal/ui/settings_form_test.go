@@ -391,6 +391,12 @@ func TestSettingsFormTailscale_ViewShowsDocktailLabels(t *testing.T) {
 	assert.Contains(t, view, "Publishes this app as a Tailscale Service")
 }
 
+func TestSettingsFormTailscale_HeadingMatchesTheInstallScreen(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget"})
+
+	assert.Contains(t, ansi.Strip(form.View()), tailscaleServicesHeading)
+}
+
 func TestSettingsFormTailscale_RequiredFieldsComeFirst(t *testing.T) {
 	form := NewSettingsFormTailscale(docker.ApplicationSettings{
 		Name:      "budget",

@@ -92,6 +92,19 @@ type Application struct {
 	Settings     ApplicationSettings
 	Running      bool
 	RunningSince time.Time
+
+	// State is the container's Docker state: created, running, paused,
+	// restarting, removing, exited or dead. It's empty when the container
+	// isn't known.
+	State string
+	// RestartCount is how many times Docker has restarted the container.
+	RestartCount int
+	// ExitCode is the container's exit code, meaningful once it has exited.
+	ExitCode int
+	// Health is the container's health check status (healthy, unhealthy,
+	// starting), empty when the container has no health check or its
+	// health isn't known.
+	Health string
 }
 
 func NewApplication(ns *Namespace, settings ApplicationSettings) *Application {
@@ -322,6 +335,27 @@ func (a *Application) Destroy(ctx context.Context, destroyVolumes bool) error {
 }
 
 // Private
+
+// applyInspect copies the details of an inspected container onto the
+// application: its start time, restart count, exit code and health. Values
+// the inspect doesn't carry are left alone.
+func (a *Application) applyInspect(inspected container.InspectResponse) {
+	a.RestartCount = inspected.RestartCount
+
+	if inspected.State == nil {
+		return
+	}
+
+	if t, err := time.Parse(time.RFC3339Nano, inspected.State.StartedAt); err == nil {
+		a.RunningSince = t
+	}
+
+	a.ExitCode = inspected.State.ExitCode
+
+	if inspected.State.Health != nil {
+		a.Health = string(inspected.State.Health.Status)
+	}
+}
 
 func (a *Application) saveOperationResult(ctx context.Context, record func(*State)) {
 	state, err := a.namespace.LoadState(ctx)

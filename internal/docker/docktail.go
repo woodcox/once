@@ -120,20 +120,73 @@ func (a *Application) DocktailWarnings(ctx context.Context) []string {
 		return nil
 	}
 
-	var warnings []string
+	return a.namespace.TailnetReadiness(ctx)
+}
 
-	if running, err := a.namespace.runningDocktailContainer(ctx); err == nil && !running {
-		warnings = append(warnings, "no running docktail container found on this Docker host, so this app won't be advertised as a Tailscale Service until one is started")
+// TailnetProbes holds the read-only probes the tailnet readiness check
+// uses. Every probe is a function so the checks can be exercised without
+// Docker or a live tailscaled. A nil probe means the check can't run and is
+// reported as passed.
+type TailnetProbes struct {
+	// TailscaleCLIInstalled reports whether the tailscale CLI is installed.
+	TailscaleCLIInstalled func() bool
+	// DocktailRunning reports whether a docktail container is running on
+	// this Docker host.
+	DocktailRunning func(ctx context.Context) (bool, error)
+	// NodeTags returns the tags on this node.
+	NodeTags func(ctx context.Context) ([]string, error)
+}
+
+// TailnetProbesFor returns the probes that inspect the real Docker host and
+// the local tailscale CLI.
+func TailnetProbesFor(ns *Namespace) TailnetProbes {
+	return TailnetProbes{
+		TailscaleCLIInstalled: tailscaleCLIInstalled,
+		DocktailRunning:       ns.runningDocktailContainer,
+		NodeTags:              tailscaleSelfTags,
+	}
+}
+
+// TailnetReadiness reports the host-level problems that would keep this
+// Docker host from advertising apps as Tailscale Services. They are advisory:
+// docktail keeps reconciling, so an install that starts before the host is
+// ready can still succeed.
+//
+// The checks are the ones a tailnet install depends on: the tailscale CLI is
+// installed, a docktail container is running, and the node is tagged.
+func (n *Namespace) TailnetReadiness(ctx context.Context) []string {
+	if n == nil {
+		return nil
 	}
 
-	if tags, err := tailscaleSelfTags(ctx); err == nil && len(tags) == 0 {
-		warnings = append(warnings, "the Tailscale node has no tags, and docktail needs a tagged node (for example tag:server) to create Tailscale Services")
+	return n.tailnetReadiness(ctx, TailnetProbesFor(n))
+}
+
+// Private
+
+// tailnetReadiness reports the host-level problems found by the given
+// probes.
+func (n *Namespace) tailnetReadiness(ctx context.Context, probes TailnetProbes) []string {
+	var warnings []string
+
+	if probes.TailscaleCLIInstalled != nil && !probes.TailscaleCLIInstalled() {
+		warnings = append(warnings, "the tailscale CLI isn't installed on this host, so ONCE can't check or manage Tailscale Services")
+	}
+
+	if probes.DocktailRunning != nil {
+		if running, err := probes.DocktailRunning(ctx); err == nil && !running {
+			warnings = append(warnings, "no running docktail container found on this Docker host, so apps won't be advertised as Tailscale Services until one is started")
+		}
+	}
+
+	if probes.NodeTags != nil {
+		if tags, err := probes.NodeTags(ctx); err == nil && len(tags) == 0 {
+			warnings = append(warnings, "the Tailscale node has no tags, and docktail needs a tagged node (for example tag:server) to create Tailscale Services")
+		}
 	}
 
 	return warnings
 }
-
-// Private
 
 func (a *Application) warnDocktailVerification(warning string) {
 	slog.Warn("Docktail verification", "app", a.Settings.Name, "warning", warning)
@@ -227,6 +280,12 @@ func parseTailscaleServeStatus(data []byte, serviceName string, port int, expect
 }
 
 // Helpers
+
+// tailscaleCLIInstalled reports whether the tailscale CLI is on the path.
+func tailscaleCLIInstalled() bool {
+	_, err := exec.LookPath(tailscaleCommand)
+	return err == nil
+}
 
 func tailscaleServeStatusOutput(ctx context.Context) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, tailscaleCommandTimeout)

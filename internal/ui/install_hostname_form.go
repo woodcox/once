@@ -121,7 +121,7 @@ func (m InstallHostnameForm) Hostname() string {
 func tailnetNamePlaceholder(imageRef string) string {
 	appName := docker.SanitizeDNSLabel(docker.NameFromImageRef(imageRef))
 	if appName == "" {
-		return "app.example.ts.net"
+		return "app.your-tailnet.ts.net"
 	}
-	return appName + ".example.ts.net"
+	return appName + ".your-tailnet.ts.net"
 }

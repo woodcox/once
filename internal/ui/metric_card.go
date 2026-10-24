@@ -26,6 +26,10 @@ type MetricThresholds struct {
 }
 
 func (t MetricThresholds) Health(pct float64) HealthState {
+	if t.Warning <= 0 && t.Error <= 0 {
+		return healthNormal
+	}
+
 	switch {
 	case pct >= t.Error:
 		return healthError
@@ -52,6 +56,9 @@ type MetricCard struct {
 	// Traffic-specific fields
 	isTraffic bool
 	errData   []float64
+
+	// issueLabel is how the card names itself in the panel's issue line.
+	issueLabel string
 }
 
 func NewMetricCard(title string, data []float64, scale ChartScale, unit UnitType, limitLabel string, warning, error float64) MetricCard {
@@ -69,6 +76,7 @@ func NewMetricCard(title string, data []float64, scale ChartScale, unit UnitType
 		limitLabel: limitLabel,
 		healthPct:  current / scaleMax * 100,
 		thresholds: MetricThresholds{Warning: warning, Error: error},
+		issueLabel: metricIssueLabel(title),
 	}
 }
 
@@ -88,6 +96,7 @@ func NewTrafficCard(reqData, errData []float64, scale ChartScale, errPct float64
 		thresholds: MetricThresholds{Warning: warning, Error: error},
 		isTraffic:  true,
 		errData:    errData,
+		issueLabel: "error rate",
 	}
 }
 
@@ -155,4 +164,17 @@ func (c MetricCard) trafficLines(inner int) (barStr, valueLine, detailLine strin
 		detailLine = " 0% errors"
 	}
 	return
+}
+
+// Helpers
+
+// metricIssueLabel is how a metric card names itself in the panel's issue
+// line. Acronyms keep their capitals; everything else reads in lower case.
+func metricIssueLabel(title string) string {
+	switch title {
+	case "CPU":
+		return title
+	default:
+		return strings.ToLower(title)
+	}
 }

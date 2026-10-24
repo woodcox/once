@@ -155,8 +155,9 @@ func (m SettingsFormTailscale) View() string {
 	if m.panel != nil {
 		return m.panel.View()
 	}
+	title := Styles.Title.Render(tailscaleServicesHeading)
 	heading := Styles.MutedText.Render("Publishes this app as a Tailscale Service by adding docktail.* labels to the container.")
-	return lipgloss.JoinVertical(lipgloss.Center, heading, "", m.form.View())
+	return lipgloss.JoinVertical(lipgloss.Center, title, "", heading, "", m.form.View())
 }
 
 // Private

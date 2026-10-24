@@ -98,7 +98,7 @@ func TestInstallHostnameForm_TailnetTargetAsksForATailnetName(t *testing.T) {
 	view := ansi.Strip(form.View())
 
 	assert.Contains(t, view, "Tailnet name")
-	assert.Contains(t, view, "once-campfire.example.ts.net")
+	assert.Contains(t, view, "once-campfire.your-tailnet.ts.net")
 	assert.Contains(t, view, "Tailnet settings", "submit label names the next screen")
 	assert.NotContains(t, view, "Install")
 	assert.NotContains(t, view, "Next")
@@ -127,8 +127,8 @@ func TestInstallHostnameForm_PublicKeepsInstallAndAdvancedSettings(t *testing.T)
 }
 
 func TestInstallHostnameForm_TailnetPlaceholderIsGeneric(t *testing.T) {
-	assert.Equal(t, "once-campfire.example.ts.net", tailnetNamePlaceholder("ghcr.io/basecamp/once-campfire:latest"))
-	assert.Equal(t, "app.example.ts.net", tailnetNamePlaceholder(""), "no image ref leaves the generic placeholder")
+	assert.Equal(t, "once-campfire.your-tailnet.ts.net", tailnetNamePlaceholder("ghcr.io/basecamp/once-campfire:latest"))
+	assert.Equal(t, "app.your-tailnet.ts.net", tailnetNamePlaceholder(""), "no image ref leaves the generic placeholder")
 
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "", InstallTargetTailnet)
 	view := ansi.Strip(form.View())

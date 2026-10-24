@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -857,6 +858,98 @@ func newTestNamespace(apps ...docker.ApplicationSettings) *docker.Namespace {
 	return ns
 }
 
+func TestInstall_TailnetWarningsShowOnTheHostnameScreen(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetTailnet)
+	require.Equal(t, installStateHostname, m.state)
+
+	m, _ = updateInstall(m, installTailnetWarningsMsg{warnings: []string{
+		"the tailscale CLI isn't installed on this host",
+	}})
+
+	view := ansi.Strip(m.View())
+	assert.Contains(t, view, "⚠ the tailscale CLI isn't installed on this host")
+	assert.Less(t, strings.Index(view, "⚠"), strings.Index(view, "Tailnet name"), "the banner sits above the form")
+}
+
+func TestInstall_TailnetWarningsDoNotShowForPublicInstalls(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetPublic)
+	require.Equal(t, installStateHostname, m.state)
+
+	m, _ = updateInstall(m, installTailnetWarningsMsg{warnings: []string{
+		"the tailscale CLI isn't installed on this host",
+	}})
+
+	view := ansi.Strip(m.View())
+	assert.NotContains(t, view, "⚠")
+}
+
+func TestInstall_TailnetWarningsDoNotBlockTheInstall(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetTailnet)
+
+	m, _ = updateInstall(m, installTailnetWarningsMsg{warnings: []string{
+		"the tailscale CLI isn't installed on this host",
+	}})
+
+	m, _ = updateInstall(m, InstallFormSubmitMsg{ImageRef: "ghcr.io/basecamp/once-campfire", Hostname: "campfire.example.ts.net"})
+
+	require.Equal(t, installStateTailscale, m.state, "the install carries on despite the warnings")
+}
+
+func TestInstall_TailnetReadinessRunsInTheBackground(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+
+	_, cmd := updateInstall(m, InstallWhereSelectedMsg{Target: InstallTargetTailnet})
+	require.NotNil(t, cmd, "picking Tailnet only starts the readiness check")
+
+	msg := installTailnetWarningsFrom(t, cmd)
+	assert.Empty(t, msg.warnings, "a healthy host has nothing to warn about")
+}
+
+func TestInstall_TailnetReadinessIsNotRunForPublicInstalls(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+
+	_, cmd := updateInstall(m, InstallWhereSelectedMsg{Target: InstallTargetPublic})
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, batched := range batch {
+			_, isReadiness := batched().(installTailnetWarningsMsg)
+			assert.False(t, isReadiness, "a public install needs no tailnet check")
+		}
+		return
+	}
+
+	_, isReadiness := msg.(installTailnetWarningsMsg)
+	assert.False(t, isReadiness, "a public install needs no tailnet check")
+}
+
+func TestInstall_TailnetWarningsAreClearedWhenTheTargetChanges(t *testing.T) {
+	m := newTestInstall()
+	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	m, _ = updateInstall(m, InstallAppSelectedMsg{ImageRef: "ghcr.io/basecamp/once-campfire"})
+	installSelectTarget(t, &m, InstallTargetTailnet)
+
+	m, _ = updateInstall(m, installTailnetWarningsMsg{warnings: []string{"a warning"}})
+
+	m, _ = updateInstall(m, InstallWhereSelectedMsg{Target: InstallTargetPublic})
+
+	assert.Empty(t, m.tailnetWarnings)
+}
+
 func TestInstall_BackNavigationPreservesHostnameInput(t *testing.T) {
 	m := newTestInstall()
 	m, _ = updateInstall(m, tea.WindowSizeMsg{Width: 80, Height: 40})
@@ -972,6 +1065,27 @@ func TestInstall_StaleSubmitIsIgnored(t *testing.T) {
 func updateInstall(m Install, msg tea.Msg) (Install, tea.Cmd) {
 	comp, cmd := m.Update(msg)
 	return comp.(Install), cmd
+}
+
+// installTailnetWarningsFrom pulls the readiness result out of a batched
+// command, so a test can check what the background check reported.
+func installTailnetWarningsFrom(t *testing.T, cmd tea.Cmd) installTailnetWarningsMsg {
+	t.Helper()
+
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, batched := range batch {
+			result, ok := batched().(installTailnetWarningsMsg)
+			if ok {
+				return result
+			}
+		}
+		t.Fatalf("no readiness result in the batched commands")
+	}
+
+	result, ok := msg.(installTailnetWarningsMsg)
+	require.True(t, ok, "expected installTailnetWarningsMsg, got %T", msg)
+	return result
 }
 
 func hostnameFormTypeTextOnInstall(m *Install, text string) {

@@ -269,7 +269,7 @@ func TestInstallTailscaleForm_View(t *testing.T) {
 	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
 	view := ansi.Strip(m.View())
 
-	assert.Contains(t, view, "Tailscale Service")
+	assert.Contains(t, view, "Tailscale Services using docktail")
 	assert.Contains(t, view, "Service name (required)")
 	assert.Contains(t, view, "Description")
 	assert.Contains(t, view, "Backend port (required)")

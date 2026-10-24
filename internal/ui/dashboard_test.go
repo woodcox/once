@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -155,6 +156,57 @@ func TestDashboard_ActionsMenuDiagnose(t *testing.T) {
 	navMsg, ok := msg.(NavigateToDoctorMsg)
 	require.True(t, ok, "expected NavigateToDoctorMsg, got %T", msg)
 	assert.Equal(t, d.apps[0], navMsg.App)
+}
+
+func TestDashboard_DiagnoseOpensOnI(t *testing.T) {
+	d := testDashboard(3)
+	d.width = 80
+	d.height = 40
+	d.updateViewportSize()
+	d.rebuildViewportContent()
+
+	d, _ = updateDashboard(d, keyPressMsg("down"))
+	require.Equal(t, 1, d.selectedIndex)
+
+	_, cmd := updateDashboard(d, keyPressMsg("i"))
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	navMsg, ok := msg.(NavigateToDoctorMsg)
+	require.True(t, ok, "expected NavigateToDoctorMsg, got %T", msg)
+	assert.Equal(t, d.apps[1], navMsg.App)
+}
+
+func TestDashboard_DiagnoseDoesNotOpenWithoutApps(t *testing.T) {
+	d := testDashboard(0)
+
+	_, cmd := updateDashboard(d, keyPressMsg("i"))
+	assert.Nil(t, cmd)
+}
+
+func TestDashboard_DiagnoseHelpText(t *testing.T) {
+	d := testDashboard(1)
+
+	assert.Contains(t, ansi.Strip(d.help.View()), "i diagnose")
+}
+
+func TestDashboard_ScrollsWithSeveralApps(t *testing.T) {
+	d := testDashboard(5)
+	d.width = 80
+	d.height = 24
+	d.updateViewportSize()
+	d.rebuildViewportContent()
+
+	for range 4 {
+		d, _ = updateDashboard(d, keyPressMsg("down"))
+	}
+
+	assert.Equal(t, 4, d.selectedIndex)
+	assert.Greater(t, d.viewport.YOffset(), 0, "the viewport scrolled to keep the selection visible")
+
+	d, _ = updateDashboard(d, keyPressMsg("up"))
+	d, _ = updateDashboard(d, keyPressMsg("up"))
+	assert.Equal(t, 2, d.selectedIndex)
 }
 
 func TestDashboard_OldStartStopKeyRemoved(t *testing.T) {

@@ -16,6 +16,10 @@ var installTailscaleFormKeys = struct {
 	Help: WithHelp(NewKeyBinding("f1"), "F1", "label help"),
 }
 
+// tailscaleServicesHeading names the screen wherever it appears: at install
+// time and in Settings.
+const tailscaleServicesHeading = "Tailscale Services using docktail"
+
 // The Service screen asks for the fields users must understand first, then the
 // optional ones, with the read-only Labels preview last.
 const (
@@ -180,7 +184,7 @@ func (m InstallTailscaleForm) View() string {
 		return m.panel.View()
 	}
 
-	title := Styles.Title.Render("Tailscale Service")
+	title := Styles.Title.Render(tailscaleServicesHeading)
 	heading := Styles.MutedText.Render("Publishes this app as a Tailscale Service by adding docktail.* labels to the container.")
 	return lipgloss.JoinVertical(lipgloss.Center, title, "", heading, "", m.form.View())
 }
