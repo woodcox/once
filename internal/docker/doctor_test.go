@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -46,16 +50,12 @@ func healthyDocktailSettings() ApplicationSettings {
 
 // healthyDocktailContainer describes the container of a healthy docktail app.
 func healthyDocktailContainer() DoctorContainer {
+	settings := healthyDocktailSettings()
 	return DoctorContainer{
-		Name:  "once-app-writebook.069443-780dc3",
-		State: "running",
-		IP:    "172.18.0.4",
-		Labels: map[string]string{
-			docktailLabelEnable:      "true",
-			docktailLabelName:        "write",
-			docktailLabelPort:        "80",
-			docktailLabelServicePort: "443",
-		},
+		Name:   "once-app-writebook.069443-780dc3",
+		State:  "running",
+		IP:     "172.18.0.4",
+		Labels: settings.DocktailLabels(),
 	}
 }
 
@@ -269,6 +269,64 @@ func TestDoctorLabelsMissing(t *testing.T) {
 	assert.Contains(t, labels.Message, "docktail.service.name is missing")
 }
 
+func TestDoctorLabelsCatchProtocolMismatch(t *testing.T) {
+	fixture := newDoctorFixture(t, healthyDocktailSettings())
+
+	probes := healthyProbes()
+	probes.AppContainer = func(ctx context.Context, appName string) (DoctorContainer, error) {
+		container := healthyDocktailContainer()
+		container.Labels[docktailLabelProtocol] = "https"
+		return container, nil
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	labels := checkByLabel(t, result.Reports[0], "docktail labels")
+	assert.Equal(t, DoctorFail, labels.Status)
+	assert.Contains(t, labels.Message, "docktail.service.protocol")
+}
+
+func TestDoctorLabelsCatchDirectMismatch(t *testing.T) {
+	settings := healthyDocktailSettings()
+	direct := false
+	settings.Tailscale.Direct = &direct
+
+	fixture := newDoctorFixture(t, settings)
+
+	probes := healthyProbes()
+	probes.AppContainer = func(ctx context.Context, appName string) (DoctorContainer, error) {
+		container := healthyDocktailContainer()
+		container.Labels[docktailLabelDirect] = "true"
+		return container, nil
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	labels := checkByLabel(t, result.Reports[0], "docktail labels")
+	assert.Equal(t, DoctorFail, labels.Status)
+	assert.Contains(t, labels.Message, "docktail.service.direct")
+}
+
+func TestDoctorLabelsCatchTagsMismatch(t *testing.T) {
+	fixture := newDoctorFixture(t, healthyDocktailSettings())
+
+	probes := healthyProbes()
+	probes.AppContainer = func(ctx context.Context, appName string) (DoctorContainer, error) {
+		container := healthyDocktailContainer()
+		container.Labels[docktailLabelTags] = "tag:server"
+		return container, nil
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	labels := checkByLabel(t, result.Reports[0], "docktail labels")
+	assert.Equal(t, DoctorFail, labels.Status)
+	assert.Contains(t, labels.Message, "docktail.tags")
+}
+
 func TestDoctorNonDocktailApp(t *testing.T) {
 	fixture := newDoctorFixture(t, ApplicationSettings{
 		Name:    "blog",
@@ -358,6 +416,20 @@ func TestDoctorDocktailContainerNotRunning(t *testing.T) {
 	assert.NotEmpty(t, docktail.Remedy)
 }
 
+func TestDoctorDocktailContainerFoundByImage(t *testing.T) {
+	fixture := newDoctorFixture(t, healthyDocktailSettings())
+
+	probes := healthyProbes()
+	probes.Containers = func(ctx context.Context) ([]DoctorContainer, error) {
+		return []DoctorContainer{{Name: "project-docktail-1", State: "running", Image: "ghcr.io/marvinvr/docktail:latest"}}, nil
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	assert.Equal(t, DoctorPass, checkByLabel(t, result.Reports[0], "docktail container").Status)
+}
+
 func TestDoctorMultipleAppsWithOneFailing(t *testing.T) {
 	fixture := newDoctorFixture(t,
 		healthyDocktailSettings(),
@@ -441,6 +513,95 @@ func TestDoctorAppPortAnswersNonSuccess(t *testing.T) {
 	assert.Equal(t, DoctorFail, appPort.Status)
 	assert.Contains(t, appPort.Message, "503")
 	assert.NotEmpty(t, appPort.Remedy)
+}
+
+func TestDoctorAppPortHTTPSBackend(t *testing.T) {
+	settings := healthyDocktailSettings()
+	settings.Tailscale.Protocol = "https"
+	settings.AppPort = 443
+
+	fixture := newDoctorFixture(t, settings)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	host, portStr, err := net.SplitHostPort(strings.TrimPrefix(server.URL, "https://"))
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+
+	probes := healthyProbes()
+	probes.AppContainer = func(ctx context.Context, appName string) (DoctorContainer, error) {
+		container := healthyDocktailContainer()
+		container.IP = host
+		container.State = "running"
+		return container, nil
+	}
+
+	// Override the settings in the namespace so the app reports the server's port.
+	app := fixture.namespace.Applications()[0]
+	app.Settings.AppPort = port
+	app.Settings.Tailscale.Protocol = "https"
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	appPort := checkByLabel(t, result.Reports[0], "app port")
+	assert.Equal(t, DoctorPass, appPort.Status)
+}
+
+func TestDoctorAppPortTCPBackend(t *testing.T) {
+	settings := healthyDocktailSettings()
+	settings.Tailscale.Protocol = "tcp"
+	settings.AppPort = 5432
+
+	fixture := newDoctorFixture(t, settings)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	probes := healthyProbes()
+	probes.AppContainer = func(ctx context.Context, appName string) (DoctorContainer, error) {
+		container := healthyDocktailContainer()
+		container.IP = "127.0.0.1"
+		container.State = "running"
+		return container, nil
+	}
+	probes.TCPDial = func(ctx context.Context, address string) error {
+		_, err := net.DialTimeout("tcp", address, doctorDialTimeout)
+		return err
+	}
+
+	app := fixture.namespace.Applications()[0]
+	app.Settings.AppPort = port
+	app.Settings.Tailscale.Protocol = "tcp"
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	appPort := checkByLabel(t, result.Reports[0], "app port")
+	assert.Equal(t, DoctorPass, appPort.Status)
+}
+
+func TestDoctorAppPortNothingListens(t *testing.T) {
+	fixture := newDoctorFixture(t, healthyDocktailSettings())
+
+	probes := healthyProbes()
+	probes.HTTPGet = func(ctx context.Context, url string) (int, error) {
+		return 0, errors.New("connection refused")
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	appPort := checkByLabel(t, result.Reports[0], "app port")
+	assert.Equal(t, DoctorFail, appPort.Status)
+	assert.Contains(t, appPort.Message, "did not answer")
 }
 
 func TestDoctorURLUsesMagicDNSSuffix(t *testing.T) {
@@ -566,4 +727,70 @@ func TestDoctorIndirectModeAcceptsANonContainerHost(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, DoctorPass, checkByLabel(t, result.Reports[0], "advertised").Status)
+}
+
+func TestDoctorTCPServicesAreAdvertised(t *testing.T) {
+	settings := healthyDocktailSettings()
+	settings.Tailscale.ServiceProtocol = "tcp"
+	settings.Tailscale.ServicePort = 5432
+	settings.Tailscale.Port = 5432
+
+	fixture := newDoctorFixture(t, settings)
+
+	probes := healthyProbes()
+	probes.ServeStatus = func(ctx context.Context) ([]byte, error) {
+		return []byte(`{"Services":{"svc:write":{"TCP":{"5432":{"TCPForward":"172.18.0.4:5432"}}}}}`), nil
+	}
+	probes.TCPDial = func(ctx context.Context, address string) error {
+		return nil
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	advertised := checkByLabel(t, result.Reports[0], "advertised")
+	assert.Equal(t, DoctorPass, advertised.Status)
+	assert.Contains(t, advertised.Message, "tcp://172.18.0.4:5432")
+}
+
+func TestDoctorTCPServicesFailWithWrongForwardPort(t *testing.T) {
+	settings := healthyDocktailSettings()
+	settings.Tailscale.ServiceProtocol = "tcp"
+	settings.Tailscale.ServicePort = 5432
+	settings.Tailscale.Port = 5432
+
+	fixture := newDoctorFixture(t, settings)
+
+	probes := healthyProbes()
+	probes.ServeStatus = func(ctx context.Context) ([]byte, error) {
+		return []byte(`{"Services":{"svc:write":{"TCP":{"5432":{"TCPForward":"172.18.0.4:5433"}}}}}`), nil
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	advertised := checkByLabel(t, result.Reports[0], "advertised")
+	assert.Equal(t, DoctorFail, advertised.Status)
+	assert.Contains(t, advertised.Message, "5433")
+}
+
+func TestDoctorTCPServicesFailWithWrongForwardHost(t *testing.T) {
+	settings := healthyDocktailSettings()
+	settings.Tailscale.ServiceProtocol = "tcp"
+	settings.Tailscale.ServicePort = 5432
+	settings.Tailscale.Port = 5432
+
+	fixture := newDoctorFixture(t, settings)
+
+	probes := healthyProbes()
+	probes.ServeStatus = func(ctx context.Context) ([]byte, error) {
+		return []byte(`{"Services":{"svc:write":{"TCP":{"5432":{"TCPForward":"172.18.0.9:5432"}}}}}`), nil
+	}
+
+	result, err := Doctor(context.Background(), fixture.namespace, "", probes)
+	require.NoError(t, err)
+
+	advertised := checkByLabel(t, result.Reports[0], "advertised")
+	assert.Equal(t, DoctorFail, advertised.Status)
+	assert.Contains(t, advertised.Message, "172.18.0.9")
 }

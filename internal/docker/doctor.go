@@ -73,6 +73,7 @@ type DoctorContainer struct {
 	Name   string
 	State  string
 	IP     string
+	Image  string
 	Labels map[string]string
 }
 
@@ -239,10 +240,9 @@ func doctorAppPortCheck(ctx context.Context, app *Application, container DoctorC
 
 	port := app.Settings.EffectiveAppPort()
 	path := app.Settings.EffectiveHealthCheckPath()
+	protocol := app.Settings.EffectiveProtocol()
 
-	url := fmt.Sprintf("http://%s%s", net.JoinHostPort(container.IP, strconv.Itoa(port)), path)
-
-	status, err := doctorHTTPGet(ctx, probes, url)
+	err := probeBackend(ctx, protocol, container.IP, port, path, doctorProbeTimeout, probes.HTTPGet, probes.TCPDial)
 	if err != nil {
 		return DoctorCheck{
 			Label:   "app port",
@@ -252,24 +252,16 @@ func doctorAppPortCheck(ctx context.Context, app *Application, container DoctorC
 		}
 	}
 
-	if status < 200 || status > 299 {
-		return DoctorCheck{
-			Label:   "app port",
-			Status:  DoctorFail,
-			Message: fmt.Sprintf("%d answered %s with %d", port, path, status),
-			Remedy:  fmt.Sprintf("make sure the app serves %s on port %d with a 2xx response", path, port),
-		}
-	}
-
 	return DoctorCheck{
 		Label:   "app port",
 		Status:  DoctorPass,
-		Message: fmt.Sprintf("%d answers %s with %d", port, path, status),
+		Message: fmt.Sprintf("%d answers %s", port, path),
 	}
 }
 
-// doctorLabelCheck compares the docktail labels on the container with the
-// app's settings.
+// doctorLabelCheck compares the docktail labels ONCE emits for this app with
+// the labels on the container. Only keys that ONCE would set are checked;
+// keys the user deliberately left unset are skipped.
 func doctorLabelCheck(app *Application, container DoctorContainer, found bool) DoctorCheck {
 	if !found {
 		return DoctorCheck{
@@ -279,12 +271,7 @@ func doctorLabelCheck(app *Application, container DoctorContainer, found bool) D
 		}
 	}
 
-	expected := map[string]string{
-		docktailLabelEnable:      "true",
-		docktailLabelName:        app.Settings.EffectiveServiceName(),
-		docktailLabelPort:        strconv.Itoa(app.Settings.EffectiveTailscalePort()),
-		docktailLabelServicePort: strconv.Itoa(app.Settings.EffectiveServicePort()),
-	}
+	expected := app.Settings.DocktailLabels()
 
 	var problems []string
 	for _, key := range slices.Sorted(maps.Keys(expected)) {
@@ -390,7 +377,7 @@ func doctorDocktailContainerCheck(ctx context.Context, probes DoctorProbes) Doct
 	}
 
 	for _, container := range containers {
-		if container.Name == "docktail" && container.Running() {
+		if isRunningDocktail(container.Name, container.Image, container.State) {
 			return DoctorCheck{
 				Label:   "docktail container",
 				Status:  DoctorPass,
@@ -429,7 +416,7 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 	}
 
 	service := app.Settings.EffectiveServiceName()
-	target, advertised := tailscaleServeTargetFor(data, service)
+	target, advertised := tailscaleServeTargetFor(data, service, app.Settings.EffectiveServicePort())
 	if !advertised {
 		return DoctorCheck{
 			Label:   "advertised",
@@ -579,18 +566,6 @@ func doctorListeningPorts(ctx context.Context, containerName string, probes Doct
 // doctorApprovalNote is shown after a docktail app's checklist.
 const doctorApprovalNote = "service approval and client grants live in the Tailscale admin console, so they can't be verified from here"
 
-// doctorHTTPGet performs the app's health check request through the probe.
-func doctorHTTPGet(ctx context.Context, probes DoctorProbes, url string) (int, error) {
-	if probes.HTTPGet == nil {
-		return 0, errors.New("no HTTP probe is available")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
-	defer cancel()
-
-	return probes.HTTPGet(ctx, url)
-}
-
 // doctorTCPDial dials the backend port through the probe.
 func doctorTCPDial(ctx context.Context, probes DoctorProbes, address string) error {
 	if probes.TCPDial == nil {
@@ -629,7 +604,7 @@ func (t tailscaleServeTarget) URL() string {
 // tailscaleServeTargetFor returns the proxy target advertised for a Tailscale
 // Service, and whether the Service is advertised at all. It walks the same
 // serve status the verification path uses, so the two can't disagree.
-func tailscaleServeTargetFor(data []byte, serviceName string) (tailscaleServeTarget, bool) {
+func tailscaleServeTargetFor(data []byte, serviceName string, servicePort int) (tailscaleServeTarget, bool) {
 	var status tailscaleServeStatus
 	if err := json.Unmarshal(data, &status); err != nil {
 		return tailscaleServeTarget{}, false
@@ -644,6 +619,17 @@ func tailscaleServeTargetFor(data []byte, serviceName string) (tailscaleServeTar
 			for _, handler := range web.Handlers {
 				return parseProxyTarget(handler.Proxy), true
 			}
+		}
+
+		for advertisedServicePort, tcp := range advertised.TCP {
+			if advertisedServicePort != strconv.Itoa(servicePort) {
+				continue
+			}
+			host, port, ok := parseTCPForward(tcp.TCPForward)
+			if !ok {
+				continue
+			}
+			return tailscaleServeTarget{scheme: "tcp", host: host, port: port}, true
 		}
 
 		return tailscaleServeTarget{}, false

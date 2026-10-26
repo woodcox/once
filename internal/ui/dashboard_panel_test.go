@@ -128,7 +128,7 @@ func TestDashboardPanelIssuesLineStoppedApp(t *testing.T) {
 }
 
 func TestDashboardPanelIssuesLineExited(t *testing.T) {
-	panel := testPanelWithState(true, "exited")
+	panel := testPanelWithState(false, "exited")
 	panel.app.ExitCode = 137
 	panel.Refresh(DashboardScales{})
 
@@ -137,8 +137,18 @@ func TestDashboardPanelIssuesLineExited(t *testing.T) {
 	assert.Contains(t, stripped, "⚠ exited with code 137")
 }
 
+func TestDashboardPanelIssuesLineExitedCleanly(t *testing.T) {
+	panel := testPanelWithState(false, "exited")
+	panel.app.ExitCode = 0
+	panel.Refresh(DashboardScales{})
+
+	stripped := ansi.Strip(panel.View(false, false, true, 120))
+
+	assert.Contains(t, stripped, "✓ no issues")
+}
+
 func TestDashboardPanelIssuesLineRestarting(t *testing.T) {
-	panel := testPanelWithState(true, "restarting")
+	panel := testPanelWithState(false, "restarting")
 	panel.app.RestartCount = 3
 	panel.Refresh(DashboardScales{})
 
@@ -148,7 +158,7 @@ func TestDashboardPanelIssuesLineRestarting(t *testing.T) {
 }
 
 func TestDashboardPanelIssuesLinePaused(t *testing.T) {
-	panel := testPanelWithState(true, "paused")
+	panel := testPanelWithState(false, "paused")
 	panel.Refresh(DashboardScales{})
 
 	stripped := ansi.Strip(panel.View(false, false, true, 120))
@@ -157,7 +167,7 @@ func TestDashboardPanelIssuesLinePaused(t *testing.T) {
 }
 
 func TestDashboardPanelIssuesLineCreated(t *testing.T) {
-	panel := testPanelWithState(true, "created")
+	panel := testPanelWithState(false, "created")
 	panel.Refresh(DashboardScales{})
 
 	stripped := ansi.Strip(panel.View(false, false, true, 120))
@@ -270,7 +280,8 @@ func TestDashboardPanelBadgeIsWorstOfMetricsAndIssues(t *testing.T) {
 }
 
 func TestDashboardPanelBadgeIsErrorForCrashedApp(t *testing.T) {
-	panel := testPanelWithState(true, "exited")
+	panel := testPanelWithState(false, "exited")
+	panel.app.ExitCode = 1
 	panel.cards = healthyCards()
 	panel.issues = panelIssues(&panel.app, panel.cards)
 

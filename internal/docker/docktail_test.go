@@ -46,6 +46,7 @@ func TestParseTailscaleServeStatus(t *testing.T) {
 		data         string
 		service      string
 		port         int
+		servicePort  int
 		expectedHost string
 		wantErr      bool
 	}{
@@ -155,11 +156,81 @@ func TestParseTailscaleServeStatus(t *testing.T) {
 			port:         5006,
 			expectedHost: "",
 		},
+		{
+			name:         "direct true pins to container IP",
+			data:         statusForProxy("http://172.21.0.2:5006"),
+			service:      "budget",
+			port:         5006,
+			expectedHost: "172.21.0.2",
+		},
+		{
+			name:         "direct false expects loopback",
+			data:         statusForProxy("http://127.0.0.1:5006"),
+			service:      "budget",
+			port:         5006,
+			expectedHost: "127.0.0.1",
+		},
+		{
+			name:         "direct false rejects a foreign host",
+			data:         statusForProxy("http://172.21.0.2:5006"),
+			service:      "budget",
+			port:         5006,
+			expectedHost: "127.0.0.1",
+			wantErr:      true,
+		},
+		{
+			name:         "tcp service with a correct forward verifies",
+			data:         `{"Services":{"svc:budget":{"TCP":{"5432":{"TCPForward":"172.21.0.2:5432"}}}}}`,
+			service:      "budget",
+			port:         5432,
+			servicePort:  5432,
+			expectedHost: "172.21.0.2",
+		},
+		{
+			name:         "tcp service pointing at the wrong port fails",
+			data:         `{"Services":{"svc:budget":{"TCP":{"5432":{"TCPForward":"172.21.0.2:5433"}}}}}`,
+			service:      "budget",
+			port:         5432,
+			servicePort:  5432,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
+		},
+		{
+			name:         "tcp service pointing at the wrong host fails",
+			data:         `{"Services":{"svc:budget":{"TCP":{"5432":{"TCPForward":"172.21.0.9:5432"}}}}}`,
+			service:      "budget",
+			port:         5432,
+			servicePort:  5432,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
+		},
+		{
+			name:         "tcp service on the wrong service port fails",
+			data:         `{"Services":{"svc:budget":{"TCP":{"5433":{"TCPForward":"172.21.0.2:5432"}}}}}`,
+			service:      "budget",
+			port:         5432,
+			servicePort:  5432,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
+		},
+		{
+			name:         "tcp service tolerates a missing tcp forward field",
+			data:         `{"Services":{"svc:budget":{"TCP":{"5432":{}}}}}`,
+			service:      "budget",
+			port:         5432,
+			servicePort:  5432,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := parseTailscaleServeStatus([]byte(tt.data), tt.service, tt.port, tt.expectedHost)
+			servicePort := tt.servicePort
+			if servicePort == 0 {
+				servicePort = 443
+			}
+			err := parseTailscaleServeStatus([]byte(tt.data), tt.service, tt.port, servicePort, tt.expectedHost)
 			if tt.wantErr {
 				assert.ErrorIs(t, err, ErrDocktailVerifyFailed)
 				return
@@ -227,6 +298,27 @@ func TestVerifyDocktail(t *testing.T) {
 		stubTailscale(t, serveStatusWithBudgetService)
 
 		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
+	})
+
+	t.Run("direct=false verifies against the loopback host", func(t *testing.T) {
+		app := newDocktailApp()
+		direct := false
+		app.Settings.Tailscale.Direct = &direct
+
+		status := `{"Services":{"svc:budget":{"Web":{"host.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:5006"}}}}}}}`
+		stubTailscale(t, status)
+
+		require.NoError(t, app.verifyDocktail(context.Background()))
+	})
+
+	t.Run("direct=false does not verify a foreign host", func(t *testing.T) {
+		app := newDocktailApp()
+		direct := false
+		app.Settings.Tailscale.Direct = &direct
+
+		stubTailscale(t, serveStatusWithBudgetService)
+
+		assert.ErrorIs(t, app.verifyDocktail(context.Background()), ErrDocktailNotAdvertised)
 	})
 
 	t.Run("service absent fails with the not-advertised sentinel", func(t *testing.T) {
@@ -370,4 +462,11 @@ func TestImageIsDocktail(t *testing.T) {
 	assert.True(t, imageIsDocktail("ghcr.io/marvinvr/docktail:latest"))
 	assert.True(t, imageIsDocktail("docktail"))
 	assert.False(t, imageIsDocktail("ghcr.io/basecamp/once-campfire:latest"))
+}
+
+func TestIsRunningDocktail(t *testing.T) {
+	assert.True(t, isRunningDocktail("docktail", "", "running"))
+	assert.True(t, isRunningDocktail("project-docktail-1", "ghcr.io/marvinvr/docktail:latest", "running"))
+	assert.False(t, isRunningDocktail("docktail", "", "exited"))
+	assert.False(t, isRunningDocktail("other", "ghcr.io/basecamp/once-campfire:latest", "running"))
 }

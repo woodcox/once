@@ -225,6 +225,13 @@ func (m InstallTailscaleForm) updateWithPanel(msg tea.Msg) (InstallTailscaleForm
 		panel, cmd = panel.Update(msg)
 		m.panel = &panel
 		return m, cmd
+
+	case tea.MouseWheelMsg:
+		var cmd tea.Cmd
+		panel := *m.panel
+		panel, cmd = panel.Update(msg)
+		m.panel = &panel
+		return m, cmd
 	}
 
 	return m, nil

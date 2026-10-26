@@ -141,6 +141,19 @@ func TestDoctor_ViewFillsTheTerminalHeight(t *testing.T) {
 	assert.Equal(t, m.height, lineCountAt(m.View()))
 }
 
+func TestDoctor_ViewFillsTheTerminalHeightAtSmallSize(t *testing.T) {
+	m := newTestDoctor()
+	m.width, m.height = 80, 8
+	m.help.SetWidth(m.width)
+	m.updateViewportSize()
+
+	m, _ = updateDoctor(m, doctorFinishedMsg{result: docker.DoctorResult{
+		Reports: []docker.DoctorReport{{AppName: "myapp"}},
+	}})
+
+	assert.Equal(t, m.height, lineCountAt(m.View()))
+}
+
 func TestDoctor_ScrollsWhenTheReportIsTallerThanTheScreen(t *testing.T) {
 	m := newTestDoctor()
 

@@ -341,6 +341,35 @@ func TestUpdateBinary_PrefersBrowserDownloadURL(t *testing.T) {
 	assert.Equal(t, binary, got)
 }
 
+func TestAuthorizedRequest_SendsTokenToAPIHost(t *testing.T) {
+	u := newUpdater("v1.0.0", "", nil)
+	u.githubToken = "secret"
+
+	req, err := u.authorizedRequest(http.MethodGet, "https://api.github.com/repos/woodcox/once/releases/latest")
+	require.NoError(t, err)
+
+	assert.Equal(t, "token secret", req.Header.Get("Authorization"))
+}
+
+func TestAuthorizedRequest_OmitsTokenFromPublicHost(t *testing.T) {
+	u := newUpdater("v1.0.0", "", nil)
+	u.githubToken = "secret"
+
+	req, err := u.authorizedRequest(http.MethodGet, "https://github.com/woodcox/once/releases/download/v1.0.0/once-linux-amd64")
+	require.NoError(t, err)
+
+	assert.Empty(t, req.Header.Get("Authorization"))
+}
+
+func TestAuthorizedRequest_OmitsTokenWithoutCredential(t *testing.T) {
+	u := newUpdater("v1.0.0", "", nil)
+
+	req, err := u.authorizedRequest(http.MethodGet, "https://api.github.com/repos/woodcox/once/releases/latest")
+	require.NoError(t, err)
+
+	assert.Empty(t, req.Header.Get("Authorization"))
+}
+
 func TestUpdateBinary_ChecksumsRequestAcceptsOctetStream(t *testing.T) {
 	dir := t.TempDir()
 

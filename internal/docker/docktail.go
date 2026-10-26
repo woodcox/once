@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/url"
 	"os/exec"
 	"strconv"
@@ -52,7 +53,7 @@ func (a *Application) verifyDocktail(ctx context.Context) error {
 	name := a.Settings.EffectiveServiceName()
 	port := a.Settings.EffectiveTailscalePort()
 
-	expectedHost := a.containerNetworkIP(ctx)
+	expectedHost := a.docktailVerificationHost(ctx)
 
 	deadline := time.Now().Add(docktailVerifyWindow)
 
@@ -70,7 +71,7 @@ func (a *Application) verifyDocktail(ctx context.Context) error {
 			return nil
 		}
 
-		switch verifyErr := parseTailscaleServeStatus(out, name, port, expectedHost); {
+		switch verifyErr := parseTailscaleServeStatus(out, name, port, a.Settings.EffectiveServicePort(), expectedHost); {
 		case verifyErr == nil:
 			return nil
 		case errors.Is(verifyErr, errTailscaleStatusUnparsable):
@@ -109,6 +110,18 @@ func (a *Application) containerNetworkIP(ctx context.Context) string {
 		return ""
 	}
 	return ip
+}
+
+// docktailVerificationHost returns the host ONCE expects docktail to have
+// advertised for this app. In `direct=true` mode it is the container's
+// network IP, so a leftover handler pointing at an old container doesn't
+// satisfy verification. In `direct=false` mode docktail proxies through the
+// host's loopback binding, so the expected host is 127.0.0.1.
+func (a *Application) docktailVerificationHost(ctx context.Context) string {
+	if a.Settings.effectiveDirect() {
+		return a.containerNetworkIP(ctx)
+	}
+	return "127.0.0.1"
 }
 
 // DocktailWarnings reports host-level problems that would stop this app from
@@ -199,7 +212,7 @@ func (n *Namespace) runningDocktailContainer(ctx context.Context) (bool, error) 
 	}
 
 	for _, c := range containers.Items {
-		if c.State == "running" && imageIsDocktail(c.Image) {
+		if isRunningDocktail(containerName(c.Names), c.Image, string(c.State)) {
 			return true, nil
 		}
 	}
@@ -236,6 +249,7 @@ type tailscaleServeStatus struct {
 
 type tailscaleServiceStatus struct {
 	Web map[string]tailscaleWebConfig `json:"Web"`
+	TCP map[string]tailscaleTCPConfig `json:"TCP"`
 }
 
 type tailscaleWebConfig struct {
@@ -246,7 +260,11 @@ type tailscaleHandler struct {
 	Proxy string `json:"Proxy"`
 }
 
-func parseTailscaleServeStatus(data []byte, serviceName string, port int, expectedHost string) error {
+type tailscaleTCPConfig struct {
+	TCPForward string `json:"TCPForward"`
+}
+
+func parseTailscaleServeStatus(data []byte, serviceName string, port int, servicePort int, expectedHost string) error {
 	service := "svc:" + serviceName
 
 	var status tailscaleServeStatus
@@ -271,6 +289,23 @@ func parseTailscaleServeStatus(data []byte, serviceName string, port int, expect
 				}
 				return nil
 			}
+		}
+
+		for advertisedServicePort, tcp := range advertised.TCP {
+			if advertisedServicePort != strconv.Itoa(servicePort) {
+				continue
+			}
+			host, fwdPort, ok := parseTCPForward(tcp.TCPForward)
+			if !ok {
+				continue
+			}
+			if fwdPort != targetPort {
+				continue
+			}
+			if expectedHost != "" && host != expectedHost {
+				continue
+			}
+			return nil
 		}
 
 		return fmt.Errorf("%w: service %q is advertised, but has no endpoint on port %d for host %q", ErrDocktailVerifyFailed, service, port, expectedHost)
@@ -321,10 +356,41 @@ func proxyHostEquals(proxy, expected string) bool {
 	return u.Hostname() == expected
 }
 
+// parseTCPForward splits a TCP forward target into host and port. It
+// tolerates missing or extra whitespace and rejects targets that don't have
+// a port.
+func parseTCPForward(target string) (host, port string, ok bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", "", false
+	}
+
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return "", "", false
+	}
+	return host, port, true
+}
+
 func normalizeServiceName(name string) string {
 	return strings.ToLower(strings.TrimPrefix(name, "svc:"))
 }
 
 func imageIsDocktail(image string) bool {
 	return strings.Contains(strings.ToLower(image), "docktail")
+}
+
+// isRunningDocktail reports whether a container is the running docktail
+// container, matching either the exact container name or its image.
+func isRunningDocktail(name, image, state string) bool {
+	return state == "running" && (name == "docktail" || imageIsDocktail(image))
+}
+
+// containerName returns the first container name with the leading slash
+// removed, or empty when the container has no names.
+func containerName(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(names[0], "/")
 }

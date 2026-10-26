@@ -740,6 +740,17 @@ func waitForContainerHealthy(ctx context.Context, c healthCheckClient, network, 
 // network without a serving certificate: this is a liveness check, not an
 // authentication check.
 func runHealthCheckProbe(ctx context.Context, protocol, ip string, port int, path string) error {
+	return probeBackend(ctx, protocol, ip, port, path, healthCheckRequest, healthCheckProbe, healthCheckTCPProbe)
+}
+
+// probeBackend checks whether a backend answers using the probe that matches
+// its protocol. HTTP probes go through httpGet; HTTPS probes use a TLS client
+// that skips verification because the target is a container IP on a private
+// Docker network; TCP protocols use tcpDial.
+func probeBackend(ctx context.Context, protocol, ip string, port int, path string, timeout time.Duration, httpGet func(context.Context, string) (int, error), tcpDial func(context.Context, string) error) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	switch protocol {
 	case "https", "https+insecure":
 		url := fmt.Sprintf("https://%s:%d%s", ip, port, path)
@@ -748,7 +759,6 @@ func runHealthCheckProbe(ctx context.Context, protocol, ip string, port int, pat
 			return err
 		}
 		client := &http.Client{
-			Timeout:   healthCheckRequest,
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 		}
 		resp, err := client.Do(req)
@@ -761,9 +771,9 @@ func runHealthCheckProbe(ctx context.Context, protocol, ip string, port int, pat
 		}
 		return nil
 	case "tcp", "tls-terminated-tcp":
-		return healthCheckTCPProbe(ctx, net.JoinHostPort(ip, strconv.Itoa(port)))
+		return tcpDial(ctx, net.JoinHostPort(ip, strconv.Itoa(port)))
 	default:
-		status, err := healthCheckProbe(ctx, fmt.Sprintf("http://%s:%d%s", ip, port, path))
+		status, err := httpGet(ctx, fmt.Sprintf("http://%s:%d%s", ip, port, path))
 		if err != nil {
 			return err
 		}

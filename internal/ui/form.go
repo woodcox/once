@@ -78,8 +78,13 @@ func (f *TextField) SetEchoPassword() {
 
 func (f *TextField) Update(msg tea.Msg) tea.Cmd {
 	if f.digitsOnly {
-		if msg, ok := msg.(tea.KeyPressMsg); ok {
+		switch msg := msg.(type) {
+		case tea.KeyPressMsg:
 			if k := msg.Key(); k.Text != "" && !isDigitKey(k) {
+				return nil
+			}
+		case tea.PasteMsg:
+			if !isAllDigits(msg.Content) {
 				return nil
 			}
 		}
@@ -354,18 +359,14 @@ func (f Form) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-// convergeBlock renders the focused field's input on a single line, plus the
-// buttons if they fit. Keystrokes still go to the focused field; this just makes
-// sure the field the user is editing is visible at all.
+// convergeBlock renders the focused field's input on a single line when the
+// terminal is too short for the full form. Keystrokes still go to the focused
+// field; this just makes sure the field the user is editing is visible at all.
 func (f Form) convergeBlock(itemToBlock []int, buttons string) string {
 	if f.focused >= len(f.items) {
 		return buttons
 	}
-	content := f.renderFocusedFieldLine(f.focused)
-	if f.height >= 4 {
-		return lipgloss.JoinVertical(lipgloss.Left, content, buttons)
-	}
-	return content
+	return f.renderFocusedFieldLine(f.focused)
 }
 
 // renderFocusedFieldLine returns just the content line of the focused item,
@@ -942,6 +943,15 @@ func (f *Form) assignRowGroupsFrom(start int) {
 
 func isDigitKey(k tea.Key) bool {
 	return unicode.IsDigit(rune(k.Text[0]))
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func hiddenFieldsIndicator(arrow string, count int) string {

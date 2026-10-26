@@ -122,26 +122,25 @@ func (p DashboardPanel) Height(showDetails bool) int {
 func (p *DashboardPanel) Refresh(scales DashboardScales) {
 	if !p.app.Running {
 		p.cards = [3]MetricCard{}
-		p.issues = nil
-		return
+	} else {
+		p.cards = p.buildMetricCards(scales)
 	}
 
-	p.cards = p.buildMetricCards(scales)
 	p.issues = panelIssues(&p.app, p.cards)
 }
 
 // Private
 
 func (p DashboardPanel) renderHealthBadge(cards [3]MetricCard) string {
-	if !p.app.Running {
-		return lipgloss.NewStyle().Foreground(Colors.Border).Render("●")
-	}
-
 	worst := healthNormal
 	for _, c := range cards {
 		worst = max(worst, c.Health())
 	}
 	worst = max(worst, worstIssueHealth(p.issues))
+
+	if worst == healthNormal && !p.app.Running {
+		return lipgloss.NewStyle().Foreground(Colors.Border).Render("●")
+	}
 
 	return lipgloss.NewStyle().Foreground(worst.Color()).Render("●")
 }

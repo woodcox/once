@@ -31,14 +31,12 @@ func panelIssues(app *docker.Application, cards [3]MetricCard) []PanelIssue {
 }
 
 // containerIssues reports the problems visible in the app's container state.
-// A stopped app has no container to report on, so it has no issues.
 func containerIssues(app *docker.Application) []PanelIssue {
-	if !app.Running {
-		return nil
-	}
-
 	switch app.State {
 	case "exited", "dead":
+		if app.ExitCode == 0 {
+			return nil
+		}
 		return []PanelIssue{{
 			Text:   fmt.Sprintf("exited with code %d", app.ExitCode),
 			Health: healthError,

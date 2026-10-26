@@ -140,6 +140,18 @@ func TestTextField_DigitsOnly(t *testing.T) {
 	assert.Equal(t, "53", field.Value())
 }
 
+func TestTextField_DigitsOnlyRejectsPastedNonNumeric(t *testing.T) {
+	field := NewTextField("number")
+	field.SetDigitsOnly(true)
+	field.Focus()
+
+	field.Update(tea.PasteMsg{Content: "8O83"})
+	assert.Equal(t, "", field.Value(), "pasted non-numeric value is ignored")
+
+	field.Update(tea.PasteMsg{Content: "8083"})
+	assert.Equal(t, "8083", field.Value(), "all-digit paste is accepted")
+}
+
 func TestCheckboxField_Toggle(t *testing.T) {
 	field := NewCheckboxField("Enable", false)
 	assert.False(t, field.Checked())

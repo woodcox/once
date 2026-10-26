@@ -160,12 +160,9 @@ func (r *release) checksumsAssetURL() string {
 }
 
 func (u *Updater) get(url string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	req, err := u.authorizedRequest(http.MethodGet, url)
 	if err != nil {
 		return nil, err
-	}
-	if u.githubToken != "" {
-		req.Header.Set("Authorization", "token "+u.githubToken)
 	}
 	return u.client.Do(req)
 }
@@ -190,14 +187,11 @@ func (u *Updater) fetchRelease() (*release, error) {
 }
 
 func (u *Updater) downloadBinary(url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	req, err := u.authorizedRequest(http.MethodGet, url)
 	if err != nil {
 		return nil, fmt.Errorf("downloading binary: %w", err)
 	}
 	req.Header.Set("Accept", "application/octet-stream")
-	if u.githubToken != "" {
-		req.Header.Set("Authorization", "token "+u.githubToken)
-	}
 	resp, err := u.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("downloading binary: %w", err)
@@ -231,16 +225,13 @@ func (u *Updater) lookupChecksum(checksumsURL, assetName string) (string, error)
 }
 
 func (u *Updater) downloadChecksums(url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	req, err := u.authorizedRequest(http.MethodGet, url)
 	if err != nil {
 		return nil, err
 	}
 	// The API asset URL returns JSON metadata without this header; the
 	// public browser_download_url doesn't care either way.
 	req.Header.Set("Accept", "application/octet-stream")
-	if u.githubToken != "" {
-		req.Header.Set("Authorization", "token "+u.githubToken)
-	}
 
 	resp, err := u.client.Do(req)
 	if err != nil {
@@ -293,6 +284,29 @@ func parseChecksumEntry(body []byte, assetName string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// authorizedRequest builds a request and attaches the GitHub token only when
+// the destination is api.github.com, so downloads from public GitHub/CDN hosts
+// don't receive credentials they don't need.
+func (u *Updater) authorizedRequest(method, requestURL string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(context.Background(), method, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if u.githubToken != "" && requestHost(req) == "api.github.com" {
+		req.Header.Set("Authorization", "token "+u.githubToken)
+	}
+	return req, nil
+}
+
+// requestHost returns the hostname of a request's URL, or empty when the URL
+// can't be determined.
+func requestHost(req *http.Request) string {
+	if req.URL == nil {
+		return ""
+	}
+	return req.URL.Hostname()
 }
 
 func verifyChecksum(body []byte, expected, assetName string) error {

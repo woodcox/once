@@ -65,7 +65,7 @@ func (n *Namespace) doctorContainers(ctx context.Context) ([]DoctorContainer, er
 
 	list := make([]DoctorContainer, 0, len(containers.Items))
 	for _, c := range containers.Items {
-		container := DoctorContainer{State: string(c.State), Labels: c.Labels}
+		container := DoctorContainer{State: string(c.State), Image: c.Image, Labels: c.Labels}
 		if len(c.Names) > 0 {
 			container.Name = strings.TrimPrefix(c.Names[0], "/")
 		}
@@ -78,7 +78,7 @@ func (n *Namespace) doctorContainers(ctx context.Context) ([]DoctorContainer, er
 // doctorListeningPorts returns the TCP ports the container listens on, read
 // from the container's own network tables.
 func (n *Namespace) doctorListeningPorts(ctx context.Context, containerName string) ([]int, error) {
-	result, err := execInContainer(ctx, n.client, containerName, []string{"cat", "/proc/net/tcp"})
+	result, err := execInContainer(ctx, n.client, containerName, []string{"cat", "/proc/net/tcp", "/proc/net/tcp6"})
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (n *Namespace) doctorListeningPorts(ctx context.Context, containerName stri
 // Helpers
 
 // parseListeningPorts extracts the listening ports from the contents of
-// /proc/net/tcp.
+// /proc/net/tcp and /proc/net/tcp6.
 func parseListeningPorts(output string) ([]int, error) {
 	var ports []int
 

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -316,6 +317,20 @@ func TestInstallTailscaleForm_ViewShowsFieldDescriptions(t *testing.T) {
 	assert.NotContains(t, view, "Leave blank to use the application port", "Backend port's description moved to the help panel")
 	assert.NotContains(t, view, "443 for HTTPS", "Service port's description moved to the help panel")
 	assert.NotContains(t, view, "loopback only", "Direct's description moved to the help panel")
+}
+
+func TestInstallTailscaleForm_MouseWheelScrollsHelpPanel(t *testing.T) {
+	m := NewInstallTailscaleForm("example/budget", 0, docker.TailscaleSettings{})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = m.Update(keyPressMsg("f1"))
+	require.NotNil(t, m.panel, "F1 opens the help panel")
+
+	before := ansi.Strip(m.View())
+	m, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	after := ansi.Strip(m.View())
+
+	assert.NotNil(t, m.panel, "the help panel stays open")
+	assert.NotEqual(t, before, after, "the wheel scrolls the panel content")
 }
 
 // Helpers
