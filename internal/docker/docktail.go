@@ -51,9 +51,10 @@ var errTailscaleStatusUnparsable = errors.New("unparsable tailscale serve status
 // verification.
 func (a *Application) verifyDocktail(ctx context.Context) error {
 	name := a.Settings.EffectiveServiceName()
-	port := a.Settings.EffectiveTailscalePort()
+	port := a.Settings.EffectiveAppPort()
 
-	expectedHost := a.docktailVerificationHost(ctx)
+	// An empty lookup falls back to the port-only check.
+	expectedHost := a.containerNetworkIP(ctx)
 
 	deadline := time.Now().Add(docktailVerifyWindow)
 
@@ -94,9 +95,7 @@ func (a *Application) verifyDocktail(ctx context.Context) error {
 }
 
 // containerNetworkIP returns the docker network IP of this app's container,
-// or empty when the lookup fails. Only the host part of the proxy URL is
-// verified against the result, so an empty target falls back to the
-// port-only check.
+// or empty when the lookup fails.
 func (a *Application) containerNetworkIP(ctx context.Context) string {
 	if a.namespace == nil {
 		return ""
@@ -110,18 +109,6 @@ func (a *Application) containerNetworkIP(ctx context.Context) string {
 		return ""
 	}
 	return ip
-}
-
-// docktailVerificationHost returns the host ONCE expects docktail to have
-// advertised for this app. In `direct=true` mode it is the container's
-// network IP, so a leftover handler pointing at an old container doesn't
-// satisfy verification. In `direct=false` mode docktail proxies through the
-// host's loopback binding, so the expected host is 127.0.0.1.
-func (a *Application) docktailVerificationHost(ctx context.Context) string {
-	if a.Settings.effectiveDirect() {
-		return a.containerNetworkIP(ctx)
-	}
-	return "127.0.0.1"
 }
 
 // DocktailWarnings reports host-level problems that would stop this app from

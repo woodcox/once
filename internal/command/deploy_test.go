@@ -301,7 +301,7 @@ func TestBuildSettingsDocktailFlags(t *testing.T) {
 
 	require.NoError(t, cmd.Flags().Set("docktail", "true"))
 	require.NoError(t, cmd.Flags().Set("docktail-service", "Budget"))
-	require.NoError(t, cmd.Flags().Set("docktail-port", "5006"))
+	require.NoError(t, cmd.Flags().Set("app-port", "5006"))
 	require.NoError(t, cmd.Flags().Set("docktail-service-port", "443"))
 	require.NoError(t, cmd.Flags().Set("docktail-path", "/budget"))
 	require.NoError(t, cmd.Flags().Set("docktail-tags", "tag:server"))
@@ -312,7 +312,7 @@ func TestBuildSettingsDocktailFlags(t *testing.T) {
 	assert.True(t, s.DocktailEnabled())
 	assert.Equal(t, docker.DocktailMode, s.Tailscale.Mode)
 	assert.Equal(t, "budget", s.EffectiveServiceName())
-	assert.Equal(t, 5006, s.EffectiveTailscalePort())
+	assert.Equal(t, 5006, s.EffectiveAppPort())
 	assert.Equal(t, map[string]string{
 		"docktail.service.enable":           "true",
 		"docktail.funnel.enable":            "false",
@@ -390,12 +390,10 @@ func TestBuildSettingsDocktailOptionalFlags(t *testing.T) {
 	f.register(cmd)
 
 	require.NoError(t, cmd.Flags().Set("docktail", "true"))
-	require.NoError(t, cmd.Flags().Set("docktail-port", "5006"))
 	require.NoError(t, cmd.Flags().Set("docktail-description", "Budget app"))
 	require.NoError(t, cmd.Flags().Set("docktail-protocol", "https"))
 	require.NoError(t, cmd.Flags().Set("docktail-service-protocol", "https"))
 	require.NoError(t, cmd.Flags().Set("docktail-network", "once"))
-	require.NoError(t, cmd.Flags().Set("docktail-direct", "true"))
 
 	s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
 	require.NoError(t, err)
@@ -404,30 +402,11 @@ func TestBuildSettingsDocktailOptionalFlags(t *testing.T) {
 	assert.Equal(t, "https", s.Tailscale.Protocol)
 	assert.Equal(t, "https", s.Tailscale.ServiceProtocol)
 	assert.Equal(t, "once", s.Tailscale.Network)
-	require.NotNil(t, s.Tailscale.Direct)
-	assert.True(t, *s.Tailscale.Direct)
 	assert.Equal(t, "true", s.DocktailLabels()["docktail.service.direct"])
 	assert.Equal(t, "Budget app", s.DocktailLabels()["docktail.service.description"])
 	assert.Equal(t, "https", s.DocktailLabels()["docktail.service.protocol"])
 	assert.Equal(t, "https", s.DocktailLabels()["docktail.service.service-protocol"])
 	assert.Equal(t, "once", s.DocktailLabels()["docktail.service.network"])
-}
-
-func TestBuildSettingsDocktailDirectFalseAccepted(t *testing.T) {
-	cmd := &cobra.Command{}
-	f := &settingsFlags{}
-	f.register(cmd)
-
-	require.NoError(t, cmd.Flags().Set("docktail", "true"))
-	require.NoError(t, cmd.Flags().Set("docktail-port", "5432"))
-	require.NoError(t, cmd.Flags().Set("docktail-direct", "false"))
-
-	s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
-	require.NoError(t, err)
-
-	require.NotNil(t, s.Tailscale.Direct)
-	assert.False(t, *s.Tailscale.Direct, "the false value round-trips through buildSettings")
-	assert.Equal(t, "false", s.DocktailLabels()["docktail.service.direct"], "the docktail label still records false")
 }
 
 func TestBuildSettingsDocktailProxyProtocol(t *testing.T) {
@@ -436,7 +415,7 @@ func TestBuildSettingsDocktailProxyProtocol(t *testing.T) {
 	f.register(cmd)
 
 	require.NoError(t, cmd.Flags().Set("docktail", "true"))
-	require.NoError(t, cmd.Flags().Set("docktail-port", "5432"))
+	require.NoError(t, cmd.Flags().Set("app-port", "5432"))
 	require.NoError(t, cmd.Flags().Set("docktail-service-port", "5432"))
 	require.NoError(t, cmd.Flags().Set("docktail-protocol", "tcp"))
 	require.NoError(t, cmd.Flags().Set("docktail-proxy-protocol", "2"))
@@ -446,32 +425,7 @@ func TestBuildSettingsDocktailProxyProtocol(t *testing.T) {
 
 	assert.Equal(t, "2", s.Tailscale.ProxyProtocol)
 	assert.Equal(t, "2", s.DocktailLabels()["docktail.service.proxy-protocol"])
-}
-
-func TestBuildSettingsDocktailDirectUnset(t *testing.T) {
-	cmd := &cobra.Command{}
-	f := &settingsFlags{}
-	f.register(cmd)
-
-	require.NoError(t, cmd.Flags().Set("docktail", "true"))
-
-	s, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
-	require.NoError(t, err)
-
-	assert.Nil(t, s.Tailscale.Direct)
-	assert.Equal(t, "true", s.DocktailLabels()["docktail.service.direct"])
-}
-
-func TestBuildSettingsDocktailDirectInvalid(t *testing.T) {
-	cmd := &cobra.Command{}
-	f := &settingsFlags{}
-	f.register(cmd)
-
-	require.NoError(t, cmd.Flags().Set("docktail", "true"))
-	require.NoError(t, cmd.Flags().Set("docktail-direct", "yes"))
-
-	_, err := f.buildSettings(cmd, "example/app:latest", "budget.example.com")
-	assert.Error(t, err)
+	assert.Equal(t, "5432", s.DocktailLabels()["docktail.service.port"])
 }
 
 func TestApplyChangesDocktailOptionalFlags(t *testing.T) {
@@ -482,7 +436,6 @@ func TestApplyChangesDocktailOptionalFlags(t *testing.T) {
 		return cmd, f
 	}
 
-	direct := true
 	existing := docker.ApplicationSettings{
 		Name:  "budget",
 		Image: "image:latest",
@@ -493,7 +446,6 @@ func TestApplyChangesDocktailOptionalFlags(t *testing.T) {
 			Description: "Budget app",
 			Protocol:    "https",
 			Network:     "once",
-			Direct:      &direct,
 		},
 	}
 
@@ -504,26 +456,5 @@ func TestApplyChangesDocktailOptionalFlags(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, existing.Tailscale, s.Tailscale)
-	})
-
-	t.Run("direct false is accepted and applied", func(t *testing.T) {
-		cmd, f := newCmd()
-		require.NoError(t, cmd.Flags().Set("docktail-direct", "false"))
-
-		s, err := f.applyChanges(cmd, existing, existing.Image)
-		require.NoError(t, err)
-
-		require.NotNil(t, s.Tailscale.Direct)
-		assert.False(t, *s.Tailscale.Direct)
-	})
-
-	t.Run("empty value clears direct", func(t *testing.T) {
-		cmd, f := newCmd()
-		require.NoError(t, cmd.Flags().Set("docktail-direct", ""))
-
-		s, err := f.applyChanges(cmd, existing, existing.Image)
-		require.NoError(t, err)
-
-		assert.Nil(t, s.Tailscale.Direct)
 	})
 }

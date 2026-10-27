@@ -24,7 +24,6 @@ const tailscaleServicesHeading = "Tailscale Services using docktail"
 // optional ones, with the read-only Labels preview last.
 const (
 	installTailscaleServiceField = iota
-	installTailscalePortField
 	installTailscaleDescriptionField
 	installTailscaleBackendProtocolField
 	installTailscaleServicePortField
@@ -33,7 +32,6 @@ const (
 	installTailscaleTagsField
 	installTailscaleNetworkField
 	installTailscaleProxyProtocolField
-	installTailscaleDirectField
 	installTailscaleLabelsField
 )
 
@@ -63,12 +61,6 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 	descriptionField := NewTextField("shown in the Tailscale admin console")
 	descriptionField.SetValue(settings.Description)
 
-	portField := NewTextField("app port")
-	portField.SetDigitsOnly(true)
-	if settings.Port != 0 {
-		portField.SetValue(strconv.Itoa(settings.Port))
-	}
-
 	backendProtocolField := NewTextField("http")
 	backendProtocolField.SetValue(settings.Protocol)
 
@@ -94,22 +86,15 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 	proxyProtocolField := NewTextField("off")
 	proxyProtocolField.SetValue(settings.ProxyProtocol)
 
-	direct := settings.Direct
-	if direct == nil {
-		trueDirect := true
-		direct = &trueDirect
-	}
-	directField := NewCheckboxField("Proxy directly to the container IP", *direct)
-
 	labelsField := NewStaticField("", func(s string) string { return s })
 
 	items := []FormItem{
-		// Service name and Backend port are labelled "(required)" because
-		// they are the only fields users really must understand, but blank
-		// values still resolve to a working default, so the form lets the
-		// user submit without filling them in.
+		// Service name is labelled "(required)" because it is the only
+		// field users really must understand, but a blank value still
+		// resolves to a working default, so the form lets the user submit
+		// without filling it in. The app port docktail proxies to is set
+		// in the advanced settings, not here.
 		{Label: "Service name (required)", LabelTag: "docktail.service.name", Field: serviceField},
-		{Label: "Backend port (required)", LabelTag: "docktail.service.port", Field: portField},
 		{Label: "Description", LabelTag: "docktail.service.description", Field: descriptionField},
 		{Label: "Backend protocol", LabelTag: "docktail.service.protocol", Field: backendProtocolField},
 		{Label: "Service port", LabelTag: "docktail.service.service-port", Field: servicePortField},
@@ -118,7 +103,6 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 		{Label: "Service tags", LabelTag: "docktail.tags", Field: tagsField},
 		{Label: "Network", LabelTag: "docktail.service.network", Field: networkField},
 		{Label: "Proxy protocol", LabelTag: "docktail.service.proxy-protocol", Field: proxyProtocolField},
-		{Label: "Direct", LabelTag: "docktail.service.direct", Field: directField},
 		{Field: labelsField},
 	}
 
@@ -268,11 +252,7 @@ func installTailscaleSettings(f *Form, original docker.TailscaleSettings) docker
 		ProxyProtocol:   f.TextField(installTailscaleProxyProtocolField).Value(),
 	}
 
-	settings.Port, _ = strconv.Atoi(f.TextField(installTailscalePortField).Value())
 	settings.ServicePort, _ = strconv.Atoi(f.TextField(installTailscaleServicePortField).Value())
-
-	direct := f.CheckboxField(installTailscaleDirectField).Checked()
-	settings.Direct = &direct
 
 	return settings
 }

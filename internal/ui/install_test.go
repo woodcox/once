@@ -780,7 +780,7 @@ func TestInstall_AdvancedSubmitValidatesSettings(t *testing.T) {
 		m := newAdvanced(t)
 		m.target = InstallTargetTailnet
 		m.tailscaleConfirmed = true
-		m.pendingTailscale = docker.TailscaleSettings{Enabled: true, Mode: docker.DocktailMode, Service: "campfire", Port: 70000}
+		m.pendingTailscale = docker.TailscaleSettings{Enabled: true, Mode: docker.DocktailMode, Service: "campfire", ServicePort: 70000}
 
 		m, _ = updateInstall(m, SettingsSectionSubmitMsg{Settings: docker.ApplicationSettings{}})
 

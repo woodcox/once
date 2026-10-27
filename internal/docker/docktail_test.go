@@ -157,26 +157,11 @@ func TestParseTailscaleServeStatus(t *testing.T) {
 			expectedHost: "",
 		},
 		{
-			name:         "direct true pins to container IP",
-			data:         statusForProxy("http://172.21.0.2:5006"),
-			service:      "budget",
-			port:         5006,
-			expectedHost: "172.21.0.2",
-		},
-		{
-			name:         "direct false expects loopback",
+			name:         "loopback expected host is accepted",
 			data:         statusForProxy("http://127.0.0.1:5006"),
 			service:      "budget",
 			port:         5006,
 			expectedHost: "127.0.0.1",
-		},
-		{
-			name:         "direct false rejects a foreign host",
-			data:         statusForProxy("http://172.21.0.2:5006"),
-			service:      "budget",
-			port:         5006,
-			expectedHost: "127.0.0.1",
-			wantErr:      true,
 		},
 		{
 			name:         "tcp service with a correct forward verifies",
@@ -298,27 +283,6 @@ func TestVerifyDocktail(t *testing.T) {
 		stubTailscale(t, serveStatusWithBudgetService)
 
 		require.NoError(t, newDocktailApp().verifyDocktail(context.Background()))
-	})
-
-	t.Run("direct=false verifies against the loopback host", func(t *testing.T) {
-		app := newDocktailApp()
-		direct := false
-		app.Settings.Tailscale.Direct = &direct
-
-		status := `{"Services":{"svc:budget":{"Web":{"host.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:5006"}}}}}}}`
-		stubTailscale(t, status)
-
-		require.NoError(t, app.verifyDocktail(context.Background()))
-	})
-
-	t.Run("direct=false does not verify a foreign host", func(t *testing.T) {
-		app := newDocktailApp()
-		direct := false
-		app.Settings.Tailscale.Direct = &direct
-
-		stubTailscale(t, serveStatusWithBudgetService)
-
-		assert.ErrorIs(t, app.verifyDocktail(context.Background()), ErrDocktailNotAdvertised)
 	})
 
 	t.Run("service absent fails with the not-advertised sentinel", func(t *testing.T) {

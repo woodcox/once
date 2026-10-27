@@ -41,7 +41,7 @@ func TestRenderDoctorReportHealthyApp(t *testing.T) {
 
 func TestRenderDoctorReportFailedCheckShowsRemedy(t *testing.T) {
 	report := doctorReportFixture("writebook.069443", "write.lemur-carat.ts.net",
-		docker.DoctorCheck{Label: "backend port", Status: docker.DoctorFail, Message: "port 7878: nothing is listening inside the container", Remedy: "set the Tailscale backend port to the port the app listens on (80)"},
+		docker.DoctorCheck{Label: "app port listening", Status: docker.DoctorFail, Message: "port 7878: nothing is listening inside the container", Remedy: "set the app port to the port the app listens on (80)"},
 	)
 
 	var out bytes.Buffer
@@ -51,7 +51,7 @@ func TestRenderDoctorReportFailedCheckShowsRemedy(t *testing.T) {
 
 	assert.Contains(t, output, "FAIL")
 	assert.Contains(t, output, "nothing is listening inside the container")
-	assert.Contains(t, output, "remedy: set the Tailscale backend port to the port the app listens on (80)")
+	assert.Contains(t, output, "remedy: set the app port to the port the app listens on (80)")
 }
 
 func TestRenderDoctorReportSkippedCheckHasNoRemedy(t *testing.T) {

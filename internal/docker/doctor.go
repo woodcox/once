@@ -108,7 +108,7 @@ type DoctorProbes struct {
 // doctor.
 const doctorProbeTimeout = 5 * time.Second
 
-// doctorDialTimeout bounds the TCP check of an advertised backend port.
+// doctorDialTimeout bounds the TCP check of an advertised app port.
 const doctorDialTimeout = 3 * time.Second
 
 // ErrDoctorUnknownHost reports an argument that matches no deployed app.
@@ -170,7 +170,7 @@ func doctorReport(ctx context.Context, app *Application, probes DoctorProbes) Do
 	}
 
 	report.Checks = append(report.Checks, doctorLabelCheck(app, container, containerFound))
-	report.Checks = append(report.Checks, doctorBackendPortCheck(ctx, app, container, containerFound, probes))
+	report.Checks = append(report.Checks, doctorAppPortListeningCheck(ctx, app, container, containerFound, probes))
 	report.Checks = append(report.Checks, doctorDocktailContainerCheck(ctx, probes))
 	report.Checks = append(report.Checks, doctorAdvertisementCheck(ctx, app, container, containerFound, probes))
 
@@ -298,19 +298,20 @@ func doctorLabelCheck(app *Application, container DoctorContainer, found bool) D
 	return DoctorCheck{
 		Label:  "docktail labels",
 		Status: DoctorPass,
-		Message: fmt.Sprintf(": service %s, backend port %d, service port %d",
+		Message: fmt.Sprintf(": service %s, app port %d, service port %d",
 			expected[docktailLabelName],
-			app.Settings.EffectiveTailscalePort(),
+			app.Settings.EffectiveAppPort(),
 			app.Settings.EffectiveServicePort()),
 	}
 }
 
-// doctorBackendPortCheck reports whether the advertised backend port is
-// actually listening inside the container.
-func doctorBackendPortCheck(ctx context.Context, app *Application, container DoctorContainer, found bool, probes DoctorProbes) DoctorCheck {
+// doctorAppPortListeningCheck reports whether the port the Service advertises
+// — always the application's own port — is actually listening inside the
+// container.
+func doctorAppPortListeningCheck(ctx context.Context, app *Application, container DoctorContainer, found bool, probes DoctorProbes) DoctorCheck {
 	if !found || !container.Running() {
 		return DoctorCheck{
-			Label:   "backend port",
+			Label:   "app port listening",
 			Status:  DoctorSkip,
 			Message: ": container is not running",
 		}
@@ -318,20 +319,14 @@ func doctorBackendPortCheck(ctx context.Context, app *Application, container Doc
 
 	if container.IP == "" {
 		return DoctorCheck{
-			Label:   "backend port",
+			Label:   "app port listening",
 			Status:  DoctorSkip,
 			Message: ": the container has no IP address on the Docker network",
 		}
 	}
 
-	port := app.Settings.EffectiveTailscalePort()
-
-	// In `direct=false` mode docktail reaches the backend through a
-	// loopback binding on the host rather than the container's network IP.
+	port := app.Settings.EffectiveAppPort()
 	address := net.JoinHostPort(container.IP, strconv.Itoa(port))
-	if !app.Settings.effectiveDirect() {
-		address = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	}
 
 	err := doctorTCPDial(ctx, probes, address)
 	if err != nil {
@@ -341,15 +336,15 @@ func doctorBackendPortCheck(ctx context.Context, app *Application, container Doc
 		}
 
 		return DoctorCheck{
-			Label:   "backend port",
+			Label:   "app port listening",
 			Status:  DoctorFail,
 			Message: message,
-			Remedy:  fmt.Sprintf("set the Tailscale backend port to the port the app listens on (%d)", app.Settings.EffectiveAppPort()),
+			Remedy:  fmt.Sprintf("set the app port to the port the app listens on (%d)", port),
 		}
 	}
 
 	return DoctorCheck{
-		Label:   "backend port",
+		Label:   "app port listening",
 		Status:  DoctorPass,
 		Message: fmt.Sprintf("%d is listening inside the container", port),
 	}
@@ -434,7 +429,7 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 		}
 	}
 
-	wantPort := strconv.Itoa(app.Settings.EffectiveTailscalePort())
+	wantPort := strconv.Itoa(app.Settings.EffectiveAppPort())
 	if target.port != wantPort {
 		return DoctorCheck{
 			Label:   "advertised",
@@ -444,10 +439,7 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 		}
 	}
 
-	// In `direct=false` mode docktail proxies through the host's loopback
-	// binding, so the handler's host isn't the container's network IP.
-	direct := app.Settings.effectiveDirect()
-	if direct && target.host != container.IP {
+	if target.host != container.IP {
 		return DoctorCheck{
 			Label:   "advertised",
 			Status:  DoctorFail,
@@ -566,7 +558,7 @@ func doctorListeningPorts(ctx context.Context, containerName string, probes Doct
 // doctorApprovalNote is shown after a docktail app's checklist.
 const doctorApprovalNote = "service approval and client grants live in the Tailscale admin console, so they can't be verified from here"
 
-// doctorTCPDial dials the backend port through the probe.
+// doctorTCPDial dials the app port through the probe.
 func doctorTCPDial(ctx context.Context, probes DoctorProbes, address string) error {
 	if probes.TCPDial == nil {
 		return errors.New("no TCP probe is available")

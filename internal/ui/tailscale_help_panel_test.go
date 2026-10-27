@@ -26,7 +26,6 @@ func TestTailscaleHelpPanel_OpensAndListsLabels(t *testing.T) {
 		"docktail.tags",
 		"docktail.service.network",
 		"docktail.service.proxy-protocol",
-		"docktail.service.direct",
 	} {
 		assert.Contains(t, panel.viewport.GetContent(), tag)
 	}
@@ -116,8 +115,6 @@ func TestTailscaleHelpPanel_InstallForm_OmitsInlineDescriptions(t *testing.T) {
 
 	for _, fragment := range []string{
 		"Defaults to the application name",
-		"Leave blank to use the application port",
-		"loopback only",
 	} {
 		assert.NotContains(t, view, fragment, "the help panel content must not leak into the form view")
 	}
@@ -141,7 +138,6 @@ func TestTailscaleHelpPanel_SettingsForm_OmitsInlineDescriptions(t *testing.T) {
 
 	for _, fragment := range []string{
 		"Defaults to the application name",
-		"loopback only",
 	} {
 		assert.NotContains(t, view, fragment, "the help panel content must not leak into the form view")
 	}

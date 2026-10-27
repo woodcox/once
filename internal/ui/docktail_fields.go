@@ -6,10 +6,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// docktailField describes one docktail.* label the install and settings
-// Tailscale forms can write and its F1 help panel entry. The title is what
-// the form shows in its label; the help lines are what the panel renders
-// under the docktail key.
+// docktailField describes one docktail.* label shown in the F1 help panel
+// and, except for the app port, one the install and settings Tailscale forms
+// can write. The title is what the form shows in its label; the help lines
+// are what the panel renders under the docktail key.
 type docktailField struct {
 	key         string
 	title       string
@@ -35,18 +35,17 @@ var docktailFields = []docktailField{
 		accepted:    "Synced only when docktail has Tailscale API credentials.",
 	},
 	{
-		title:       "Backend port",
+		title:       "App port",
 		key:         "docktail.service.port",
 		required:    true,
-		summary:     "Container port docktail proxies to.",
-		defaultLine: "Default: the application's port.",
-		accepted:    "Accepted: 1–65535.",
+		summary:     "Container port docktail proxies to; docktail always proxies to the application's own port.",
+		defaultLine: "Set as the app port in the advanced settings.",
 	},
 	{
 		title:       "Backend protocol",
 		key:         "docktail.service.protocol",
 		summary:     "Protocol docktail uses between itself and the container.",
-		defaultLine: "Default: https on port 443, http otherwise.",
+		defaultLine: "Default: https on app port 443, http otherwise.",
 		accepted:    "Accepted: http, https, https+insecure, tcp, tls-terminated-tcp.",
 	},
 	{
@@ -88,12 +87,6 @@ var docktailFields = []docktailField{
 		summary:     "PROXY protocol version docktail emits towards the container.",
 		defaultLine: "Default: off.",
 		accepted:    "Accepted: 1 or 2; only meaningful for TCP service protocols.",
-	},
-	{
-		title:       "Direct",
-		key:         "docktail.service.direct",
-		summary:     "When true, docktail proxies straight to the container IP. When false, ONCE publishes the backend port on loopback only and docktail proxies through that loopback binding.",
-		defaultLine: "Default: true.",
 	},
 }
 
