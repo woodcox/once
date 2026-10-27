@@ -104,7 +104,7 @@ ONCE_REDUCED_MOTION=true once
 
 ONCE can advertise an application to your tailnet as a native [Tailscale Service](https://tailscale.com/docs/features/tailscale-services) through [docktail](https://docktail.org/).
 
-ONCE doesn't talk to Tailscale itself: it bundles no Tailscale client, holds no auth keys, and never writes Tailscale configuration (that needs root). It only adds `docktail.*` labels to the application container, as you would in a `docker-compose.yml`, and the docktail container on the host does the rest. By default no ports are published off the host, and the application ends up at `https://<service>.<tailnet>.ts.net`. With `--docktail-direct=false` the backend port is published on the loopback interface only so docktail can reach it; it never escapes the host.
+ONCE doesn't talk to Tailscale itself: it bundles no Tailscale client, holds no auth keys, and never writes Tailscale configuration (that needs root). It only adds `docktail.*` labels to the application container, as you would in a `docker-compose.yml`, and the docktail container on the host does the rest. No ports are published off the host, and the application ends up at `https://<service>.<tailnet>.ts.net`.
 
 Requirements on the host:
 
@@ -148,9 +148,9 @@ ONCE sets these labels, and only these; anything unset is left to docktail's def
 | --- | --- | --- | --- |
 | `docktail.service.enable` | `--docktail` | off | |
 | `docktail.service.name` | `--docktail-service` | application name | lowercased DNS label |
-| `docktail.service.port` | `--docktail-port` | app port | backend container port |
+| `docktail.service.port` | `--app-port` | app port | the port the app listens on; docktail always proxies to it |
 | `docktail.service.description` | `--docktail-description` | unset | user-set only; synced to the Service comment; needs API credentials |
-| `docktail.service.direct` | `--docktail-direct` | `true` | user-set only; `false` publishes the backend port on loopback only, and docktail proxies through that binding |
+| `docktail.service.direct` | | `true` | always true: docktail always proxies straight to the container on the Docker network, because ONCE can't safely manage host port publishing |
 | `docktail.service.network` | `--docktail-network` | `bridge` or first available | user-set only; network used for container IP detection |
 | `docktail.service.protocol` | `--docktail-protocol` | `https` on port 443, else `http` | backend: `http`, `https`, `https+insecure`, `tcp` or `tls-terminated-tcp` |
 | `docktail.service.service-port` | `--docktail-service-port` | `443` for HTTPS, `80` otherwise | port Tailscale listens on |
@@ -169,7 +169,7 @@ ONCE doesn't register a docktail app with its proxy, so it's not reachable on th
 
 After deploying, ONCE waits up to 30 seconds for `tailscale serve status` to show the Service. If it doesn't appear -- docktail isn't running, the node has no tags, or the Service is still awaiting approval in the admin console -- ONCE asks whether to retry the check or roll the application back. In non-interactive use it warns and keeps the application, because docktail reconciles continuously and picks it up once that's fixed.
 
-If a Service doesn't work once it's deployed, `once doctor` will tell you why. It checks that the container is running, that the application answers its health check, that the `docktail.*` labels match your settings, that the backend port the Service advertises is really listening in the container, that docktail is running, and that the Service points at the current container. It only inspects: it never changes anything.
+If a Service doesn't work once it's deployed, `once doctor` will tell you why. It checks that the container is running, that the application answers its health check, that the `docktail.*` labels match your settings, that the app port the Service advertises is really listening in the container, that docktail is running, and that the Service points at the current container. It only inspects: it never changes anything.
 
 ```sh
 once doctor                        # check every deployed application
