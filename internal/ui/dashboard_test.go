@@ -141,6 +141,41 @@ func TestDashboard_ActionsMenuRemove(t *testing.T) {
 	assert.Equal(t, d.apps[0], navMsg.App)
 }
 
+func TestDashboard_ActionsMenuDiagnose(t *testing.T) {
+	d := testDashboard(1)
+	d.width = 80
+	d.height = 40
+	d.updateViewportSize()
+	d.rebuildViewportContent()
+
+	_, cmd := updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuDiagnose})
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	navMsg, ok := msg.(NavigateToDoctorMsg)
+	require.True(t, ok, "expected NavigateToDoctorMsg, got %T", msg)
+	assert.Equal(t, d.apps[0], navMsg.App)
+}
+
+func TestDashboard_ScrollsWithSeveralApps(t *testing.T) {
+	d := testDashboard(5)
+	d.width = 80
+	d.height = 24
+	d.updateViewportSize()
+	d.rebuildViewportContent()
+
+	for range 4 {
+		d, _ = updateDashboard(d, keyPressMsg("down"))
+	}
+
+	assert.Equal(t, 4, d.selectedIndex)
+	assert.Greater(t, d.viewport.YOffset(), 0, "the viewport scrolled to keep the selection visible")
+
+	d, _ = updateDashboard(d, keyPressMsg("up"))
+	d, _ = updateDashboard(d, keyPressMsg("up"))
+	assert.Equal(t, 2, d.selectedIndex)
+}
+
 func TestDashboard_OldStartStopKeyRemoved(t *testing.T) {
 	d := testDashboard(1)
 	d.width = 80

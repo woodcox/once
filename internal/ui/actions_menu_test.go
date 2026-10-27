@@ -63,6 +63,40 @@ func TestActionsMenu_SelectRemove(t *testing.T) {
 	assert.Equal(t, ActionsMenuRemove, selectMsg.action)
 }
 
+func TestActionsMenu_ContainsDiagnose(t *testing.T) {
+	app := &docker.Application{}
+	m := NewActionsMenu(app)
+
+	assert.Contains(t, m.View(), "Diagnose")
+}
+
+func TestActionsMenu_SelectDiagnose(t *testing.T) {
+	app := &docker.Application{}
+	m := NewActionsMenu(app)
+
+	m, cmd := updateActionsMenu(m, keyPressMsg("d"))
+	require.NotNil(t, cmd)
+	msg := cmd()
+
+	_, cmd = updateActionsMenu(m, msg)
+	require.NotNil(t, cmd)
+	msg = cmd()
+
+	selectMsg, ok := msg.(ActionsMenuSelectMsg)
+	require.True(t, ok, "expected ActionsMenuSelectMsg, got %T", msg)
+	assert.Equal(t, ActionsMenuDiagnose, selectMsg.action)
+	assert.Equal(t, app, selectMsg.app)
+}
+
+func TestActionsMenu_DiagnoseSitsBetweenStartStopAndRemove(t *testing.T) {
+	app := &docker.Application{}
+	m := NewActionsMenu(app)
+
+	assert.Equal(t, int(ActionsMenuStartStop), m.menu.items[0].Key)
+	assert.Equal(t, int(ActionsMenuDiagnose), m.menu.items[1].Key)
+	assert.Equal(t, int(ActionsMenuRemove), m.menu.items[2].Key)
+}
+
 func TestActionsMenu_EscCloses(t *testing.T) {
 	app := &docker.Application{}
 	m := NewActionsMenu(app)
@@ -79,11 +113,18 @@ func TestActionsMenu_KeyboardNavigation(t *testing.T) {
 	app := &docker.Application{Running: true}
 	m := NewActionsMenu(app)
 
-	// Navigate down to Remove
+	// Navigate down to Diagnose
 	m, _ = updateActionsMenu(m, keyPressMsg("j"))
 	assert.Equal(t, 1, m.menu.selected)
 
+	// Navigate down to Remove
+	m, _ = updateActionsMenu(m, keyPressMsg("j"))
+	assert.Equal(t, 2, m.menu.selected)
+
 	// Navigate back up to Start/Stop
+	m, _ = updateActionsMenu(m, keyPressMsg("k"))
+	assert.Equal(t, 1, m.menu.selected)
+
 	m, _ = updateActionsMenu(m, keyPressMsg("k"))
 	assert.Equal(t, 0, m.menu.selected)
 
@@ -99,7 +140,7 @@ func TestActionsMenu_KeyboardNavigation(t *testing.T) {
 
 	selectMsg, ok := msg.(ActionsMenuSelectMsg)
 	require.True(t, ok, "expected ActionsMenuSelectMsg, got %T", msg)
-	assert.Equal(t, ActionsMenuRemove, selectMsg.action)
+	assert.Equal(t, ActionsMenuDiagnose, selectMsg.action)
 }
 
 func TestActionsMenu_TitleCentered(t *testing.T) {

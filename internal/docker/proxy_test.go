@@ -1,9 +1,12 @@
 package docker
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestProxyContainerName(t *testing.T) {
@@ -57,5 +60,32 @@ func TestDeployArgs(t *testing.T) {
 			"--host", "chat.example.com",
 			"--tls",
 		}, args)
+	})
+}
+
+func TestRemoveProxyServiceTreatsMissingServiceAsSuccess(t *testing.T) {
+	notFound := errors.New("exec failed with exit code 1: error: service not found")
+
+	t.Run("never registered", func(t *testing.T) {
+		exec := func(context.Context, []string) error { return notFound }
+		assert.NoError(t, removeProxyService(context.Background(), "budget", exec))
+	})
+
+	t.Run("registered", func(t *testing.T) {
+		exec := func(context.Context, []string) error { return nil }
+		assert.NoError(t, removeProxyService(context.Background(), "budget", exec))
+	})
+
+	t.Run("other failures still surface", func(t *testing.T) {
+		other := errors.New("exec failed with exit code 1: error: connection refused")
+		exec := func(context.Context, []string) error { return other }
+		assert.ErrorIs(t, removeProxyService(context.Background(), "budget", exec), other)
+	})
+
+	t.Run("passes the service name", func(t *testing.T) {
+		var got []string
+		exec := func(_ context.Context, cmd []string) error { got = cmd; return nil }
+		require.NoError(t, removeProxyService(context.Background(), "budget", exec))
+		assert.Equal(t, []string{"kamal-proxy", "remove", "budget"}, got)
 	})
 }

@@ -792,7 +792,7 @@ func TestRemoveApplication(t *testing.T) {
 	assert.NoError(t, err, "volume should still exist")
 }
 
-func TestVerifyHTTPOrRemoveAllowsRedeployWithSameHost(t *testing.T) {
+func TestFailedVerificationRemovalAllowsRedeployWithSameHost(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -809,8 +809,10 @@ func TestVerifyHTTPOrRemoveAllowsRedeployWithSameHost(t *testing.T) {
 		Host:  "reuse.invalid",
 	})
 
-	err := app.VerifyHTTPOrRemove(ctx)
+	err := app.Verify(ctx)
 	require.ErrorIs(t, err, docker.ErrVerificationFailed)
+
+	require.NoError(t, app.Remove(ctx, true))
 
 	require.NoError(t, ns.Refresh(ctx))
 	assert.False(t, ns.HostInUse("reuse.invalid"))

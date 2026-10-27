@@ -107,6 +107,13 @@ func (m Menu) Update(msg tea.Msg) (Menu, tea.Cmd) {
 	return m, nil
 }
 
+func (m Menu) SelectedKey() int {
+	if m.selected < 0 || m.selected >= len(m.items) {
+		return 0
+	}
+	return m.items[m.selected].Key
+}
+
 func (m Menu) View() string {
 	itemStyle := lipgloss.NewStyle()
 	selectedStyle := lipgloss.NewStyle().Reverse(true)

@@ -168,7 +168,6 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.selectPanel(m.selectedIndex)
 			return m, nil
 		}
-
 	case SettingsMenuCloseMsg:
 		m.overlay = nil
 
@@ -192,6 +191,8 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.updateViewportSize()
 			m.rebuildViewportContent()
 			return m, tea.Batch(m.progress.Init(), m.runStartStop(app))
+		case ActionsMenuDiagnose:
+			return m, func() tea.Msg { return NavigateToDoctorMsg{App: msg.app} }
 		case ActionsMenuRemove:
 			return m, func() tea.Msg { return NavigateToRemoveMsg{App: msg.app} }
 		}
@@ -284,7 +285,8 @@ func (m Dashboard) helpBindings() []key.Binding {
 	if len(m.apps) > 0 {
 		return []key.Binding{
 			dashboardKeys.Up, dashboardKeys.Down, dashboardKeys.Actions,
-			dashboardKeys.Settings, dashboardKeys.Logs, dashboardKeys.Details, dashboardKeys.NewApp, dashboardKeys.Quit,
+			dashboardKeys.Settings, dashboardKeys.Logs, dashboardKeys.Details,
+			dashboardKeys.NewApp, dashboardKeys.Quit,
 		}
 	}
 	return []key.Binding{dashboardKeys.NewApp, dashboardKeys.Quit}
@@ -330,10 +332,14 @@ func (m *Dashboard) updateViewportSize() {
 
 func (m *Dashboard) rebuildViewportContent() {
 	scales := m.computeScales()
+	for i := range m.panels {
+		m.panels[i].Refresh(scales)
+	}
+
 	var views []string
 	for i := range m.panels {
 		toggling := m.toggling && m.togglingApp == m.panels[i].app.Settings.Name
-		views = append(views, m.panels[i].View(i == m.selectedIndex, toggling, dashboardShowDetails, m.width, scales))
+		views = append(views, m.panels[i].View(i == m.selectedIndex, toggling, dashboardShowDetails, m.width))
 	}
 	m.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, views...))
 }

@@ -2,6 +2,8 @@ package docker
 
 import (
 	"encoding/base64"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -313,5 +315,576 @@ func TestAutoUpdateAndBackupMarshalRoundTrip(t *testing.T) {
 	assert.True(t, restored.AutoUpdate)
 	assert.Equal(t, "/backups", restored.Backup.Path)
 	assert.True(t, restored.Backup.AutoBackup)
+	assert.True(t, original.Equal(restored))
+}
+
+func TestEffectiveHealthCheckPath(t *testing.T) {
+	assert.Equal(t, HealthCheckPath, ApplicationSettings{}.EffectiveHealthCheckPath())
+	assert.Equal(t, "/healthz", ApplicationSettings{HealthCheckPath: "/healthz"}.EffectiveHealthCheckPath())
+}
+
+func TestEffectiveAppPort(t *testing.T) {
+	assert.Equal(t, DefaultAppPort, ApplicationSettings{}.EffectiveAppPort())
+	assert.Equal(t, 5006, ApplicationSettings{AppPort: 5006}.EffectiveAppPort())
+}
+
+func TestDeployTarget(t *testing.T) {
+	assert.Equal(t, "abc123", ApplicationSettings{}.DeployTarget("abc123"))
+	assert.Equal(t, "abc123:5006", ApplicationSettings{AppPort: 5006}.DeployTarget("abc123"))
+}
+
+func TestEffectiveVolumePaths(t *testing.T) {
+	assert.Equal(t, AppVolumeMountTargets, ApplicationSettings{}.EffectiveVolumePaths())
+	assert.Equal(t, "/storage, /rails/storage", ApplicationSettings{}.VolumePathsString())
+
+	custom := ApplicationSettings{VolumePaths: []string{"/data"}}
+	assert.Equal(t, []string{"/data"}, custom.EffectiveVolumePaths())
+	assert.Equal(t, "/data", custom.VolumePathsString())
+}
+
+func TestParseVolumePaths(t *testing.T) {
+	assert.Equal(t, []string{"/data", "/config"}, ParseVolumePaths(" /data , /config "))
+	assert.Equal(t, []string{"/data"}, ParseVolumePaths("/data,,  ,"))
+	assert.Nil(t, ParseVolumePaths(""))
+}
+
+func TestAdvancedSettingsValidate(t *testing.T) {
+	base := ApplicationSettings{Name: "app", Image: "img:latest"}
+
+	t.Run("default app port and volume paths", func(t *testing.T) {
+		assert.NoError(t, base.Validate())
+	})
+
+	t.Run("custom app port", func(t *testing.T) {
+		s := base
+		s.AppPort = 5006
+		assert.NoError(t, s.Validate())
+	})
+
+	t.Run("negative app port", func(t *testing.T) {
+		s := base
+		s.AppPort = -1
+		assert.ErrorIs(t, s.Validate(), ErrInvalidAppPort)
+	})
+
+	t.Run("out of range app port", func(t *testing.T) {
+		s := base
+		s.AppPort = 65536
+		assert.ErrorIs(t, s.Validate(), ErrInvalidAppPort)
+	})
+
+	t.Run("relative volume path", func(t *testing.T) {
+		s := base
+		s.VolumePaths = []string{"data"}
+		assert.ErrorIs(t, s.Validate(), ErrInvalidVolumePath)
+	})
+
+	t.Run("absolute volume paths", func(t *testing.T) {
+		s := base
+		s.VolumePaths = []string{"/data", "/config"}
+		assert.NoError(t, s.Validate())
+	})
+
+	t.Run("relative health check path", func(t *testing.T) {
+		s := base
+		s.HealthCheckPath = "health"
+		assert.ErrorIs(t, s.Validate(), ErrInvalidHealthCheckPath)
+	})
+
+	t.Run("absolute health check path", func(t *testing.T) {
+		s := base
+		s.HealthCheckPath = "/healthz"
+		assert.NoError(t, s.Validate())
+	})
+}
+
+func TestAdvancedSettingsEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{
+		Name:            "app",
+		HealthCheckPath: "/healthz",
+		AppPort:         5006,
+		VolumePaths:     []string{"/data"},
+		SkipRailsEnv:    true,
+	}
+
+	assert.True(t, base.Equal(base))
+
+	healthCheck := base
+	healthCheck.HealthCheckPath = HealthCheckPath
+	assert.False(t, base.Equal(healthCheck))
+
+	appPort := base
+	appPort.AppPort = DefaultAppPort
+	assert.False(t, base.Equal(appPort))
+
+	volumePaths := base
+	volumePaths.VolumePaths = []string{"/data", "/config"}
+	assert.False(t, base.Equal(volumePaths))
+
+	skipRailsEnv := base
+	skipRailsEnv.SkipRailsEnv = false
+	assert.False(t, base.Equal(skipRailsEnv))
+}
+
+func TestAdvancedSettingsMarshalRoundTrip(t *testing.T) {
+	original := ApplicationSettings{
+		Name:            "app",
+		Image:           "img:latest",
+		HealthCheckPath: "/healthz",
+		AppPort:         5006,
+		VolumePaths:     []string{"/data"},
+		SkipRailsEnv:    true,
+	}
+
+	restored, err := UnmarshalApplicationSettings(original.Marshal())
+	require.NoError(t, err)
+
+	assert.Equal(t, "/healthz", restored.HealthCheckPath)
+	assert.Equal(t, 5006, restored.AppPort)
+	assert.Equal(t, []string{"/data"}, restored.VolumePaths)
+	assert.True(t, restored.SkipRailsEnv)
+	assert.True(t, original.Equal(restored))
+}
+
+func TestSanitizeDNSLabel(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"budget", "budget"},
+		{"example-app", "example-app"},
+		{"My App", "my-app"},
+		{"  Budget  ", "budget"},
+		{"app_name.v2", "app-name-v2"},
+		{"a///b", "a-b"},
+		{"---leading", "leading"},
+		{"trailing---", "trailing"},
+		{"", ""},
+		{"///", ""},
+		{"Ünïcodé", "n-cod"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			assert.Equal(t, tt.want, SanitizeDNSLabel(tt.in))
+		})
+	}
+}
+
+func TestSanitizeDNSLabelTruncation(t *testing.T) {
+	assert.Equal(t, strings.Repeat("a", 63), SanitizeDNSLabel(strings.Repeat("a", 70)))
+	assert.Equal(t, strings.Repeat("a", 62), SanitizeDNSLabel(strings.Repeat("a", 62)+"-bcd"))
+}
+
+func TestDocktailEnabled(t *testing.T) {
+	assert.False(t, ApplicationSettings{}.DocktailEnabled())
+	assert.False(t, ApplicationSettings{Tailscale: TailscaleSettings{Enabled: true}}.DocktailEnabled())
+	assert.False(t, ApplicationSettings{Tailscale: TailscaleSettings{Mode: DocktailMode}}.DocktailEnabled())
+	assert.True(t, ApplicationSettings{Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}.DocktailEnabled())
+}
+
+func TestEffectiveServiceName(t *testing.T) {
+	assert.Equal(t, "my-app", ApplicationSettings{Name: "My App"}.EffectiveServiceName())
+	assert.Equal(t, "example", ApplicationSettings{Name: "my-app", Tailscale: TailscaleSettings{Service: "Example"}}.EffectiveServiceName())
+}
+
+func TestDocktailLabels(t *testing.T) {
+	disabled := ApplicationSettings{Name: "budget"}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "false",
+		"docktail.funnel.enable":  "false",
+	}, disabled.DocktailLabels())
+
+	enabledWithoutMode := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true}}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "false",
+		"docktail.funnel.enable":  "false",
+	}, enabledWithoutMode.DocktailLabels())
+
+	unknownMode := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: "funnel"}}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable": "false",
+		"docktail.funnel.enable":  "false",
+	}, unknownMode.DocktailLabels())
+
+	derived := ApplicationSettings{Name: "budget", AppPort: 5006, Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "5006",
+		"docktail.service.service-port":     "443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "https",
+		"docktail.service.direct":           "true",
+		"docktail.tags":                     "tag:container",
+	}, derived.DocktailLabels())
+
+	overridden := ApplicationSettings{
+		Name:    "budget",
+		AppPort: 5006,
+		Tailscale: TailscaleSettings{
+			Enabled:     true,
+			Mode:        DocktailMode,
+			Service:     "Example App",
+			ServicePort: 8443,
+			Path:        "/budget",
+			Tags:        "tag:server,tag:app",
+		},
+	}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "example-app",
+		"docktail.service.port":             "5006",
+		"docktail.service.service-port":     "8443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "http",
+		"docktail.service.direct":           "true",
+		"docktail.tags":                     "tag:server,tag:app",
+		"docktail.service.path":             "/budget",
+	}, overridden.DocktailLabels())
+
+	conventional := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 80, Path: "/"}}
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "80",
+		"docktail.service.service-port":     "80",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "http",
+		"docktail.service.direct":           "true",
+		"docktail.tags":                     "tag:container",
+	}, conventional.DocktailLabels())
+}
+
+func TestDocktailLabelsAlwaysFollowTheAppPort(t *testing.T) {
+	for _, port := range []int{0, 80, 443, 5006, 65535} {
+		s := ApplicationSettings{Name: "budget", AppPort: port, Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+		assert.Equal(t, strconv.Itoa(s.EffectiveAppPort()), s.DocktailLabels()[docktailLabelPort])
+		assert.Equal(t, "true", s.DocktailLabels()[docktailLabelDirect])
+	}
+}
+
+func TestUnmarshalApplicationSettingsIgnoresRemovedTailscaleKeys(t *testing.T) {
+	// Settings stored by older ONCE versions carry a tailscale port and a
+	// direct flag. Both are gone from the struct, and unknown JSON keys are
+	// ignored, so those settings still load; the next deploy proxies to the
+	// app port and always advertises direct=true.
+	stored := `{"name":"budget","image":"example/app:latest","appPort":5006,` +
+		`"tailscale":{"enabled":true,"mode":"docktail","service":"budget","port":8080,"direct":false}}`
+
+	settings, err := UnmarshalApplicationSettings(stored)
+	require.NoError(t, err)
+
+	assert.Equal(t, 5006, settings.AppPort)
+	assert.Equal(t, TailscaleSettings{
+		Enabled: true,
+		Mode:    DocktailMode,
+		Service: "budget",
+	}, settings.Tailscale)
+	assert.Equal(t, "5006", settings.DocktailLabels()[docktailLabelPort])
+	assert.Equal(t, "true", settings.DocktailLabels()[docktailLabelDirect])
+}
+
+func TestEffectiveServicePort(t *testing.T) {
+	assert.Equal(t, 443, ApplicationSettings{}.EffectiveServicePort())
+	assert.Equal(t, 443, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 0}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 80}}.EffectiveServicePort())
+	assert.Equal(t, 8443, ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 8443}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tcp"}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tcp", ServiceProtocol: "tcp"}}.EffectiveServicePort())
+	assert.Equal(t, 80, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tls-terminated-tcp"}}.EffectiveServicePort())
+	assert.Equal(t, 443, ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "https"}}.EffectiveServicePort())
+}
+
+func TestDocktailLabelsMarshalRoundTrip(t *testing.T) {
+	original := ApplicationSettings{
+		Name:      "budget",
+		Image:     "example/app:latest",
+		AppPort:   5006,
+		Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode, Service: "budget", Tags: "tag:app"},
+	}
+
+	restored, err := UnmarshalApplicationSettings(original.Marshal())
+	require.NoError(t, err)
+
+	assert.Equal(t, original.Tailscale, restored.Tailscale)
+	assert.Equal(t, original.DocktailLabels(), restored.DocktailLabels())
+	assert.True(t, original.Equal(restored))
+}
+
+func TestTailscaleSettingsEqualDiffers(t *testing.T) {
+	base := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+
+	disabled := base
+	disabled.Tailscale.Enabled = false
+	assert.False(t, base.Equal(disabled))
+
+	renamed := base
+	renamed.Tailscale.Service = "other"
+	assert.False(t, base.Equal(renamed))
+
+	assert.True(t, base.Equal(base))
+}
+
+func TestValidateTailscale(t *testing.T) {
+	base := ApplicationSettings{Name: "budget", Image: "img:latest"}
+
+	t.Run("disabled", func(t *testing.T) {
+		assert.NoError(t, base.ValidateTailscale())
+	})
+
+	t.Run("enabled with a mode", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode}
+		assert.NoError(t, s.ValidateTailscale())
+	})
+
+	t.Run("enabled without a mode", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailMode)
+	})
+
+	t.Run("unsupported mode", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: "tsnet"}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailMode)
+	})
+
+	t.Run("service name sanitizes to nothing", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Service: "///"}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrDocktailServiceRequired)
+	})
+
+	t.Run("app name sanitizes to nothing", func(t *testing.T) {
+		s := base
+		s.Name = "///"
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrDocktailServiceRequired)
+	})
+
+	t.Run("ports out of range", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: -1}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailPort)
+
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 70000}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailPort)
+	})
+
+	t.Run("relative path", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Path: "budget"}
+		assert.ErrorIs(t, s.ValidateTailscale(), ErrInvalidDocktailPath)
+	})
+
+	t.Run("absolute path", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, Path: "/budget"}
+		assert.NoError(t, s.ValidateTailscale())
+	})
+
+	t.Run("valid ports", func(t *testing.T) {
+		s := base
+		s.Tailscale = TailscaleSettings{Enabled: true, Mode: DocktailMode, ServicePort: 443}
+		assert.NoError(t, s.ValidateTailscale())
+	})
+}
+
+func TestDocktailLabelsOptionalFields(t *testing.T) {
+	t.Run("unset optional labels are emitted as effective defaults", func(t *testing.T) {
+		s := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+		assert.Equal(t, map[string]string{
+			"docktail.service.enable":           "true",
+			"docktail.funnel.enable":            "false",
+			"docktail.service.name":             "budget",
+			"docktail.service.port":             "80",
+			"docktail.service.service-port":     "443",
+			"docktail.service.protocol":         "http",
+			"docktail.service.service-protocol": "https",
+			"docktail.service.direct":           "true",
+			"docktail.tags":                     "tag:container",
+		}, s.DocktailLabels())
+	})
+
+	t.Run("all optional labels are emitted", func(t *testing.T) {
+		s := ApplicationSettings{
+			Name: "budget",
+			Tailscale: TailscaleSettings{
+				Enabled:         true,
+				Mode:            DocktailMode,
+				ServicePort:     5432,
+				Tags:            "tag:server",
+				Description:     "Budget app",
+				Protocol:        "tcp",
+				ServiceProtocol: "tls-terminated-tcp",
+				ProxyProtocol:   "2",
+				Network:         "once",
+			},
+		}
+		assert.Equal(t, map[string]string{
+			"docktail.service.enable":           "true",
+			"docktail.funnel.enable":            "false",
+			"docktail.service.name":             "budget",
+			"docktail.service.port":             "80",
+			"docktail.service.service-port":     "5432",
+			"docktail.tags":                     "tag:server",
+			"docktail.service.description":      "Budget app",
+			"docktail.service.protocol":         "tcp",
+			"docktail.service.service-protocol": "tls-terminated-tcp",
+			"docktail.service.proxy-protocol":   "2",
+			"docktail.service.direct":           "true",
+			"docktail.service.network":          "once",
+		}, s.DocktailLabels())
+	})
+
+	t.Run("path is omitted for TCP service protocols", func(t *testing.T) {
+		s := ApplicationSettings{
+			Name: "budget",
+			Tailscale: TailscaleSettings{
+				Enabled:         true,
+				Mode:            DocktailMode,
+				Protocol:        "tcp",
+				ServiceProtocol: "tcp",
+				ServicePort:     5432,
+				Path:            "/budget",
+			},
+		}
+		assert.NotContains(t, s.DocktailLabels(), "docktail.service.path")
+	})
+
+	t.Run("path is emitted for HTTP(S) service protocols", func(t *testing.T) {
+		s := ApplicationSettings{
+			Name: "budget",
+			Tailscale: TailscaleSettings{
+				Enabled: true,
+				Mode:    DocktailMode,
+				Path:    "/budget",
+			},
+		}
+		assert.Equal(t, "/budget", s.DocktailLabels()["docktail.service.path"])
+	})
+
+	t.Run("default tag is used when user did not supply one", func(t *testing.T) {
+		s := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+		assert.Equal(t, "tag:container", s.DocktailLabels()["docktail.tags"])
+	})
+
+	t.Run("direct is always emitted as true", func(t *testing.T) {
+		s := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+		assert.Equal(t, "true", s.DocktailLabels()["docktail.service.direct"])
+	})
+
+	t.Run("public mode container gets explicit enable and funnel disable", func(t *testing.T) {
+		s := ApplicationSettings{Name: "budget"}
+		labels := s.DocktailLabels()
+		assert.Equal(t, "false", labels["docktail.service.enable"])
+		assert.Equal(t, "false", labels["docktail.funnel.enable"])
+	})
+}
+
+func TestEffectiveDocktailProtocols(t *testing.T) {
+	assert.Equal(t, "http", ApplicationSettings{}.effectiveProtocol())
+	assert.Equal(t, "https", ApplicationSettings{AppPort: 443}.effectiveProtocol())
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "https"}}.effectiveProtocol())
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tcp"}}.effectiveProtocol())
+
+	assert.Equal(t, "https", ApplicationSettings{}.effectiveServiceProtocol())
+	assert.Equal(t, "http", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 80}}.effectiveServiceProtocol())
+	assert.Equal(t, "http", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 5432}}.effectiveServiceProtocol())
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 5432, Protocol: "tcp"}}.effectiveServiceProtocol())
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 5432, Protocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 8443, ServiceProtocol: "https"}}.effectiveServiceProtocol())
+	assert.Equal(t, "tls-terminated-tcp", ApplicationSettings{Tailscale: TailscaleSettings{ServiceProtocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
+
+	// Unset service port: choose by backend.
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tcp"}}.effectiveServiceProtocol())
+	assert.Equal(t, "tcp", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "tls-terminated-tcp"}}.effectiveServiceProtocol())
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "https"}}.effectiveServiceProtocol())
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{Protocol: "https+insecure"}}.effectiveServiceProtocol())
+
+	// Explicit service port 443 short-circuits to https regardless of backend.
+	assert.Equal(t, "https", ApplicationSettings{Tailscale: TailscaleSettings{ServicePort: 443, Protocol: "tcp"}}.effectiveServiceProtocol())
+}
+
+func TestValidateTailscaleProtocols(t *testing.T) {
+	settings := func(tailscale TailscaleSettings) ApplicationSettings {
+		tailscale.Enabled, tailscale.Mode = true, DocktailMode
+		return ApplicationSettings{Name: "budget", Image: "img:latest", Tailscale: tailscale}
+	}
+
+	t.Run("backend protocol", func(t *testing.T) {
+		for _, protocol := range []string{"http", "https", "https+insecure", "tcp", "tls-terminated-tcp"} {
+			assert.NoError(t, settings(TailscaleSettings{Protocol: protocol}).ValidateTailscale())
+		}
+		assert.ErrorIs(t, settings(TailscaleSettings{Protocol: "grpc"}).ValidateTailscale(), ErrInvalidDocktailProtocol)
+	})
+
+	t.Run("service protocol", func(t *testing.T) {
+		for _, protocol := range []string{"http", "https", "tcp", "tls-terminated-tcp"} {
+			assert.NoError(t, settings(TailscaleSettings{ServiceProtocol: protocol}).ValidateTailscale())
+		}
+		assert.ErrorIs(t, settings(TailscaleSettings{ServiceProtocol: "udp"}).ValidateTailscale(), ErrInvalidDocktailServiceProtocol)
+	})
+
+	t.Run("proxy protocol enum", func(t *testing.T) {
+		assert.NoError(t, settings(TailscaleSettings{ServicePort: 5432, Protocol: "tcp", ProxyProtocol: "1"}).ValidateTailscale())
+		assert.NoError(t, settings(TailscaleSettings{ServicePort: 5432, Protocol: "tcp", ProxyProtocol: "2"}).ValidateTailscale())
+		assert.ErrorIs(t, settings(TailscaleSettings{ProxyProtocol: "3"}).ValidateTailscale(), ErrInvalidDocktailProxyProtocol)
+	})
+
+	t.Run("proxy protocol requires TCP", func(t *testing.T) {
+		assert.ErrorIs(t, settings(TailscaleSettings{ProxyProtocol: "2"}).ValidateTailscale(), ErrDocktailProxyProtocolWithoutTCP)
+		assert.ErrorIs(t, settings(TailscaleSettings{ServicePort: 8443, ServiceProtocol: "https", ProxyProtocol: "2"}).ValidateTailscale(), ErrDocktailProxyProtocolWithoutTCP)
+		assert.NoError(t, settings(TailscaleSettings{ServiceProtocol: "tcp", ProxyProtocol: "2"}).ValidateTailscale())
+		assert.NoError(t, settings(TailscaleSettings{ServiceProtocol: "tls-terminated-tcp", ProxyProtocol: "2"}).ValidateTailscale())
+	})
+
+	t.Run("path is rejected for TCP", func(t *testing.T) {
+		assert.ErrorIs(t, settings(TailscaleSettings{ServicePort: 5432, Protocol: "tcp", Path: "/budget"}).ValidateTailscale(), ErrDocktailPathOnTCP)
+		assert.ErrorIs(t, settings(TailscaleSettings{ServicePort: 5432, Protocol: "tls-terminated-tcp", Path: "/budget"}).ValidateTailscale(), ErrDocktailPathOnTCP)
+		assert.NoError(t, settings(TailscaleSettings{ServicePort: 5432, Protocol: "tcp", Path: "/"}).ValidateTailscale())
+		assert.NoError(t, settings(TailscaleSettings{Path: "/budget"}).ValidateTailscale())
+	})
+
+	t.Run("install validation includes tailscale checks", func(t *testing.T) {
+		assert.ErrorIs(t, settings(TailscaleSettings{ProxyProtocol: "2"}).Validate(), ErrDocktailProxyProtocolWithoutTCP)
+		assert.ErrorIs(t, settings(TailscaleSettings{Protocol: "grpc"}).Validate(), ErrInvalidDocktailProtocol)
+	})
+}
+
+func TestTailscaleSettingsMarshalWithoutOptionalFields(t *testing.T) {
+	s := ApplicationSettings{Name: "budget", Tailscale: TailscaleSettings{Enabled: true, Mode: DocktailMode}}
+	assert.Equal(t, `{"name":"budget","image":"","host":"","disableTLS":false,"tailscale":{"enabled":true,"mode":"docktail"},"env":null,"smtp":{},"resources":{},"autoUpdate":false,"backup":{},"keys":{},"registry":{}}`, s.Marshal())
+}
+
+func TestDocktailLabelsOptionalFieldsMarshalRoundTrip(t *testing.T) {
+	original := ApplicationSettings{
+		Name:    "budget",
+		Image:   "example/app:latest",
+		AppPort: 5006,
+		Tailscale: TailscaleSettings{
+			Enabled:         true,
+			Mode:            DocktailMode,
+			Service:         "budget",
+			ServicePort:     5432,
+			Tags:            "tag:app",
+			Description:     "Budget app",
+			Protocol:        "tcp",
+			ServiceProtocol: "tls-terminated-tcp",
+			ProxyProtocol:   "2",
+			Network:         "once",
+		},
+	}
+
+	restored, err := UnmarshalApplicationSettings(original.Marshal())
+	require.NoError(t, err)
+
+	assert.Equal(t, original.Tailscale, restored.Tailscale)
+	assert.Equal(t, original.DocktailLabels(), restored.DocktailLabels())
 	assert.True(t, original.Equal(restored))
 }

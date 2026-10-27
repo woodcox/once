@@ -77,6 +77,20 @@ From there you can set up a location for automatic backups, update your hostname
 
 You can also use the action menu, `a` to start and stop applications, or remove them completely.
 
+### Advanced settings
+
+ONCE assumes applications follow the conventions described in [Making a ONCE-compatible application](#making-a-once-compatible-application): HTTP on port 80, a health check at `/up`, and data in `/storage`.
+
+Plenty of images don't. When installing a custom image, the `Advanced settings` button on the hostname screen lets you override them:
+
+- `Health check path` -- where ONCE and the proxy check that the application is up (default `/up`).
+- `App port` -- the port the application listens on inside its container (default `80`).
+- `Volume paths` -- where the application's data volume is mounted (default `/storage, /rails/storage`). The first entry is the one used for backups.
+- `Rails environment` -- skips the `SECRET_KEY_BASE`, VAPID and `DISABLE_SSL` variables, for applications that aren't Rails apps.
+- Any number of extra environment variables.
+
+The same options are available afterwards under Settings -> Application, and on the CLI as `--health-check-path`, `--app-port`, `--volume-paths` and `--skip-rails-env`. On `once update`, each flag is only applied if you pass it.
+
 ### Customizing the `once` appearance
 
 On first run, `once` shows an animated logo and background.
@@ -85,6 +99,84 @@ If you find this distracting, or it causes problems in your environment, you can
 ```sh
 ONCE_REDUCED_MOTION=true once
 ```
+
+## Exposing applications on Tailscale with docktail
+
+ONCE can advertise an application to your tailnet as a native [Tailscale Service](https://tailscale.com/docs/features/tailscale-services) through [docktail](https://docktail.org/).
+
+ONCE doesn't talk to Tailscale itself: it bundles no Tailscale client, holds no auth keys, and never writes Tailscale configuration (that needs root). It only adds `docktail.*` labels to the application container, as you would in a `docker-compose.yml`, and the docktail container on the host does the rest. No ports are published off the host, and the application ends up at `https://<service>.<tailnet>.ts.net`.
+
+Requirements on the host:
+
+- docktail running, with the Docker socket and the host's tailscaled socket mounted:
+
+  ```yaml
+  services:
+    docktail:
+      image: ghcr.io/marvinvr/docktail:latest
+      restart: unless-stopped
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock:ro
+        - /var/run/tailscale:/var/run/tailscale
+  ```
+
+- The node tagged (e.g. `tag:server`), with matching `tagOwners` and an `autoApprovers.services` rule in the tailnet policy file. Without the auto-approver, each advertised Service host needs approving by hand.
+- A Service defined per application: docktail creates them from the labels if you give it `TAILSCALE_OAUTH_CLIENT_ID`/`TAILSCALE_OAUTH_CLIENT_SECRET`, otherwise create them yourself in the admin console. Either way the name must match the application's `Service name` (or the application name), lowercased and with anything that isn't a letter or digit replaced by a hyphen. Tailscale accepts the advertisement even when no such Service is defined, so ONCE confirming the Service was advertised doesn't mean clients can reach it -- that also needs the Service to exist and its host to be approved.
+- A grant letting clients reach it, since a Service is its own grant destination:
+
+  ```json
+  {
+    "grants": [
+      {
+        "src": ["autogroup:member"],
+        "dst": ["svc:myapp"],
+        "ip": ["443"]
+      }
+    ]
+  }
+  ```
+
+Turn it on with `Tailscale Service` in the install advanced settings, later under Settings -> Application, or from the CLI:
+
+```sh
+once deploy <image> --host app.example.com --docktail --docktail-service myapp
+```
+
+ONCE sets these labels, and only these; anything unset is left to docktail's defaults:
+
+| Label | ONCE field | Default | Notes |
+| --- | --- | --- | --- |
+| `docktail.service.enable` | `--docktail` | off | |
+| `docktail.service.name` | `--docktail-service` | application name | lowercased DNS label |
+| `docktail.service.port` | `--app-port` | app port | the port the app listens on; docktail always proxies to it |
+| `docktail.service.description` | `--docktail-description` | unset | user-set only; synced to the Service comment; needs API credentials |
+| `docktail.service.direct` | | `true` | always true: docktail always proxies straight to the container on the Docker network, because ONCE can't safely manage host port publishing |
+| `docktail.service.network` | `--docktail-network` | `bridge` or first available | user-set only; network used for container IP detection |
+| `docktail.service.protocol` | `--docktail-protocol` | `https` on port 443, else `http` | backend: `http`, `https`, `https+insecure`, `tcp` or `tls-terminated-tcp` |
+| `docktail.service.service-port` | `--docktail-service-port` | `443` for HTTPS, `80` otherwise | port Tailscale listens on |
+| `docktail.service.service-protocol` | `--docktail-service-protocol` | `https` on 443, `tcp` for TCP, else `http` | `http`, `https`, `tcp` or `tls-terminated-tcp` |
+| `docktail.service.path` | `--docktail-path` | `/` | HTTP(S) only; rejected for TCP |
+| `docktail.service.proxy-protocol` | `--docktail-proxy-protocol` | off | `1` or `2`; TCP only |
+| `docktail.tags` | `--docktail-tags` | `tag:container` | user-set only when explicitly set, otherwise docktail's default |
+
+Funnel (`docktail.funnel.*`) is not supported: ONCE only advertises private Services.
+
+Set the application's hostname to the Service's tailnet name, so the URLs ONCE generates point at the address clients use.
+
+Tailscale terminates TLS and passes the original hostname through to the application, along with `X-Forwarded-Proto: https`, `X-Forwarded-Host` and `X-Forwarded-For`. It also adds identity headers (`Tailscale-User-Login`, `Tailscale-User-Name`, `Tailscale-User-Profile-Pic`), so an application can tell which tailnet user is connecting. Don't treat those headers as authorization on their own: anyone who can publish a port on this host (or share its network namespace) can still forge them.
+
+ONCE doesn't register a docktail app with its proxy, so it's not reachable on the host's 80/443 -- the tailnet is the only way in. If you need public or LAN access, don't use docktail mode.
+
+After deploying, ONCE waits up to 30 seconds for `tailscale serve status` to show the Service. If it doesn't appear -- docktail isn't running, the node has no tags, or the Service is still awaiting approval in the admin console -- ONCE asks whether to retry the check or roll the application back. In non-interactive use it warns and keeps the application, because docktail reconciles continuously and picks it up once that's fixed.
+
+If a Service doesn't work once it's deployed, `once doctor` will tell you why. It checks that the container is running, that the application answers its health check, that the `docktail.*` labels match your settings, that the app port the Service advertises is really listening in the container, that docktail is running, and that the Service points at the current container. It only inspects: it never changes anything.
+
+```sh
+once doctor                        # check every deployed application
+once doctor myapp.example.com      # check just one, by hostname
+```
+
+It exits non-zero when a check fails, so it can be used in a script.
 
 ## Making a ONCE-compatible application
 
@@ -96,6 +188,8 @@ Fundamentally, ONCE works with any web application that:
 - Keeps its persistent data in `/storage`
 
 Any application that does these things should work with ONCE.
+
+If yours doesn't, don't give up on it: the [advanced settings](#advanced-settings) let you point ONCE at the port, health check path and data directories it actually uses.
 
 However, beyond this bare minimum, there are some additional scripts and environment variables that allow for better integration with the platform:
 

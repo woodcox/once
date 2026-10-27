@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -38,32 +42,31 @@ func TestSettingsFormApplication_InitialState_Localhost(t *testing.T) {
 
 func TestSettingsFormApplication_TabNavigation(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
-	assert.Equal(t, 0, form.form.Focused())
+	assert.Equal(t, appImageField, form.form.Focused())
+
+	for i := appHostnameField; i < form.form.ItemCount(); i++ {
+		applicationPressTab(&form)
+		assert.Equal(t, i, form.form.Focused())
+	}
 
 	applicationPressTab(&form)
-	assert.Equal(t, 1, form.form.Focused(), "hostname")
+	assert.Equal(t, form.form.ItemCount(), form.form.Focused(), "done button")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 2, form.form.Focused(), "tls")
+	assert.Equal(t, form.form.ItemCount()+1, form.form.Focused(), "cancel button")
 
 	applicationPressTab(&form)
-	assert.Equal(t, 3, form.form.Focused(), "done button")
-
-	applicationPressTab(&form)
-	assert.Equal(t, 4, form.form.Focused(), "cancel button")
-
-	applicationPressTab(&form)
-	assert.Equal(t, 0, form.form.Focused(), "wraps to image")
+	assert.Equal(t, appImageField, form.form.Focused(), "wraps to image")
 }
 
 func TestSettingsFormApplication_ShiftTabNavigation(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 4, form.form.Focused(), "cancel button")
+	assert.Equal(t, form.form.ItemCount()+1, form.form.Focused(), "cancel button")
 
 	applicationPressShiftTab(&form)
-	assert.Equal(t, 3, form.form.Focused(), "done button")
+	assert.Equal(t, form.form.ItemCount(), form.form.Focused(), "done button")
 }
 
 func TestSettingsFormApplication_SpaceTogglesTLS(t *testing.T) {
@@ -111,9 +114,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 		Host:  "app.example.com",
 	})
 
-	for range 3 {
-		applicationPressTab(&form)
-	}
+	applicationTabToSubmit(&form)
 
 	var cmd tea.Cmd
 	result, cmd := form.Update(keyPressMsg("enter"))
@@ -131,9 +132,7 @@ func TestSettingsFormApplication_Submit(t *testing.T) {
 func TestSettingsFormApplication_Cancel(t *testing.T) {
 	form := NewSettingsFormApplication(docker.ApplicationSettings{Host: "app.example.com"})
 
-	for range 4 {
-		applicationPressTab(&form)
-	}
+	applicationTabToCancel(&form)
 
 	result, cmd := form.Update(keyPressMsg("enter"))
 	form = result.(SettingsFormApplication)
@@ -141,6 +140,328 @@ func TestSettingsFormApplication_Cancel(t *testing.T) {
 	msg := cmd()
 	_, ok := msg.(SettingsSectionCancelMsg)
 	assert.True(t, ok, "expected SettingsSectionCancelMsg, got %T", msg)
+}
+
+func TestSettingsFormApplication_LeavesTailscaleSettingsAlone(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			ServicePort: 443,
+			Path:        "/",
+		},
+	}
+
+	form := NewSettingsFormApplication(original)
+
+	assert.NotContains(t, ansi.Strip(form.View()), "Tailscale")
+	assert.True(t, original.Equal(applicationSubmit(t, &form)), "the Application section keeps the Service settings untouched")
+}
+
+func TestSettingsFormTailscale_InitialState(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Name: "budget",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			ServicePort: 8443,
+			Path:        "/budget",
+			Tags:        "tag:server",
+		},
+	}
+
+	form := NewSettingsFormTailscale(settings)
+
+	assert.Equal(t, "Tailscale", form.Title())
+	assert.True(t, form.form.CheckboxField(tailscaleEnabledField).Checked())
+	assert.Equal(t, "budget", form.form.TextField(tailscaleServiceNameField).Value())
+	assert.Equal(t, "8443", form.form.TextField(tailscaleServicePortField).Value())
+	assert.Equal(t, "/budget", form.form.TextField(tailscalePathField).Value())
+	assert.Equal(t, "tag:server", form.form.TextField(tailscaleTagsField).Value())
+}
+
+func TestSettingsFormTailscale_RoundTrip(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			ServicePort: 8443,
+			Path:        "/budget",
+			Tags:        "tag:server",
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+
+	result := tailscaleSubmit(t, &form)
+
+	assert.True(t, original.Equal(result))
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "80",
+		"docktail.service.service-port":     "8443",
+		"docktail.service.protocol":         "http",
+		"docktail.service.service-protocol": "http",
+		"docktail.service.direct":           "true",
+		"docktail.service.path":             "/budget",
+		"docktail.tags":                     "tag:server",
+	}, result.DocktailLabels())
+}
+
+func TestSettingsFormTailscale_RoundTripsEveryLabel(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:    "budget",
+		Image:   "example/app:latest",
+		Host:    "budget.example.com",
+		AppPort: 3000,
+		Tailscale: docker.TailscaleSettings{
+			Enabled:         true,
+			Mode:            docker.DocktailMode,
+			Service:         "budget",
+			Description:     "Budget tracker",
+			Protocol:        "https+insecure",
+			ServicePort:     8443,
+			ServiceProtocol: "https",
+			Path:            "/budget",
+			Tags:            "tag:server",
+			Network:         "tailnet0",
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+
+	assert.Equal(t, "Budget tracker", form.form.TextField(tailscaleDescriptionField).Value())
+	assert.Equal(t, "https+insecure", form.form.TextField(tailscaleBackendProtocolField).Value())
+	assert.Equal(t, "https", form.form.TextField(tailscaleServiceProtocolField).Value())
+	assert.Equal(t, "tailnet0", form.form.TextField(tailscaleNetworkField).Value())
+
+	result := tailscaleSubmit(t, &form)
+
+	assert.True(t, original.Equal(result))
+	assert.Equal(t, map[string]string{
+		"docktail.service.enable":           "true",
+		"docktail.funnel.enable":            "false",
+		"docktail.service.name":             "budget",
+		"docktail.service.port":             "3000",
+		"docktail.service.service-port":     "8443",
+		"docktail.service.protocol":         "https+insecure",
+		"docktail.service.service-protocol": "https",
+		"docktail.service.description":      "Budget tracker",
+		"docktail.service.network":          "tailnet0",
+		"docktail.service.direct":           "true",
+		"docktail.service.path":             "/budget",
+		"docktail.tags":                     "tag:server",
+	}, result.DocktailLabels())
+}
+
+func TestSettingsFormTailscale_ProxyProtocolRoundTrip(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name: "postgres",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:         true,
+			Mode:            docker.DocktailMode,
+			Service:         "postgres",
+			Protocol:        "tcp",
+			ServicePort:     5432,
+			ServiceProtocol: "tls-terminated-tcp",
+			Path:            "/",
+			ProxyProtocol:   "1",
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+
+	assert.Equal(t, "1", form.form.TextField(tailscaleProxyProtocolField).Value())
+
+	result := tailscaleSubmit(t, &form)
+
+	assert.True(t, original.Equal(result))
+	assert.Equal(t, "1", result.DocktailLabels()["docktail.service.proxy-protocol"])
+}
+
+func TestSettingsFormTailscale_ShowsTheLabelsItWillSet(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{
+		Name:    "budget",
+		AppPort: 3000,
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+			Path:    "/budget",
+		},
+	})
+
+	view := ansi.Strip(form.View())
+
+	assert.Contains(t, view, "Labels")
+	assert.Contains(t, view, "docktail.service.enable=true")
+	assert.Contains(t, view, "docktail.service.name=budget")
+	assert.Contains(t, view, "docktail.service.port=3000")
+	assert.Contains(t, view, "docktail.service.service-port=443")
+	assert.Contains(t, view, "docktail.service.path=/budget")
+
+	form.form.TextField(tailscaleNetworkField).SetValue("tailnet0")
+	updateSettingsForm(&form, keyPressMsg("x"))
+
+	updated := ansi.Strip(form.View())
+	assert.Contains(t, updated, "docktail.service.network=tailnet0")
+	assert.Contains(t, updated, "docktail.service.direct=true")
+}
+
+func TestSettingsFormTailscale_ViewShowsDocktailLabels(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{
+		Name: "budget",
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		},
+	})
+
+	view := ansi.Strip(form.View())
+
+	for _, tag := range []string{
+		"docktail.service.name",
+		"docktail.service.protocol",
+		"docktail.service.service-port",
+	} {
+		assert.Contains(t, view, tag, "every field labels which docktail key it maps to")
+	}
+
+	assert.Contains(t, view, "Service name (required)")
+	assert.NotContains(t, view, "Defaults to the application name", "field description moved to the help panel")
+	assert.Contains(t, view, "Publishes this app as a Tailscale Service")
+}
+
+func TestSettingsFormTailscale_HeadingMatchesTheInstallScreen(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget"})
+
+	assert.Contains(t, ansi.Strip(form.View()), tailscaleServicesHeading)
+}
+
+func TestSettingsFormTailscale_RequiredFieldsComeFirst(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{
+		Name:      "budget",
+		Tailscale: docker.TailscaleSettings{Enabled: true, Mode: docker.DocktailMode, Service: "budget"},
+	})
+
+	assert.Less(t, tailscaleServiceNameField, tailscaleDescriptionField, "Service name comes first")
+	assert.Less(t, tailscaleProxyProtocolField, tailscaleLabelsField, "the read-only Labels preview stays last")
+
+	view := ansi.Strip(form.View())
+	assert.Less(t, strings.Index(view, "Service name (required)"), strings.Index(view, "Description"))
+	assert.Less(t, strings.Index(view, "Backend protocol"), strings.Index(view, "Service port"))
+}
+
+func TestSettingsFormTailscale_DisablingHidesTheLabels(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name: "budget",
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+	assert.Contains(t, ansi.Strip(form.View()), "docktail.service.name=budget")
+
+	updateSettingsForm(&form, keyPressMsg(" "))
+	assert.Contains(t, ansi.Strip(form.View()), "(not published)")
+}
+
+func TestSettingsFormTailscale_EnablingDefaultsTheMode(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+	}
+
+	form := NewSettingsFormTailscale(original)
+	form.form.CheckboxField(tailscaleEnabledField).Toggle()
+
+	settings := tailscaleSubmit(t, &form)
+
+	assert.True(t, settings.DocktailEnabled())
+	assert.Equal(t, docker.DocktailMode, settings.Tailscale.Mode)
+	assert.Equal(t, "budget", settings.EffectiveServiceName())
+}
+
+func TestSettingsFormTailscale_DisablingClearsTheService(t *testing.T) {
+	original := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+		Tailscale: docker.TailscaleSettings{
+			Enabled:     true,
+			Mode:        docker.DocktailMode,
+			Service:     "budget",
+			ServicePort: 443,
+		},
+	}
+
+	form := NewSettingsFormTailscale(original)
+	form.form.CheckboxField(tailscaleEnabledField).Toggle()
+
+	settings := tailscaleSubmit(t, &form)
+
+	assert.False(t, settings.DocktailEnabled())
+	// Disabled containers still carry the explicit enable/funnel labels so
+	// docker can't merge image-supplied values into docktail's read.
+	labels := settings.DocktailLabels()
+	assert.Equal(t, "false", labels["docktail.service.enable"])
+	assert.Equal(t, "false", labels["docktail.funnel.enable"])
+	assert.False(t, original.Equal(settings))
+}
+
+func TestSettingsFormTailscale_Cancel(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget"})
+
+	for form.form.Focused() != form.form.ItemCount()+1 {
+		tailscalePressTab(&form)
+	}
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	form = result.(SettingsFormTailscale)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok := msg.(SettingsSectionCancelMsg)
+	assert.True(t, ok, "expected SettingsSectionCancelMsg, got %T", msg)
+}
+
+func TestSettingsFormTailscale_HelpPanelF1AndEsc(t *testing.T) {
+	form := NewSettingsFormTailscale(docker.ApplicationSettings{Name: "budget"})
+	updateSettingsForm(&form, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	form = updateTailscaleKey(form, keyPressMsg("f1"))
+	require.NotNil(t, form.panel, "F1 opens the panel")
+
+	panel := *form.panel
+	_, cmd := panel.Update(keyPressMsg("esc"))
+	require.NotNil(t, cmd)
+	closeMsg := cmd().(TailscaleHelpCloseMsg)
+	form = updateTailscaleKey(form, closeMsg)
+	assert.Nil(t, form.panel, "Esc dismisses the panel without submitting the section")
+
+	form = updateTailscaleKey(form, keyPressMsg("f1"))
+	form = updateTailscaleKey(form, keyPressMsg("f1"))
+	assert.Nil(t, form.panel, "F1 toggles the panel")
+}
+
+func updateTailscaleKey(form SettingsFormTailscale, msg tea.Msg) SettingsFormTailscale {
+	result, _ := form.Update(msg)
+	return result.(SettingsFormTailscale)
 }
 
 func TestSettingsFormEmail_InitialState(t *testing.T) {
@@ -485,6 +806,32 @@ func applicationPressSpace(form *SettingsFormApplication) {
 	updateSettingsForm(form, keyPressMsg(" "))
 }
 
+func applicationTabToSubmit(form *SettingsFormApplication) {
+	for form.form.Focused() != form.form.ItemCount() {
+		applicationPressTab(form)
+	}
+}
+
+func applicationTabToCancel(form *SettingsFormApplication) {
+	for form.form.Focused() != form.form.ItemCount()+1 {
+		applicationPressTab(form)
+	}
+}
+
+func applicationSubmit(t *testing.T, form *SettingsFormApplication) docker.ApplicationSettings {
+	t.Helper()
+
+	applicationTabToSubmit(form)
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	*form = result.(SettingsFormApplication)
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(SettingsSectionSubmitMsg)
+	require.True(t, ok, "expected SettingsSectionSubmitMsg, got %T", msg)
+	return msg.Settings
+}
+
 func emailPressTab(form *SettingsFormEmail) {
 	updateSettingsForm(form, keyPressMsg("tab"))
 }
@@ -654,6 +1001,36 @@ func TestSettingsFormEnvironment_AutoGrow(t *testing.T) {
 	assert.Equal(t, 4, form.form.ItemCount(), "no extra row while still in same key")
 }
 
+func TestSettingsFormApplication_FitsTerminalHeight(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Image: "ghcr.io/basecamp/once-campfire:latest",
+		Host:  "app.example.com",
+	}
+	form := NewSettingsFormApplication(settings)
+	updateSettingsForm(&form, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 24, "Application section must fit a 24-row terminal")
+}
+
+func TestSettingsFormTailscale_FitsTerminalHeight(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Name:  "budget",
+		Image: "example/app:latest",
+		Host:  "budget.example.com",
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		},
+	}
+	form := NewSettingsFormTailscale(settings)
+	updateSettingsForm(&form, tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 24, "Tailscale section must fit a 24-row terminal")
+}
+
 func TestSettingsFormEnvironment_AutoGrow_VisibleInView(t *testing.T) {
 	form := NewSettingsFormEnvironment(docker.ApplicationSettings{})
 	environmentSendWindowSize(&form, 80, 40)
@@ -678,6 +1055,30 @@ func TestSettingsFormEnvironment_FocusBorder_MovesOnTab(t *testing.T) {
 	assert.NotEqual(t, view1, view2, "view changes when focus moves")
 }
 
+func TestSettingsFormEnvironment_MouseWheelScrollsWithoutMovingFocus(t *testing.T) {
+	envVars := make(map[string]string, 20)
+	for i := range 20 {
+		envVars[fmt.Sprintf("KEY_%02d", i)] = fmt.Sprintf("%d", i)
+	}
+
+	form := NewSettingsFormEnvironment(docker.ApplicationSettings{EnvVars: envVars})
+	environmentSendWindowSize(&form, 80, 12)
+
+	focused := form.form.Focused()
+	before := ansi.Strip(form.View())
+
+	updateSettingsForm(&form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	after := ansi.Strip(form.View())
+
+	assert.Equal(t, focused, form.form.Focused(), "the wheel never moves focus")
+	assert.Greater(t, form.form.wheelSteps, 0, "the wheel moved the row window")
+	assert.NotEqual(t, before, after, "the visible rows changed")
+
+	updateSettingsForm(&form, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	assert.Zero(t, form.form.wheelSteps, "wheeling back up cancels the wheel steps")
+	assert.Equal(t, focused, form.form.Focused())
+}
+
 func environmentPressTab(form *SettingsFormEnvironment) {
 	updateSettingsForm(form, keyPressMsg("tab"))
 }
@@ -690,4 +1091,24 @@ func environmentTypeText(form *SettingsFormEnvironment, text string) {
 
 func environmentSendWindowSize(form *SettingsFormEnvironment, w, h int) {
 	updateSettingsForm(form, tea.WindowSizeMsg{Width: w, Height: h})
+}
+
+func tailscalePressTab(form *SettingsFormTailscale) {
+	updateSettingsForm(form, keyPressMsg("tab"))
+}
+
+func tailscaleSubmit(t *testing.T, form *SettingsFormTailscale) docker.ApplicationSettings {
+	t.Helper()
+
+	for form.form.Focused() != form.form.ItemCount() {
+		tailscalePressTab(form)
+	}
+
+	result, cmd := form.Update(keyPressMsg("enter"))
+	*form = result.(SettingsFormTailscale)
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(SettingsSectionSubmitMsg)
+	require.True(t, ok, "expected SettingsSectionSubmitMsg, got %T", msg)
+	return msg.Settings
 }

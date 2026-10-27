@@ -1,0 +1,383 @@
+package docker
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net"
+	"net/url"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/moby/moby/client"
+)
+
+const tailscaleCommandTimeout = 10 * time.Second
+
+// tailscaleCommand is a variable so tests can substitute a stub.
+var tailscaleCommand = "tailscale"
+
+// Docktail reconciles in the background (it watches Docker events), so a
+// Service may not be advertised the moment an install finishes. These bound
+// how long ONCE waits, and are variables so tests can shrink them.
+var (
+	docktailVerifyWindow   = 30 * time.Second
+	docktailVerifyInterval = 2 * time.Second
+)
+
+// errTailscaleStatusUnparsable marks output that isn't valid serve status at
+// all, as opposed to valid status that simply doesn't advertise the Service.
+var errTailscaleStatusUnparsable = errors.New("unparsable tailscale serve status")
+
+// verifyDocktail checks that docktail has advertised this app as a Tailscale
+// Service by inspecting the host's serve configuration. Reading serve status
+// needs no root, which is what makes this check possible from here.
+//
+// Docktail is asynchronous, and a Service can even be waiting for approval in
+// the Tailscale admin console, so ONCE polls for a bounded window. If the
+// Service never appears it returns ErrDocktailNotAdvertised, but a CLI that
+// isn't installed (or output that can't be read or parsed) only warns: ONCE
+// can't verify or fix those, so they must not prompt or roll anything back.
+// A cancellation always surfaces as an error so it isn't reported as
+// "verified".
+//
+// The check also pins the proxy target to this deployment's container IP,
+// so a leftover handler still pointing at an old container doesn't satisfy
+// verification.
+func (a *Application) verifyDocktail(ctx context.Context) error {
+	name := a.Settings.EffectiveServiceName()
+	port := a.Settings.EffectiveAppPort()
+
+	// An empty lookup falls back to the port-only check.
+	expectedHost := a.containerNetworkIP(ctx)
+
+	deadline := time.Now().Add(docktailVerifyWindow)
+
+	for {
+		out, err := tailscaleServeStatusOutput(ctx)
+		switch {
+		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
+			a.warnDocktailVerification("the tailscale CLI isn't installed on this host, so ONCE can't confirm the Tailscale Service was advertised")
+			return nil
+		case err != nil:
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("verifying Tailscale Service: %w", ctxErr)
+			}
+			a.warnDocktailVerification(fmt.Sprintf("couldn't read Tailscale serve status: %v", err))
+			return nil
+		}
+
+		switch verifyErr := parseTailscaleServeStatus(out, name, port, a.Settings.EffectiveServicePort(), expectedHost); {
+		case verifyErr == nil:
+			return nil
+		case errors.Is(verifyErr, errTailscaleStatusUnparsable):
+			a.warnDocktailVerification(fmt.Sprintf("couldn't parse Tailscale serve status: %v", verifyErr))
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			break
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("verifying Tailscale Service: %w", ctx.Err())
+		case <-time.After(docktailVerifyInterval):
+		}
+	}
+
+	return fmt.Errorf("%w: svc:%s is not advertised on port %d yet", ErrDocktailNotAdvertised, name, port)
+}
+
+// containerNetworkIP returns the docker network IP of this app's container,
+// or empty when the lookup fails.
+func (a *Application) containerNetworkIP(ctx context.Context) string {
+	if a.namespace == nil {
+		return ""
+	}
+	name, err := a.ContainerName(ctx)
+	if err != nil {
+		return ""
+	}
+	ip, err := containerNetworkIP(ctx, a.namespace.client, a.namespace.name, name)
+	if err != nil {
+		return ""
+	}
+	return ip
+}
+
+// DocktailWarnings reports host-level problems that would stop this app from
+// being advertised as a Tailscale Service. They are advisory: docktail keeps
+// reconciling, so an install that starts before docktail is ready can still
+// succeed, so these are surfaced as warnings rather than failures.
+func (a *Application) DocktailWarnings(ctx context.Context) []string {
+	if !a.Settings.DocktailEnabled() || a.namespace == nil {
+		return nil
+	}
+
+	return a.namespace.TailnetReadiness(ctx)
+}
+
+// TailnetProbes holds the read-only probes the tailnet readiness check
+// uses. Every probe is a function so the checks can be exercised without
+// Docker or a live tailscaled. A nil probe means the check can't run and is
+// reported as passed.
+type TailnetProbes struct {
+	// TailscaleCLIInstalled reports whether the tailscale CLI is installed.
+	TailscaleCLIInstalled func() bool
+	// DocktailRunning reports whether a docktail container is running on
+	// this Docker host.
+	DocktailRunning func(ctx context.Context) (bool, error)
+	// NodeTags returns the tags on this node.
+	NodeTags func(ctx context.Context) ([]string, error)
+}
+
+// TailnetProbesFor returns the probes that inspect the real Docker host and
+// the local tailscale CLI.
+func TailnetProbesFor(ns *Namespace) TailnetProbes {
+	return TailnetProbes{
+		TailscaleCLIInstalled: tailscaleCLIInstalled,
+		DocktailRunning:       ns.runningDocktailContainer,
+		NodeTags:              tailscaleSelfTags,
+	}
+}
+
+// TailnetReadiness reports the host-level problems that would keep this
+// Docker host from advertising apps as Tailscale Services. They are advisory:
+// docktail keeps reconciling, so an install that starts before the host is
+// ready can still succeed.
+//
+// The checks are the ones a tailnet install depends on: the tailscale CLI is
+// installed, a docktail container is running, and the node is tagged.
+func (n *Namespace) TailnetReadiness(ctx context.Context) []string {
+	if n == nil {
+		return nil
+	}
+
+	return n.tailnetReadiness(ctx, TailnetProbesFor(n))
+}
+
+// Private
+
+// tailnetReadiness reports the host-level problems found by the given
+// probes.
+func (n *Namespace) tailnetReadiness(ctx context.Context, probes TailnetProbes) []string {
+	var warnings []string
+
+	if probes.TailscaleCLIInstalled != nil && !probes.TailscaleCLIInstalled() {
+		warnings = append(warnings, "the tailscale CLI isn't installed on this host, so ONCE can't check or manage Tailscale Services")
+	}
+
+	if probes.DocktailRunning != nil {
+		if running, err := probes.DocktailRunning(ctx); err == nil && !running {
+			warnings = append(warnings, "no running docktail container found on this Docker host, so apps won't be advertised as Tailscale Services until one is started")
+		}
+	}
+
+	if probes.NodeTags != nil {
+		if tags, err := probes.NodeTags(ctx); err == nil && len(tags) == 0 {
+			warnings = append(warnings, "the Tailscale node has no tags, and docktail needs a tagged node (for example tag:server) to create Tailscale Services")
+		}
+	}
+
+	return warnings
+}
+
+func (a *Application) warnDocktailVerification(warning string) {
+	slog.Warn("Docktail verification", "app", a.Settings.Name, "warning", warning)
+}
+
+func (n *Namespace) runningDocktailContainer(ctx context.Context) (bool, error) {
+	containers, err := n.client.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return false, err
+	}
+
+	for _, c := range containers.Items {
+		if isRunningDocktail(containerName(c.Names), c.Image, string(c.State)) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func tailscaleSelfTags(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, tailscaleCommandTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, tailscaleCommand, "status", "--json").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var status struct {
+		Self struct {
+			Tags []string `json:"Tags"`
+		} `json:"Self"`
+	}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return nil, err
+	}
+
+	return status.Self.Tags, nil
+}
+
+// tailscaleServeStatus mirrors the shape of `tailscale serve status --json`,
+// which nests each Service's web handlers beneath its tailnet hostname.
+type tailscaleServeStatus struct {
+	Services map[string]tailscaleServiceStatus `json:"Services"`
+}
+
+type tailscaleServiceStatus struct {
+	Web map[string]tailscaleWebConfig `json:"Web"`
+	TCP map[string]tailscaleTCPConfig `json:"TCP"`
+}
+
+type tailscaleWebConfig struct {
+	Handlers map[string]tailscaleHandler `json:"Handlers"`
+}
+
+type tailscaleHandler struct {
+	Proxy string `json:"Proxy"`
+}
+
+type tailscaleTCPConfig struct {
+	TCPForward string `json:"TCPForward"`
+}
+
+func parseTailscaleServeStatus(data []byte, serviceName string, port int, servicePort int, expectedHost string) error {
+	service := "svc:" + serviceName
+
+	var status tailscaleServeStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		return fmt.Errorf("%w: %w: parsing tailscale serve status: %w", ErrDocktailVerifyFailed, errTailscaleStatusUnparsable, err)
+	}
+
+	targetPort := strconv.Itoa(port)
+
+	for name, advertised := range status.Services {
+		if normalizeServiceName(name) != normalizeServiceName(service) {
+			continue
+		}
+
+		for _, web := range advertised.Web {
+			for _, handler := range web.Handlers {
+				if !proxyMatchesPort(handler.Proxy, targetPort) {
+					continue
+				}
+				if expectedHost != "" && !proxyHostEquals(handler.Proxy, expectedHost) {
+					continue
+				}
+				return nil
+			}
+		}
+
+		for advertisedServicePort, tcp := range advertised.TCP {
+			if advertisedServicePort != strconv.Itoa(servicePort) {
+				continue
+			}
+			host, fwdPort, ok := parseTCPForward(tcp.TCPForward)
+			if !ok {
+				continue
+			}
+			if fwdPort != targetPort {
+				continue
+			}
+			if expectedHost != "" && host != expectedHost {
+				continue
+			}
+			return nil
+		}
+
+		return fmt.Errorf("%w: service %q is advertised, but has no endpoint on port %d for host %q", ErrDocktailVerifyFailed, service, port, expectedHost)
+	}
+
+	return fmt.Errorf("%w: no Tailscale Service named %q yet; check that the service name matches the one defined in your Tailscale admin console", ErrDocktailVerifyFailed, service)
+}
+
+// Helpers
+
+// tailscaleCLIInstalled reports whether the tailscale CLI is on the path.
+func tailscaleCLIInstalled() bool {
+	_, err := exec.LookPath(tailscaleCommand)
+	return err == nil
+}
+
+func tailscaleServeStatusOutput(ctx context.Context) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, tailscaleCommandTimeout)
+	defer cancel()
+
+	return exec.CommandContext(ctx, tailscaleCommand, "serve", "status", "--json").Output()
+}
+
+// proxyMatchesPort reports whether a serve handler's proxy URL targets the
+// given port. A portless proxy uses the scheme's default port.
+func proxyMatchesPort(proxy, port string) bool {
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return false
+	}
+	if u.Port() != "" {
+		return u.Port() == port
+	}
+	if u.Scheme == "https" {
+		return port == "443"
+	}
+	return port == "80"
+}
+
+// proxyHostEquals reports whether a serve handler's proxy URL has the given
+// hostname. The hostname check ignores the trailing dot Docker resolves
+// FQDNs to, and matches IP literals exactly.
+func proxyHostEquals(proxy, expected string) bool {
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return false
+	}
+	return u.Hostname() == expected
+}
+
+// parseTCPForward splits a TCP forward target into host and port. It
+// tolerates missing or extra whitespace and rejects targets that don't have
+// a port.
+func parseTCPForward(target string) (host, port string, ok bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", "", false
+	}
+
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return "", "", false
+	}
+	return host, port, true
+}
+
+func normalizeServiceName(name string) string {
+	return strings.ToLower(strings.TrimPrefix(name, "svc:"))
+}
+
+func imageIsDocktail(image string) bool {
+	return strings.Contains(strings.ToLower(image), "docktail")
+}
+
+// isRunningDocktail reports whether a container is the running docktail
+// container, matching either the exact container name or its image.
+func isRunningDocktail(name, image, state string) bool {
+	return state == "running" && (name == "docktail" || imageIsDocktail(image))
+}
+
+// containerName returns the first container name with the leading slash
+// removed, or empty when the container has no names.
+func containerName(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(names[0], "/")
+}

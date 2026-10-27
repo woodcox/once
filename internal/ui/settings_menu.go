@@ -33,6 +33,7 @@ func NewSettingsMenu(app *docker.Application) SettingsMenu {
 			MenuItem{Label: "Registry", Key: int(SettingsSectionRegistry), Shortcut: WithHelp(NewKeyBinding("g"), "g", "")},
 			MenuItem{Label: "Email", Key: int(SettingsSectionEmail), Shortcut: WithHelp(NewKeyBinding("e"), "e", "")},
 			MenuItem{Label: "Environment", Key: int(SettingsSectionEnvironment), Shortcut: WithHelp(NewKeyBinding("v"), "v", "")},
+			MenuItem{Label: "Tailscale", Key: int(SettingsSectionTailscale), Shortcut: WithHelp(NewKeyBinding("t"), "t", "")},
 			MenuItem{Label: "Resources", Key: int(SettingsSectionResources), Shortcut: WithHelp(NewKeyBinding("r"), "r", "")},
 			MenuItem{Label: "Updates", Key: int(SettingsSectionUpdates), Shortcut: WithHelp(NewKeyBinding("u"), "u", "")},
 			MenuItem{Label: "Backups", Key: int(SettingsSectionBackups), Shortcut: WithHelp(NewKeyBinding("b"), "b", "")},

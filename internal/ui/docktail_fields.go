@@ -1,0 +1,145 @@
+package ui
+
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
+
+// docktailField describes one docktail.* label shown in the F1 help panel
+// and, except for the app port, one the install and settings Tailscale forms
+// can write. The title is what the form shows in its label; the help lines
+// are what the panel renders under the docktail key.
+type docktailField struct {
+	key         string
+	title       string
+	required    bool
+	summary     string
+	defaultLine string
+	accepted    string
+}
+
+var docktailFields = []docktailField{
+	{
+		title:       "Service name",
+		key:         "docktail.service.name",
+		required:    true,
+		summary:     "Tailscale Service name shown on your tailnet.",
+		defaultLine: "Default: the application name, sanitised to a DNS label.",
+	},
+	{
+		title:       "Description",
+		key:         "docktail.service.description",
+		summary:     "Shown in the Tailscale admin console next to the Service.",
+		defaultLine: "Default: blank.",
+		accepted:    "Synced only when docktail has Tailscale API credentials.",
+	},
+	{
+		title:       "App port",
+		key:         "docktail.service.port",
+		required:    true,
+		summary:     "Container port docktail proxies to; docktail always proxies to the application's own port.",
+		defaultLine: "Set as the app port in the advanced settings.",
+	},
+	{
+		title:       "Backend protocol",
+		key:         "docktail.service.protocol",
+		summary:     "Protocol docktail uses between itself and the container.",
+		defaultLine: "Default: https on app port 443, http otherwise.",
+		accepted:    "Accepted: http, https, https+insecure, tcp, tls-terminated-tcp.",
+	},
+	{
+		title:       "Service port",
+		key:         "docktail.service.service-port",
+		summary:     "Port Tailscale listens on.",
+		defaultLine: "Default: 443 for an HTTPS Service, 80 for HTTP or TCP.",
+		accepted:    "Accepted: 1–65535.",
+	},
+	{
+		title:       "Service protocol",
+		key:         "docktail.service.service-protocol",
+		summary:     "Tailscale-facing protocol.",
+		defaultLine: "Default: derived from the service port and backend protocol.",
+		accepted:    "Accepted: http, https, tcp, tls-terminated-tcp.",
+	},
+	{
+		title:       "Service path",
+		key:         "docktail.service.path",
+		summary:     "URL path the Service serves under.",
+		defaultLine: "Default: /.",
+		accepted:    "Not allowed when the service protocol is TCP.",
+	},
+	{
+		title:       "Service tags",
+		key:         "docktail.tags",
+		summary:     "Comma-separated Tailscale Service tags.",
+		defaultLine: "Default: tag:container.",
+	},
+	{
+		title:       "Network",
+		key:         "docktail.service.network",
+		summary:     "Docker network docktail uses to reach the container IP.",
+		defaultLine: "Default: blank — lets docktail pick one.",
+	},
+	{
+		title:       "Proxy protocol",
+		key:         "docktail.service.proxy-protocol",
+		summary:     "PROXY protocol version docktail emits towards the container.",
+		defaultLine: "Default: off.",
+		accepted:    "Accepted: 1 or 2; only meaningful for TCP service protocols.",
+	},
+}
+
+func renderTailscaleHelpContent() string {
+	var lines []string
+	for _, entry := range docktailFields {
+		lines = append(lines,
+			docktailHelpHeading(entry),
+			docktailHelpKey(entry.key),
+			entry.summary,
+		)
+		if entry.defaultLine != "" {
+			lines = append(lines, docktailHelpNote(entry.defaultLine))
+		}
+		if entry.accepted != "" {
+			lines = append(lines, docktailHelpNote(entry.accepted))
+		}
+		lines = append(lines, "")
+	}
+	return joinLines(lines)
+}
+
+// docktailHelpHeading renders the field name in bold with its
+// required/optional marker following it. The panel stays hue-free so the only
+// colour on screen is the focus ring.
+func docktailHelpHeading(entry docktailField) string {
+	nameStyle := lipgloss.NewStyle().Bold(true)
+
+	if !entry.required {
+		return nameStyle.Render(entry.title) + lipgloss.NewStyle().Foreground(Colors.Muted).Render(" (optional)")
+	}
+	return nameStyle.Render(entry.title + " (required)")
+}
+
+// docktailHelpNote renders a "Default:"/"Accepted:" reference line dimmed and
+// italic, so it recedes behind the description without losing its value.
+func docktailHelpNote(line string) string {
+	return lipgloss.NewStyle().Foreground(Colors.Muted).Italic(true).Render(line)
+}
+
+func joinLines(lines []string) string {
+	var sb strings.Builder
+	for i, line := range lines {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(line)
+	}
+	return sb.String()
+}
+
+// Helpers
+
+func docktailHelpKey(key string) string {
+	return lipgloss.NewStyle().Foreground(Colors.Muted).Render(key)
+}

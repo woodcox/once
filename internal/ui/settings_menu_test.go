@@ -32,3 +32,18 @@ func TestSettingsMenu_TitleCentered(t *testing.T) {
 	require.GreaterOrEqual(t, menuOffset, 0)
 	assert.Greater(t, titleOffset, menuOffset)
 }
+
+func TestSettingsMenu_TailscaleShortcut(t *testing.T) {
+	m := NewSettingsMenu(&docker.Application{})
+
+	_, cmd := m.Update(keyPressMsg("t"))
+	require.NotNil(t, cmd)
+
+	// The menu reports the selection, then the settings menu maps it to a section
+	_, cmd = m.Update(cmd().(MenuSelectMsg))
+	require.NotNil(t, cmd)
+
+	msg, ok := cmd().(SettingsMenuSelectMsg)
+	require.True(t, ok, "expected SettingsMenuSelectMsg, got %T", msg)
+	assert.Equal(t, SettingsSectionTailscale, msg.section)
+}

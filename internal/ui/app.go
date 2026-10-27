@@ -41,6 +41,7 @@ type (
 		Section SettingsSectionType
 	}
 	NavigateToLogsMsg   struct{ App *docker.Application }
+	NavigateToDoctorMsg struct{ App *docker.Application }
 	NavigateToRemoveMsg struct{ App *docker.Application }
 
 	QuitMsg struct{}
@@ -56,6 +57,7 @@ const (
 	SettingsSectionResources
 	SettingsSectionUpdates
 	SettingsSectionBackups
+	SettingsSectionTailscale
 )
 
 type App struct {
@@ -240,6 +242,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case NavigateToLogsMsg:
 		return m, m.navigateTo(NewLogs(m.namespace, msg.App))
+
+	case NavigateToDoctorMsg:
+		return m, m.navigateTo(NewDoctor(m.namespace, msg.App))
 
 	case QuitMsg:
 		m.shutdown()

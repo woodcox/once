@@ -14,8 +14,8 @@ import (
 	"github.com/basecamp/once/internal/userstats"
 )
 
-const PanelHeight = 6
-const StoppedPanelHeight = 2
+const PanelHeight = 7
+const StoppedPanelHeight = 3
 
 const containerStatsBuffer = 10
 const peakWindow = containerStatsBuffer
@@ -32,6 +32,8 @@ type DashboardPanel struct {
 	scraper       *metrics.MetricsScraper
 	dockerScraper *docker.Scraper
 	userStats     *userstats.Reader
+	cards         [3]MetricCard
+	issues        []PanelIssue
 }
 
 func NewDashboardPanel(app *docker.Application, scraper *metrics.MetricsScraper, dockerScraper *docker.Scraper, userStats *userstats.Reader) DashboardPanel {
@@ -52,14 +54,10 @@ func (p DashboardPanel) DataMaxes() (traffic float64) {
 	return maxValue(reqData)
 }
 
-func (p DashboardPanel) View(selected bool, toggling bool, showDetails bool, width int, scales DashboardScales) string {
+func (p DashboardPanel) View(selected bool, toggling bool, showDetails bool, width int) string {
 	innerWidth := max(width-3, 0) // indicator(1) + left padding(1) + right padding(1)
 	detailed := showDetails && p.app.Running
-
-	var cards [3]MetricCard
-	if p.app.Running {
-		cards = p.buildMetricCards(scales)
-	}
+	cards := p.cards
 
 	url := Styles.Title.Hyperlink(p.app.URL()).Render(p.app.Settings.Host)
 	name := lipgloss.NewStyle().Foreground(Colors.Border).Render("(" + docker.NameFromImageRef(p.app.Settings.Image) + ")")
@@ -80,6 +78,8 @@ func (p DashboardPanel) View(selected bool, toggling bool, showDetails bool, wid
 		cardViews := p.renderCards(innerWidth, cards)
 		lines = append(lines, cardViews)
 	}
+
+	lines = append(lines, p.renderIssues(innerWidth))
 
 	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
 
@@ -116,19 +116,59 @@ func (p DashboardPanel) Height(showDetails bool) int {
 	return bodyHeight + 2 // top + bottom transition lines
 }
 
+// Refresh recomputes the panel's metric cards and the issues they show.
+// It makes no network calls of its own, so it can run on the dashboard's
+// refresh tick.
+func (p *DashboardPanel) Refresh(scales DashboardScales) {
+	if !p.app.Running {
+		p.cards = [3]MetricCard{}
+	} else {
+		p.cards = p.buildMetricCards(scales)
+	}
+
+	p.issues = panelIssues(&p.app, p.cards)
+}
+
 // Private
 
 func (p DashboardPanel) renderHealthBadge(cards [3]MetricCard) string {
-	if !p.app.Running {
-		return lipgloss.NewStyle().Foreground(Colors.Border).Render("●")
-	}
-
 	worst := healthNormal
 	for _, c := range cards {
 		worst = max(worst, c.Health())
 	}
+	worst = max(worst, worstIssueHealth(p.issues))
+
+	if worst == healthNormal && !p.app.Running {
+		return lipgloss.NewStyle().Foreground(Colors.Border).Render("●")
+	}
 
 	return lipgloss.NewStyle().Foreground(worst.Color()).Render("●")
+}
+
+// renderIssues renders the panel's issue line: a muted "no issues" when
+// everything is fine, otherwise the first issues joined by a separator,
+// truncated to the panel's width with a count of the ones that didn't fit.
+func (p DashboardPanel) renderIssues(innerWidth int) string {
+	if len(p.issues) == 0 {
+		return " " + lipgloss.NewStyle().Foreground(Colors.Muted).Render("✓ no issues")
+	}
+
+	worst := worstIssueHealth(p.issues)
+	style := lipgloss.NewStyle().Foreground(worst.Color())
+
+	texts := make([]string, 0, len(p.issues))
+	for _, issue := range p.issues {
+		texts = append(texts, issue.Text)
+	}
+
+	shown, more := fitIssues(texts, innerWidth-2)
+
+	line := " " + style.Render("⚠ "+strings.Join(shown, " · "))
+	if more > 0 {
+		line += style.Render(fmt.Sprintf(" +%d more", more))
+	}
+
+	return line
 }
 
 func (p DashboardPanel) renderCards(innerWidth int, cards [3]MetricCard) string {
@@ -274,19 +314,70 @@ func (p DashboardPanel) fetchMetricsData() (requests, errors []float64) {
 
 // Helpers
 
+// fitIssues fits as many issues as fit on the given width, and reports how
+// many were left out. The separator and the "+N more" suffix are accounted
+// for, so the result never overflows the width.
+func fitIssues(texts []string, width int) (shown []string, more int) {
+	const (
+		separator = " · "
+		marker    = "⚠ "
+	)
+
+	if len(texts) == 0 {
+		return nil, 0
+	}
+	if width <= 0 {
+		return nil, len(texts)
+	}
+
+	used := lipgloss.Width(marker)
+	shown = []string{texts[0]}
+	used += lipgloss.Width(texts[0])
+
+	for i, text := range texts[1:] {
+		candidate := used + lipgloss.Width(separator) + lipgloss.Width(text)
+
+		// The last issue needs no room for a suffix, but any issue that
+		// leaves others out does: the line always says what it dropped.
+		room := width
+		if i+2 < len(texts) {
+			room -= lipgloss.Width(fmt.Sprintf(" +%d more", len(texts)-i-1))
+		}
+
+		if candidate > room {
+			return shown, len(texts) - len(shown)
+		}
+
+		shown = append(shown, text)
+		used = candidate
+	}
+
+	return shown, 0
+}
+
 func renderStateInfo(app *docker.Application, toggling bool) string {
 	var status string
 	var statusColor color.Color
-	if toggling && app.Running {
+	switch {
+	case toggling && app.Running:
 		status = "stopping..."
 		statusColor = Colors.LightText
-	} else if toggling {
+	case toggling:
 		status = "starting..."
 		statusColor = Colors.LightText
-	} else if app.Running {
+	case app.State == "restarting":
+		status = "restarting"
+		statusColor = Colors.Warning
+	case !app.Running && app.ExitCode != 0:
+		status = "crashed"
+		statusColor = Colors.Error
+	case app.State == "paused":
+		status = "paused"
+		statusColor = Colors.Warning
+	case app.Running:
 		status = "running"
 		statusColor = Colors.Success
-	} else {
+	default:
 		status = "stopped"
 		statusColor = Colors.LightText
 	}

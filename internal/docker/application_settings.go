@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -94,18 +96,73 @@ type BackupSettings struct {
 	AutoBackup bool   `json:"autoBackup,omitempty"`
 }
 
+// DocktailMode is the only supported value for TailscaleSettings.Mode. An
+// empty mode means the feature is off.
+const DocktailMode = "docktail"
+
+// Docktail label keys, as understood by https://docktail.org.
+const (
+	docktailLabelEnable          = "docktail.service.enable"
+	docktailLabelName            = "docktail.service.name"
+	docktailLabelPort            = "docktail.service.port"
+	docktailLabelServicePort     = "docktail.service.service-port"
+	docktailLabelServiceProtocol = "docktail.service.service-protocol"
+	docktailLabelPath            = "docktail.service.path"
+	docktailLabelProtocol        = "docktail.service.protocol"
+	docktailLabelProxyProtocol   = "docktail.service.proxy-protocol"
+	docktailLabelDescription     = "docktail.service.description"
+	docktailLabelDirect          = "docktail.service.direct"
+	docktailLabelNetwork         = "docktail.service.network"
+	docktailLabelTags            = "docktail.tags"
+	docktailLabelFunnelEnable    = "docktail.funnel.enable"
+)
+
+// defaultDocktailTags is the value used for `docktail.tags` when the user
+// hasn't provided one. docktail's own default (its DEFAULT_SERVICE_TAGS env)
+// is "tag:container"; we set it explicitly so an image-supplied tag is
+// overridden.
+const defaultDocktailTags = "tag:container"
+
+// TailscaleSettings configures exposure of an application as a native
+// Tailscale Service. Only docktail label mode is supported: ONCE sets
+// `docktail.*` labels on the app container and the host's docktail container
+// advertises it to tailscaled. The port docktail proxies to is always the
+// application's own port, so it isn't a separate setting here.
+type TailscaleSettings struct {
+	Enabled         bool   `json:"enabled,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	Service         string `json:"service,omitempty"`
+	ServicePort     int    `json:"servicePort,omitempty"`
+	Path            string `json:"path,omitempty"`
+	Tags            string `json:"tags,omitempty"`
+	Description     string `json:"description,omitempty"`
+	Protocol        string `json:"protocol,omitempty"`
+	ServiceProtocol string `json:"serviceProtocol,omitempty"`
+	ProxyProtocol   string `json:"proxyProtocol,omitempty"`
+	Network         string `json:"network,omitempty"`
+}
+
+func (t TailscaleSettings) Equal(other TailscaleSettings) bool {
+	return t == other
+}
+
 type ApplicationSettings struct {
-	Name       string             `json:"name"`
-	Image      string             `json:"image"`
-	Host       string             `json:"host"`
-	DisableTLS bool               `json:"disableTLS"`
-	EnvVars    map[string]string  `json:"env"`
-	SMTP       SMTPSettings       `json:"smtp"`
-	Resources  ContainerResources `json:"resources"`
-	AutoUpdate bool               `json:"autoUpdate"`
-	Backup     BackupSettings     `json:"backup"`
-	Keys       Keys               `json:"keys"`
-	Registry   RegistrySettings   `json:"registry"`
+	Name            string             `json:"name"`
+	Image           string             `json:"image"`
+	Host            string             `json:"host"`
+	DisableTLS      bool               `json:"disableTLS"`
+	HealthCheckPath string             `json:"healthCheckPath,omitempty"`
+	AppPort         int                `json:"appPort,omitempty"`
+	VolumePaths     []string           `json:"volumePaths,omitempty"`
+	SkipRailsEnv    bool               `json:"skipRailsEnv,omitempty"`
+	Tailscale       TailscaleSettings  `json:"tailscale"`
+	EnvVars         map[string]string  `json:"env"`
+	SMTP            SMTPSettings       `json:"smtp"`
+	Resources       ContainerResources `json:"resources"`
+	AutoUpdate      bool               `json:"autoUpdate"`
+	Backup          BackupSettings     `json:"backup"`
+	Keys            Keys               `json:"keys"`
+	Registry        RegistrySettings   `json:"registry"`
 }
 
 func UnmarshalApplicationSettings(s string) (ApplicationSettings, error) {
@@ -123,6 +180,17 @@ func (s ApplicationSettings) Validate() error {
 	if s.Image == "" {
 		return ErrImageRequired
 	}
+	if s.AppPort < 0 || s.AppPort > 65535 {
+		return ErrInvalidAppPort
+	}
+	if s.HealthCheckPath != "" && !strings.HasPrefix(s.HealthCheckPath, "/") {
+		return ErrInvalidHealthCheckPath
+	}
+	for _, path := range s.VolumePaths {
+		if !strings.HasPrefix(path, "/") {
+			return ErrInvalidVolumePath
+		}
+	}
 	if s.Backup.AutoBackup && s.Backup.Path == "" {
 		return ErrAutoBackupWithoutPath
 	}
@@ -132,6 +200,52 @@ func (s ApplicationSettings) Validate() error {
 	if s.Registry.Username != "" && s.Registry.Password == "" {
 		return ErrRegistryUsernameWithoutPassword
 	}
+	return s.ValidateTailscale()
+}
+
+// ValidateTailscale checks the docktail settings on their own, so that they
+// can be validated before the rest of the application is known (during
+// install, for example, where the image and generated name aren't set yet).
+func (s ApplicationSettings) ValidateTailscale() error {
+	if s.Tailscale.ServicePort < 0 || s.Tailscale.ServicePort > 65535 {
+		return ErrInvalidDocktailPort
+	}
+	if s.Tailscale.Path != "" && !strings.HasPrefix(s.Tailscale.Path, "/") {
+		return ErrInvalidDocktailPath
+	}
+	switch s.Tailscale.Protocol {
+	case "", "http", "https", "https+insecure", "tcp", "tls-terminated-tcp":
+	default:
+		return ErrInvalidDocktailProtocol
+	}
+	switch s.Tailscale.ServiceProtocol {
+	case "", "http", "https", "tcp", "tls-terminated-tcp":
+	default:
+		return ErrInvalidDocktailServiceProtocol
+	}
+	switch s.Tailscale.ProxyProtocol {
+	case "", "1", "2":
+	default:
+		return ErrInvalidDocktailProxyProtocol
+	}
+
+	serviceProtocol := s.effectiveServiceProtocol()
+	if s.Tailscale.ProxyProtocol != "" && !isTCPProtocol(serviceProtocol) {
+		return ErrDocktailProxyProtocolWithoutTCP
+	}
+	if s.Tailscale.Path != "" && s.Tailscale.Path != "/" && isTCPProtocol(serviceProtocol) {
+		return ErrDocktailPathOnTCP
+	}
+
+	if !s.Tailscale.Enabled {
+		return nil
+	}
+	if s.Tailscale.Mode != DocktailMode {
+		return ErrInvalidDocktailMode
+	}
+	if s.EffectiveServiceName() == "" && (s.Tailscale.Service != "" || s.Name != "") {
+		return ErrDocktailServiceRequired
+	}
 	return nil
 }
 
@@ -139,8 +253,158 @@ func (s ApplicationSettings) TLSEnabled() bool {
 	return s.Host != "" && !s.DisableTLS && !IsLocalhost(s.Host)
 }
 
+// EffectiveHealthCheckPath returns the path used to verify the application is
+// serving, falling back to the conventional health check path.
+func (s ApplicationSettings) EffectiveHealthCheckPath() string {
+	if s.HealthCheckPath != "" {
+		return s.HealthCheckPath
+	}
+	return HealthCheckPath
+}
+
+// EffectiveAppPort returns the port the application listens on inside its
+// container, falling back to the conventional application port.
+func (s ApplicationSettings) EffectiveAppPort() int {
+	if s.AppPort != 0 {
+		return s.AppPort
+	}
+	return DefaultAppPort
+}
+
+// DeployTarget returns the value to register with kamal-proxy for the given
+// container: the container id alone when the app uses the default port, or a
+// container id and port pair otherwise.
+func (s ApplicationSettings) DeployTarget(containerID string) string {
+	if s.AppPort != 0 {
+		return containerID + ":" + strconv.Itoa(s.AppPort)
+	}
+	return containerID
+}
+
+// EffectiveVolumePaths returns the in-container paths where the application's
+// data volume is mounted.
+func (s ApplicationSettings) EffectiveVolumePaths() []string {
+	if len(s.VolumePaths) > 0 {
+		return s.VolumePaths
+	}
+	return AppVolumeMountTargets
+}
+
+func (s ApplicationSettings) VolumePathsString() string {
+	return strings.Join(s.EffectiveVolumePaths(), ", ")
+}
+
+// DocktailEnabled reports whether this app should be advertised as a native
+// Tailscale Service via docktail labels.
+func (s ApplicationSettings) DocktailEnabled() bool {
+	return s.Tailscale.Enabled && s.Tailscale.Mode == DocktailMode
+}
+
+// EffectiveServiceName returns the Tailscale Service name, defaulting to the
+// application name, reduced to a tailnet-legal DNS label.
+func (s ApplicationSettings) EffectiveServiceName() string {
+	if s.Tailscale.Service != "" {
+		return SanitizeDNSLabel(s.Tailscale.Service)
+	}
+	return SanitizeDNSLabel(s.Name)
+}
+
+// EffectiveServicePort returns the port Tailscale should listen on, defaulting
+// to 443 when the effective service protocol is https and 80 otherwise.
+func (s ApplicationSettings) EffectiveServicePort() int {
+	if s.Tailscale.ServicePort != 0 {
+		return s.Tailscale.ServicePort
+	}
+	if s.effectiveServiceProtocol() == "https" {
+		return 443
+	}
+	return 80
+}
+
+// EffectiveProtocol returns the backend protocol docktail will use, defaulting
+// to https on the app port 443 and http otherwise. Exposed so the install
+// form can show the same preview the docker package will end up emitting.
+func (s ApplicationSettings) EffectiveProtocol() string {
+	return s.effectiveProtocol()
+}
+
+// EffectiveServiceProtocol returns the Tailscale-facing protocol docktail
+// will use. Exposed for the same reason as EffectiveProtocol.
+func (s ApplicationSettings) EffectiveServiceProtocol() string {
+	return s.effectiveServiceProtocol()
+}
+
+// DocktailLabels returns the `docktail.*` labels to place on the app container.
+// Every key ONCE can determine is set explicitly, including the funnel enable
+// and service enable flags, so a Docker image can't smuggle its own labels
+// into docktail's reads. Description, network and proxy-protocol remain
+// user-set-only and are emitted only when the user supplied a value; any
+// image-supplied value for those keys survives, which is documented in the
+// README label table.
+func (s ApplicationSettings) DocktailLabels() map[string]string {
+	labels := map[string]string{
+		docktailLabelFunnelEnable: "false",
+	}
+
+	if !s.DocktailEnabled() {
+		labels[docktailLabelEnable] = "false"
+		return labels
+	}
+
+	labels[docktailLabelEnable] = "true"
+	labels[docktailLabelName] = s.EffectiveServiceName()
+	labels[docktailLabelPort] = strconv.Itoa(s.EffectiveAppPort())
+	labels[docktailLabelServicePort] = strconv.Itoa(s.EffectiveServicePort())
+	labels[docktailLabelProtocol] = s.effectiveProtocol()
+	labels[docktailLabelServiceProtocol] = s.effectiveServiceProtocol()
+
+	// `direct` is always true, and deliberately not configurable. Direct mode
+	// is the only topology ONCE can support: the alternative — publishing the
+	// app's port on 127.0.0.1 for docktail to proxy through — would force
+	// ONCE to manage host-port allocation it cannot do safely. A redeploy
+	// holds the old container's binding until the new container is up, so the
+	// update fails with "port is already allocated"; two apps on the same app
+	// port collide; and the default app port 80 collides with kamal-proxy.
+	// Direct mode needs no host publishing at all, so docktail always talks
+	// to the container's own address on the Docker network.
+	labels[docktailLabelDirect] = "true"
+
+	tags := s.Tailscale.Tags
+	if tags == "" {
+		tags = defaultDocktailTags
+	}
+	labels[docktailLabelTags] = tags
+
+	if s.Tailscale.Description != "" {
+		labels[docktailLabelDescription] = s.Tailscale.Description
+	}
+	if s.Tailscale.Network != "" {
+		labels[docktailLabelNetwork] = s.Tailscale.Network
+	}
+	if s.Tailscale.ProxyProtocol != "" {
+		labels[docktailLabelProxyProtocol] = s.Tailscale.ProxyProtocol
+	}
+
+	// docktail rejects a path for TCP service protocols; emit only when
+	// the effective service protocol is not TCP, mirroring that rule.
+	if !isTCPProtocol(s.effectiveServiceProtocol()) && s.Tailscale.Path != "" && s.Tailscale.Path != "/" {
+		labels[docktailLabelPath] = s.Tailscale.Path
+	}
+
+	return labels
+}
+
 func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	if s.Name != other.Name || s.Image != other.Image || s.Host != other.Host || s.DisableTLS != other.DisableTLS {
+		return false
+	}
+	if s.HealthCheckPath != other.HealthCheckPath || s.AppPort != other.AppPort || s.SkipRailsEnv != other.SkipRailsEnv {
+		return false
+	}
+	if !slices.Equal(s.VolumePaths, other.VolumePaths) {
+		return false
+	}
+	if !s.Tailscale.Equal(other.Tailscale) {
 		return false
 	}
 	if s.Resources != other.Resources {
@@ -172,7 +436,95 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 	return true
 }
 
+// Private
+
+// effectiveProtocol returns the backend protocol docktail will use, defaulting
+// to https on the app port 443 and http otherwise.
+func (s ApplicationSettings) effectiveProtocol() string {
+	if s.Tailscale.Protocol != "" {
+		return s.Tailscale.Protocol
+	}
+	if s.EffectiveAppPort() == 443 {
+		return "https"
+	}
+	return "http"
+}
+
+// effectiveServiceProtocol returns the Tailscale-facing protocol docktail will
+// use, mirroring docktail's smart defaults: explicit value, else (when
+// ServicePort is set) https on 443, tcp for a TCP backend, else http; else
+// https for an http/https/https+insecure backend, tcp for a tcp/tls-terminated-tcp
+// backend, http otherwise.
+func (s ApplicationSettings) effectiveServiceProtocol() string {
+	if s.Tailscale.ServiceProtocol != "" {
+		return s.Tailscale.ServiceProtocol
+	}
+	if s.Tailscale.ServicePort != 0 {
+		if s.Tailscale.ServicePort == 443 {
+			return "https"
+		}
+		if isTCPProtocol(s.effectiveProtocol()) {
+			return "tcp"
+		}
+		return "http"
+	}
+	switch s.effectiveProtocol() {
+	case "tcp", "tls-terminated-tcp":
+		return "tcp"
+	default:
+		// http, https, https+insecure, or anything else → https on the
+		// Tailscale side, since there's no way to ask for plain http from
+		// Tailscale without an explicit service protocol.
+		return "https"
+	}
+}
+
 // Helpers
+
+func isTCPProtocol(protocol string) bool {
+	return protocol == "tcp" || protocol == "tls-terminated-tcp"
+}
+
+const maxDNSLabelLength = 63
+
+// SanitizeDNSLabel reduces an arbitrary string to a lowercase DNS label
+// suitable for use as a Tailscale Service name. Runs of invalid characters
+// collapse to a single hyphen, leading/trailing hyphens are dropped, and the
+// result is capped at the 63-character DNS label limit.
+func SanitizeDNSLabel(s string) string {
+	var b strings.Builder
+	pendingHyphen := false
+
+	for _, r := range strings.ToLower(strings.TrimSpace(s)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if pendingHyphen && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			pendingHyphen = false
+			b.WriteRune(r)
+			continue
+		}
+		pendingHyphen = true
+	}
+
+	label := b.String()
+	if len(label) > maxDNSLabelLength {
+		label = strings.TrimSuffix(label[:maxDNSLabelLength], "-")
+	}
+
+	return label
+}
+
+func ParseVolumePaths(s string) []string {
+	var paths []string
+	for p := range strings.SplitSeq(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
 
 func generateSecretKeyBase() (string, error) {
 	bytes := make([]byte, 32)

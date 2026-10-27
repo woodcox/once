@@ -12,19 +12,34 @@ import (
 )
 
 type settingsFlags struct {
-	host         string
-	disableTLS   bool
-	env          []string
-	smtpServer   string
-	smtpPort     string
-	smtpUsername string
-	smtpPassword string
-	smtpFrom     string
-	cpus         int
-	memory       int
-	autoUpdate   bool
-	backupPath   string
-	autoBackup   bool
+	host            string
+	disableTLS      bool
+	env             []string
+	smtpServer      string
+	smtpPort        string
+	smtpUsername    string
+	smtpPassword    string
+	smtpFrom        string
+	cpus            int
+	memory          int
+	autoUpdate      bool
+	backupPath      string
+	autoBackup      bool
+	healthCheckPath string
+	appPort         int
+	volumePaths     []string
+	skipRailsEnv    bool
+
+	docktail                bool
+	docktailService         string
+	docktailServicePort     int
+	docktailPath            string
+	docktailTags            string
+	docktailDescription     string
+	docktailProtocol        string
+	docktailServiceProtocol string
+	docktailProxyProtocol   string
+	docktailNetwork         string
 
 	registryUsername      string
 	registryPassword      string
@@ -45,6 +60,20 @@ func (f *settingsFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.autoUpdate, "auto-update", true, "automatically update the application")
 	cmd.Flags().StringVar(&f.backupPath, "backup-path", "", "path for backups")
 	cmd.Flags().BoolVar(&f.autoBackup, "auto-backup", false, "enable automatic backups")
+	cmd.Flags().StringVar(&f.healthCheckPath, "health-check-path", "", "path used to check the application is healthy")
+	cmd.Flags().IntVar(&f.appPort, "app-port", 0, "port the application listens on inside its container")
+	cmd.Flags().StringSliceVar(&f.volumePaths, "volume-paths", nil, "paths where the application's data volume is mounted (comma-separated)")
+	cmd.Flags().BoolVar(&f.skipRailsEnv, "skip-rails-env", false, "skip injecting the Rails-specific environment variables")
+	cmd.Flags().BoolVar(&f.docktail, "docktail", false, "expose the application as a Tailscale Service via docktail")
+	cmd.Flags().StringVar(&f.docktailService, "docktail-service", "", "Tailscale Service name (defaults to the application name)")
+	cmd.Flags().IntVar(&f.docktailServicePort, "docktail-service-port", 0, "port Tailscale should listen on (defaults to 443 when HTTPS, 80 otherwise)")
+	cmd.Flags().StringVar(&f.docktailPath, "docktail-path", "", "URL path to serve the application under (defaults to /)")
+	cmd.Flags().StringVar(&f.docktailTags, "docktail-tags", "", "comma-separated Tailscale Service tags")
+	cmd.Flags().StringVar(&f.docktailDescription, "docktail-description", "", "human-readable description for the Tailscale Service")
+	cmd.Flags().StringVar(&f.docktailProtocol, "docktail-protocol", "", "backend protocol (http, https, https+insecure, tcp or tls-terminated-tcp; defaults to https on port 443, otherwise http)")
+	cmd.Flags().StringVar(&f.docktailServiceProtocol, "docktail-service-protocol", "", "Tailscale-facing protocol (http, https, tcp or tls-terminated-tcp)")
+	cmd.Flags().StringVar(&f.docktailProxyProtocol, "docktail-proxy-protocol", "", "PROXY protocol version to prepend on TCP forwards (1 or 2)")
+	cmd.Flags().StringVar(&f.docktailNetwork, "docktail-network", "", "Docker network used for container IP detection")
 	cmd.Flags().StringVar(&f.registryUsername, "registry-username", "", "registry username for pulling the application image")
 	cmd.Flags().StringVar(&f.registryPassword, "registry-password", "", "registry password for pulling the application image")
 	cmd.Flags().BoolVar(&f.registryPasswordStdin, "registry-password-stdin", false, "read the registry password from stdin")
@@ -82,6 +111,26 @@ func (f *settingsFlags) buildSettings(cmd *cobra.Command, image, host string) (d
 			Path:       f.backupPath,
 			AutoBackup: f.autoBackup,
 		},
+		HealthCheckPath: f.healthCheckPath,
+		AppPort:         f.appPort,
+		VolumePaths:     docker.ParseVolumePaths(strings.Join(f.volumePaths, ",")),
+		SkipRailsEnv:    f.skipRailsEnv,
+		Tailscale: docker.TailscaleSettings{
+			Enabled:         f.docktail,
+			Service:         f.docktailService,
+			ServicePort:     f.docktailServicePort,
+			Path:            f.docktailPath,
+			Tags:            f.docktailTags,
+			Description:     f.docktailDescription,
+			Protocol:        f.docktailProtocol,
+			ServiceProtocol: f.docktailServiceProtocol,
+			ProxyProtocol:   f.docktailProxyProtocol,
+			Network:         f.docktailNetwork,
+		},
+	}
+
+	if f.docktail {
+		s.Tailscale.Mode = docker.DocktailMode
 	}
 
 	if f.registryUsername != "" || f.registryPassword != "" || f.registryPasswordStdin {
@@ -157,6 +206,53 @@ func (f *settingsFlags) applyChanges(cmd *cobra.Command, existing docker.Applica
 	}
 	if cmd.Flags().Changed("auto-backup") {
 		s.Backup.AutoBackup = f.autoBackup
+	}
+	if cmd.Flags().Changed("health-check-path") {
+		s.HealthCheckPath = f.healthCheckPath
+	}
+	if cmd.Flags().Changed("app-port") {
+		s.AppPort = f.appPort
+	}
+	if cmd.Flags().Changed("volume-paths") {
+		s.VolumePaths = docker.ParseVolumePaths(strings.Join(f.volumePaths, ","))
+	}
+	if cmd.Flags().Changed("skip-rails-env") {
+		s.SkipRailsEnv = f.skipRailsEnv
+	}
+	if cmd.Flags().Changed("docktail") {
+		s.Tailscale.Enabled = f.docktail
+		if f.docktail {
+			s.Tailscale.Mode = docker.DocktailMode
+		} else {
+			s.Tailscale.Mode = ""
+		}
+	}
+	if cmd.Flags().Changed("docktail-service") {
+		s.Tailscale.Service = f.docktailService
+	}
+	if cmd.Flags().Changed("docktail-service-port") {
+		s.Tailscale.ServicePort = f.docktailServicePort
+	}
+	if cmd.Flags().Changed("docktail-path") {
+		s.Tailscale.Path = f.docktailPath
+	}
+	if cmd.Flags().Changed("docktail-tags") {
+		s.Tailscale.Tags = f.docktailTags
+	}
+	if cmd.Flags().Changed("docktail-description") {
+		s.Tailscale.Description = f.docktailDescription
+	}
+	if cmd.Flags().Changed("docktail-protocol") {
+		s.Tailscale.Protocol = f.docktailProtocol
+	}
+	if cmd.Flags().Changed("docktail-service-protocol") {
+		s.Tailscale.ServiceProtocol = f.docktailServiceProtocol
+	}
+	if cmd.Flags().Changed("docktail-proxy-protocol") {
+		s.Tailscale.ProxyProtocol = f.docktailProxyProtocol
+	}
+	if cmd.Flags().Changed("docktail-network") {
+		s.Tailscale.Network = f.docktailNetwork
 	}
 	usernameChanged := cmd.Flags().Changed("registry-username")
 	passwordChanged := cmd.Flags().Changed("registry-password") || cmd.Flags().Changed("registry-password-stdin")

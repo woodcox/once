@@ -3,9 +3,12 @@ package docker
 import (
 	"cmp"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,17 +22,29 @@ import (
 )
 
 var (
-	ErrApplicationExists     = errors.New("application already exists")
-	ErrHostnameInUse         = errors.New("hostname already in use")
-	ErrHostRequired          = errors.New("host is required")
-	ErrInvalidBackup         = errors.New("invalid backup archive")
-	ErrImageRequired         = errors.New("image is required")
-	ErrApplicationNotRunning = errors.New("the application is not running")
-	ErrBackupPathRelative    = errors.New("backup path must be absolute")
-	ErrBackupFileExists      = errors.New("backup file already exists")
-	ErrAutoBackupWithoutPath = errors.New("auto-backup requires a backup path")
-	ErrSetupFailed           = errors.New("setup failed")
-	ErrPullFailed            = &describedError{
+	ErrApplicationExists               = errors.New("application already exists")
+	ErrHostnameInUse                   = errors.New("hostname already in use")
+	ErrHostRequired                    = errors.New("host is required")
+	ErrInvalidBackup                   = errors.New("invalid backup archive")
+	ErrImageRequired                   = errors.New("image is required")
+	ErrApplicationNotRunning           = errors.New("the application is not running")
+	ErrBackupPathRelative              = errors.New("backup path must be absolute")
+	ErrBackupFileExists                = errors.New("backup file already exists")
+	ErrAutoBackupWithoutPath           = errors.New("auto-backup requires a backup path")
+	ErrInvalidAppPort                  = errors.New("app port must be between 0 and 65535")
+	ErrInvalidVolumePath               = errors.New("volume paths must be absolute")
+	ErrInvalidHealthCheckPath          = errors.New("health check path must start with /")
+	ErrInvalidDocktailPort             = errors.New("docktail ports must be between 0 and 65535")
+	ErrInvalidDocktailMode             = errors.New("unsupported docktail mode")
+	ErrInvalidDocktailPath             = errors.New("docktail path must start with /")
+	ErrInvalidDocktailProtocol         = errors.New("docktail protocol must be one of http, https, https+insecure, tcp or tls-terminated-tcp")
+	ErrInvalidDocktailServiceProtocol  = errors.New("docktail service protocol must be one of http, https, tcp or tls-terminated-tcp")
+	ErrInvalidDocktailProxyProtocol    = errors.New("docktail proxy protocol must be 1 or 2")
+	ErrDocktailProxyProtocolWithoutTCP = errors.New("docktail proxy protocol requires a TCP service protocol")
+	ErrDocktailPathOnTCP               = errors.New("docktail path is not supported for a TCP service protocol")
+	ErrDocktailServiceRequired         = errors.New("a Tailscale service name is required when docktail mode is enabled")
+	ErrSetupFailed                     = errors.New("setup failed")
+	ErrPullFailed                      = &describedError{
 		msg:         "pull failed",
 		description: "Failed to download the application image. Check that the image name is correct and try again.",
 	}
@@ -45,16 +60,30 @@ var (
 	ErrUnpauseFailed                   = errors.New("failed to unpause container after backup")
 	ErrRegistryPasswordWithoutUsername = errors.New("registry password requires a username")
 	ErrRegistryUsernameWithoutPassword = errors.New("registry username requires a password")
+	ErrDocktailVerifyFailed            = &describedError{
+		msg:         "tailscale service not advertised",
+		description: "The application is running, but docktail hasn't advertised it as a Tailscale Service. Check that the docktail container is running, and that the service name matches the Service defined in your Tailscale admin console.",
+	}
+	ErrDocktailNotAdvertised = &describedError{
+		msg:         "tailscale service not advertised yet",
+		description: "The application is running, but the Tailscale Service hasn't appeared. It may still be reconciling, or it may be awaiting approval in your Tailscale admin console.",
+	}
+	ErrDocktailServiceNameInUse = &describedError{
+		msg:         "docktail Tailscale Service name is already in use by another application",
+		description: "Another application in this namespace is already advertised as this Tailscale Service via docktail. Choose a different --docktail-service (or app name), or remove the other application first.",
+	}
 )
 
 const (
 	AutomaticTaskInterval = 24 * time.Hour
 	HealthCheckPath       = "/up"
+	DefaultAppPort        = 80
 	httpVerifyTimeout     = 30 * time.Second
 )
 
-// AppVolumeMountTargets defines the paths where the app data volume is mounted
-// inside the container. The first entry is the primary path used for backups.
+// AppVolumeMountTargets defines the default paths where the app data volume is
+// mounted inside the container. The first entry is the primary path used for
+// backups. Applications can override these via their volume path settings.
 var AppVolumeMountTargets = []string{"/storage", "/rails/storage"}
 
 type Application struct {
@@ -62,6 +91,19 @@ type Application struct {
 	Settings     ApplicationSettings
 	Running      bool
 	RunningSince time.Time
+
+	// State is the container's Docker state: created, running, paused,
+	// restarting, removing, exited or dead. It's empty when the container
+	// isn't known.
+	State string
+	// RestartCount is how many times Docker has restarted the container.
+	RestartCount int
+	// ExitCode is the container's exit code, meaningful once it has exited.
+	ExitCode int
+	// Health is the container's health check status (healthy, unhealthy,
+	// starting), empty when the container has no health check or its
+	// health isn't known.
+	Health string
 }
 
 func NewApplication(ns *Namespace, settings ApplicationSettings) *Application {
@@ -233,23 +275,29 @@ func (a *Application) UpdateSettings(ctx context.Context, settings ApplicationSe
 	return nil
 }
 
-func (a *Application) VerifyHTTPOrRemove(ctx context.Context) error {
-	if err := a.verifyHTTP(ctx); err != nil {
-		if cleanupErr := a.Remove(context.Background(), true); cleanupErr != nil {
-			slog.Error("Failed to clean up after verification failure", "app", a.Settings.Name, "error", cleanupErr)
-		}
-		return err
-	}
-
-	return nil
+// Verify checks that the deployed application is actually reachable. Apps
+// advertised as Tailscale Services are verified against Tailscale rather than
+// over HTTP. It never removes the app: callers decide what a failed
+// verification should mean.
+func (a *Application) Verify(ctx context.Context) error {
+	return a.verify(ctx)
 }
 
 func (a *Application) Remove(ctx context.Context, removeData bool) error {
-	if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
-		return fmt.Errorf("removing from proxy: %w", err)
+	if a.usesProxy() {
+		if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
+			return fmt.Errorf("removing from proxy: %w", err)
+		}
 	}
 
 	return a.Destroy(ctx, removeData)
+}
+
+// usesProxy reports whether this app is registered with kamal-proxy. Docktail
+// apps are reached over the tailnet by their docktail labels, so ONCE keeps
+// them out of the proxy entirely.
+func (a *Application) usesProxy() bool {
+	return !a.Settings.DocktailEnabled()
 }
 
 func (a *Application) Destroy(ctx context.Context, destroyVolumes bool) error {
@@ -286,6 +334,27 @@ func (a *Application) Destroy(ctx context.Context, destroyVolumes bool) error {
 }
 
 // Private
+
+// applyInspect copies the details of an inspected container onto the
+// application: its start time, restart count, exit code and health. Values
+// the inspect doesn't carry are left alone.
+func (a *Application) applyInspect(inspected container.InspectResponse) {
+	a.RestartCount = inspected.RestartCount
+
+	if inspected.State == nil {
+		return
+	}
+
+	if t, err := time.Parse(time.RFC3339Nano, inspected.State.StartedAt); err == nil {
+		a.RunningSince = t
+	}
+
+	a.ExitCode = inspected.State.ExitCode
+
+	if inspected.State.Health != nil {
+		a.Health = string(inspected.State.Health.Status)
+	}
+}
 
 func (a *Application) saveOperationResult(ctx context.Context, record func(*State)) {
 	state, err := a.namespace.LoadState(ctx)
@@ -330,6 +399,14 @@ func (a *Application) runningImageID(ctx context.Context) string {
 }
 
 func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolume, progress DeployProgressCallback) error {
+	if a.Settings.DocktailEnabled() {
+		if service := a.Settings.EffectiveServiceName(); service != "" {
+			if owner, conflict := a.namespace.docktailServiceOwner(service, a.Settings.Name); conflict {
+				return fmt.Errorf("%w: %s (another application %q is already using it)", ErrDocktailServiceNameInUse, service, owner)
+			}
+		}
+	}
+
 	if progress != nil {
 		progress(DeployProgress{Stage: DeployStageStarting})
 	}
@@ -378,18 +455,35 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 
 	shortContainerID := resp.ID[:12]
 
-	if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
-		AppName: a.Settings.Name,
-		Target:  shortContainerID,
-		Host:    a.Settings.Host,
-		TLS:     a.Settings.TLSEnabled(),
-	}); err != nil {
-		a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
-		if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
+	if a.Settings.DocktailEnabled() {
+		if err := waitForContainerHealthy(ctx, a.namespace.client, a.namespace.name, resp.ID, a.Settings.effectiveProtocol(), a.Settings.EffectiveAppPort(), a.Settings.EffectiveHealthCheckPath()); err != nil {
+			a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
 			slog.Error("Application failed to start", "app", a.Settings.Name, "error", err)
 			return ErrAppNotStarted
 		}
-		return fmt.Errorf("registering with proxy: %w", err)
+
+		// Remove the proxy route only after the new container is proven
+		// healthy: a failed switch would otherwise leave the previous app
+		// running but unroutable on this hostname.
+		if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
+			a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+			return fmt.Errorf("removing pre-existing proxy route: %w", err)
+		}
+	} else {
+		if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
+			AppName:         a.Settings.Name,
+			Target:          a.Settings.DeployTarget(shortContainerID),
+			Host:            a.Settings.Host,
+			TLS:             a.Settings.TLSEnabled(),
+			HealthCheckPath: a.Settings.HealthCheckPath,
+		}); err != nil {
+			a.namespace.client.ContainerRemove(ctx, resp.ID, client.ContainerRemoveOptions{Force: true})
+			if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
+				slog.Error("Application failed to start", "app", a.Settings.Name, "error", err)
+				return ErrAppNotStarted
+			}
+			return fmt.Errorf("registering with proxy: %w", err)
+		}
 	}
 
 	if err := a.removeContainersExcept(ctx, containerName); err != nil {
@@ -417,6 +511,17 @@ func (a *Application) ensureKeys(vol *ApplicationVolume) error {
 	return nil
 }
 
+// verify checks that the deployed application is actually reachable. Apps
+// exposed as Tailscale Services are verified against Tailscale rather than
+// over HTTP, since docktail advertises them on the tailnet directly.
+func (a *Application) verify(ctx context.Context) error {
+	if a.Settings.DocktailEnabled() {
+		return a.verifyDocktail(ctx)
+	}
+
+	return a.verifyHTTP(ctx)
+}
+
 func (a *Application) verifyHTTP(ctx context.Context) error {
 	url := a.URL()
 	if url == "" {
@@ -424,7 +529,7 @@ func (a *Application) verifyHTTP(ctx context.Context) error {
 	}
 
 	client := &http.Client{Timeout: httpVerifyTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+HealthCheckPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+a.Settings.EffectiveHealthCheckPath(), nil)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
@@ -465,7 +570,7 @@ func (a *Application) removeContainersExcept(ctx context.Context, keep string) e
 
 func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 	var mounts []mount.Mount
-	for _, target := range AppVolumeMountTargets {
+	for _, target := range a.Settings.EffectiveVolumePaths() {
 		mounts = append(mounts, mount.Mount{
 			Type:   mount.TypeVolume,
 			Source: vol.Name(),
@@ -478,14 +583,18 @@ func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 func (a *Application) BuildEnv() []string {
 	s := a.Settings
 
-	env := []string{
-		"SECRET_KEY_BASE=" + s.Keys.SecretKeyBase,
-		"VAPID_PUBLIC_KEY=" + s.Keys.VAPIDPublicKey,
-		"VAPID_PRIVATE_KEY=" + s.Keys.VAPIDPrivateKey,
-	}
+	var env []string
 
-	if !s.TLSEnabled() {
-		env = append(env, "DISABLE_SSL=true")
+	if !s.SkipRailsEnv {
+		env = append(env,
+			"SECRET_KEY_BASE="+s.Keys.SecretKeyBase,
+			"VAPID_PUBLIC_KEY="+s.Keys.VAPIDPublicKey,
+			"VAPID_PRIVATE_KEY="+s.Keys.VAPIDPrivateKey,
+		)
+
+		if !s.TLSEnabled() {
+			env = append(env, "DISABLE_SSL=true")
+		}
 	}
 
 	if s.Resources.CPUs > 0 {
@@ -506,11 +615,173 @@ func (a *Application) BuildEnv() []string {
 }
 
 func (a *Application) containerConfig(env []string) *container.Config {
-	return &container.Config{
-		Image: a.Settings.Image,
-		Labels: map[string]string{
-			labelKey: a.Settings.Marshal(),
-		},
-		Env: env,
+	labels := map[string]string{
+		labelKey: a.Settings.Marshal(),
 	}
+
+	// Every deploy recreates the container, so docktail labels can simply be
+	// merged in here.
+	maps.Copy(labels, a.Settings.DocktailLabels())
+
+	return &container.Config{
+		Image:  a.Settings.Image,
+		Labels: labels,
+		Env:    env,
+	}
+}
+
+// Helpers
+
+// Health check timings mirror kamal-proxy's --deploy-timeout 120s and
+// health-check-period 1s defaults, with a per-request timeout to fail fast on
+// individual probes. These are variables so tests can shrink them.
+var (
+	healthCheckInterval = 1 * time.Second
+	healthCheckTimeout  = 120 * time.Second
+	healthCheckRequest  = 5 * time.Second
+)
+
+// healthCheckProbe performs a single HTTP health check request. It is a
+// variable so tests can substitute it without opening sockets.
+var healthCheckProbe = func(ctx context.Context, url string) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	client := &http.Client{Timeout: healthCheckRequest}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode, nil
+}
+
+// healthCheckTCPProbe opens a TCP connection to the given address. It is a
+// variable so tests can substitute it without opening sockets.
+var healthCheckTCPProbe = func(ctx context.Context, addr string) error {
+	d := net.Dialer{Timeout: healthCheckRequest}
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
+// healthCheckClient abstracts the Docker API calls needed by the health check
+// path. *client.Client satisfies it; tests can substitute their own.
+type healthCheckClient interface {
+	ContainerInspect(ctx context.Context, containerID string, options client.ContainerInspectOptions) (client.ContainerInspectResult, error)
+}
+
+// waitForContainerHealthy polls the application's health check over the
+// container's Docker network IP until it succeeds, mirroring the timing
+// kamal-proxy uses for non-docktail apps. The check goes directly to the
+// container, not through DNS or the proxy, so docktail apps don't need to be
+// reachable any other way to be considered healthy. The probe is chosen by
+// the backend protocol so HTTPS or TCP backends don't fail just because an
+// HTTP probe can't be served.
+func waitForContainerHealthy(ctx context.Context, c healthCheckClient, network, containerID, protocol string, port int, path string) error {
+	ip, err := containerNetworkIP(ctx, c, network, containerID)
+	if err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(healthCheckTimeout)
+
+	for {
+		if runHealthCheckProbe(ctx, protocol, ip, port, path) == nil {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("application did not become healthy (%s) within %s", protocol, healthCheckTimeout)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(healthCheckInterval):
+		}
+	}
+}
+
+// runHealthCheckProbe performs a single health probe using the probe that
+// matches the backend protocol so HTTPS or TCP backends don't fail just
+// because an HTTP probe can't be served. HTTPS probes disable TLS
+// verification because the target is a container IP on a private Docker
+// network without a serving certificate: this is a liveness check, not an
+// authentication check.
+func runHealthCheckProbe(ctx context.Context, protocol, ip string, port int, path string) error {
+	return probeBackend(ctx, protocol, ip, port, path, healthCheckRequest, healthCheckProbe, healthCheckTCPProbe)
+}
+
+// probeBackend checks whether a backend answers using the probe that matches
+// its protocol. HTTP probes go through httpGet; HTTPS probes use a TLS client
+// that skips verification because the target is a container IP on a private
+// Docker network; TCP protocols use tcpDial.
+func probeBackend(ctx context.Context, protocol, ip string, port int, path string, timeout time.Duration, httpGet func(context.Context, string) (int, error), tcpDial func(context.Context, string) error) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	switch protocol {
+	case "https", "https+insecure":
+		url := fmt.Sprintf("https://%s:%d%s", ip, port, path)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+		client := &http.Client{
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return fmt.Errorf("status %d", resp.StatusCode)
+		}
+		return nil
+	case "tcp", "tls-terminated-tcp":
+		return tcpDial(ctx, net.JoinHostPort(ip, strconv.Itoa(port)))
+	default:
+		status, err := httpGet(ctx, fmt.Sprintf("http://%s:%d%s", ip, port, path))
+		if err != nil {
+			return err
+		}
+		if status < 200 || status > 299 {
+			return fmt.Errorf("status %d", status)
+		}
+		return nil
+	}
+}
+
+// containerNetworkIP returns the container's IP on the given Docker network,
+// or an error when the inspect fails or the endpoint is missing. Errors
+// propagate as-is so callers can distinguish "container/network gone" from a
+// real health check timeout.
+func containerNetworkIP(ctx context.Context, c healthCheckClient, network, containerID string) (string, error) {
+	info, err := c.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("inspecting container: %w", err)
+	}
+
+	if info.Container.NetworkSettings == nil {
+		return "", fmt.Errorf("container has no network settings yet")
+	}
+
+	endpoint := info.Container.NetworkSettings.Networks[network]
+	if endpoint == nil {
+		return "", fmt.Errorf("container is not attached to the %q network", network)
+	}
+
+	addr := endpoint.IPAddress
+	if !addr.IsValid() {
+		return "", fmt.Errorf("container has no IP address on the %q network", network)
+	}
+
+	return addr.String(), nil
 }

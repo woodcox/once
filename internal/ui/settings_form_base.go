@@ -34,6 +34,11 @@ func (b settingsFormBase) StatusLine() string {
 // Private
 
 func (b settingsFormBase) update(msg tea.Msg) (settingsFormBase, tea.Cmd) {
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		wsm.Height = formViewportHeight(wsm.Height)
+		msg = wsm
+	}
+
 	var cmd tea.Cmd
 	b.form, cmd = b.form.Update(msg)
 	return b, cmd

@@ -27,7 +27,10 @@ type installState int
 const (
 	installStateAppList   installState = iota // Screen 1: choose app
 	installStateImageForm                     // Screen 2: enter image ref
-	installStateHostname                      // Screen 3: enter hostname
+	installStateWhere                         // Screen 3: choose where it runs
+	installStateHostname                      // Screen 4: enter hostname
+	installStateAdvanced                      // Screen 5: advanced settings
+	installStateTailscale                     // Screen 6: Tailscale Service options
 	installStateActivity                      // Installing
 )
 
@@ -36,24 +39,41 @@ type InstallFormSubmitMsg struct {
 	Hostname string
 }
 
+// installTailnetWarningsMsg carries the result of the tailnet readiness
+// check that runs when the user picks "Tailnet only".
+type installTailnetWarningsMsg struct {
+	warnings []string
+}
+
 type Install struct {
-	namespace      *docker.Namespace
-	width, height  int
-	help           Help
-	state          installState
-	appList        InstallAppList
-	imageForm      InstallImageForm
-	hostnameForm   InstallHostnameForm
-	activity       *InstallActivity
-	popupHelp      *PopupHelp
-	starfield      *Starfield
-	logo           *Logo
-	err            error
-	cliMode        bool
-	customImage    bool
-	customImageRef string
-	installFlag    string
-	registry       docker.RegistrySettings
+	namespace          *docker.Namespace
+	width, height      int
+	help               Help
+	state              installState
+	appList            InstallAppList
+	imageForm          InstallImageForm
+	whereForm          InstallWhereForm
+	hostnameForm       InstallHostnameForm
+	advancedForm       InstallAdvancedForm
+	tailscaleForm      InstallTailscaleForm
+	activity           *InstallActivity
+	popupHelp          *PopupHelp
+	starfield          *Starfield
+	logo               *Logo
+	err                error
+	cliMode            bool
+	customImage        bool
+	customImageRef     string
+	installFlag        string
+	registry           docker.RegistrySettings
+	target             InstallTarget
+	pendingImage       string
+	pendingHost        string
+	pendingSettings    docker.ApplicationSettings
+	pendingTailscale   docker.TailscaleSettings
+	tailscaleConfirmed bool
+	advancedFrom       InstallAdvancedStage
+	tailnetWarnings    []string
 }
 
 func NewInstall(ns *docker.Namespace, imageRef string) Install {
@@ -72,7 +92,7 @@ func NewInstall(ns *docker.Namespace, imageRef string) Install {
 			imageRef = expanded
 		}
 		m.state = installStateHostname
-		m.hostnameForm = NewInstallHostnameForm(imageRef, m.installFlag)
+		m.hostnameForm = NewInstallHostnameForm(imageRef, m.installFlag, InstallTargetPublic)
 	} else {
 		m.state = installStateAppList
 		m.appList = NewInstallAppList()
@@ -104,6 +124,23 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			var cmd tea.Cmd
 			ph, cmd = ph.Update(msg)
 			m.popupHelp = &ph
+			return m, cmd
+		}
+	}
+
+	if m.state == installStateTailscale && m.tailscaleForm.panel != nil {
+		switch msg := msg.(type) {
+		case TailscaleHelpCloseMsg:
+			var cmd tea.Cmd
+			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
+			return m, cmd
+		case tea.WindowSizeMsg:
+			var cmd tea.Cmd
+			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
+			return m, cmd
+		case tea.KeyPressMsg, MouseEvent, tea.MouseWheelMsg:
+			var cmd tea.Cmd
+			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
 			return m, cmd
 		}
 	}
@@ -168,10 +205,11 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 
 	case InstallAppSelectedMsg:
-		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
 		m.customImage = false
 		m.registry = docker.RegistrySettings{}
-		m.state = installStateHostname
+		m.pendingImage = msg.ImageRef
+		m.resetTarget()
+		m.state = installStateWhere
 		return m, m.initScreenWithSize()
 
 	case InstallCustomSelectedMsg:
@@ -188,9 +226,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.err = docker.ErrRegistryPasswordWithoutUsername
 			return m, nil
 		}
-		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
 		m.customImage = true
 		m.customImageRef = msg.ImageRef
+		m.pendingImage = msg.ImageRef
 		m.registry = docker.RegistrySettings{}
 		if msg.RegistryUsername != "" || msg.RegistryPassword != "" {
 			host, _ := docker.RegistryHost(msg.ImageRef)
@@ -200,8 +238,29 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 				Password: msg.RegistryPassword,
 			}
 		}
-		m.state = installStateHostname
+		m.resetTarget()
+		m.state = installStateWhere
 		return m, m.initScreenWithSize()
+
+	case InstallWhereSelectedMsg:
+		if m.target != msg.Target || m.hostnameForm.imageRef != m.pendingImage {
+			m.hostnameForm = NewInstallHostnameForm(m.pendingImage, "", msg.Target)
+		}
+		m.target = msg.Target
+		m.tailnetWarnings = nil
+		m.state = installStateHostname
+		cmds := []tea.Cmd{m.initScreenWithSize()}
+		if msg.Target == InstallTargetTailnet {
+			// The check touches Docker and may run the tailscale CLI, so it
+			// happens in the background: the user can carry on typing while
+			// it runs.
+			cmds = append(cmds, m.checkTailnetReadiness())
+		}
+		return m, tea.Batch(cmds...)
+
+	case installTailnetWarningsMsg:
+		m.tailnetWarnings = msg.warnings
+		return m, nil
 
 	case InstallImageBackMsg:
 		m.state = installStateAppList
@@ -211,22 +270,100 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		if m.cliMode {
 			return m, m.cancelFromScreen()
 		}
-		if m.customImage {
-			m.state = installStateImageForm
-			return m, m.imageForm.Init()
-		}
-		m.state = installStateAppList
+		m.state = installStateWhere
 		return m, nil
 
 	case InstallFormSubmitMsg:
+		if m.state != installStateHostname {
+			break
+		}
 		if m.namespace.HostInUse(msg.Hostname) {
 			m.err = docker.ErrHostnameInUse
 			return m, nil
 		}
-		m.state = installStateActivity
-		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname, m.registry)
-		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		return m, m.activity.Init()
+		m.pendingImage = msg.ImageRef
+		m.pendingHost = msg.Hostname
+		if m.target == InstallTargetTailnet {
+			m.prepareTailscaleForm()
+			m.state = installStateTailscale
+			return m, m.initScreenWithSize()
+		}
+		return m, m.startActivity(m.pendingSettings)
+
+	case InstallTailscaleSubmitMsg:
+		if m.state != installStateTailscale {
+			break
+		}
+		m.pendingTailscale = msg.Tailscale
+		m.tailscaleConfirmed = true
+		return m, m.startActivity(m.pendingSettings)
+
+	case InstallTailscaleBackMsg:
+		m.state = installStateHostname
+		return m, nil
+
+	case InstallAdvancedMsg:
+		if m.state != installStateHostname && m.state != installStateTailscale {
+			break
+		}
+		if msg.FromStage == InstallAdvancedFromTailscale && m.state != installStateTailscale {
+			break
+		}
+		if msg.Hostname == "" {
+			m.err = docker.ErrHostRequired
+			return m, nil
+		}
+		if m.namespace.HostInUse(msg.Hostname) {
+			m.err = docker.ErrHostnameInUse
+			return m, nil
+		}
+		m.pendingImage = msg.ImageRef
+		m.pendingHost = msg.Hostname
+		m.advancedFrom = msg.FromStage
+		if m.advancedFrom == InstallAdvancedFromTailscale {
+			// Remember what the Service screen holds, so a rebuild after the
+			// app port changes doesn't discard it.
+			m.pendingTailscale = m.tailscaleForm.Settings()
+		}
+		if !m.advancedForm.matches(m.pendingSettings) {
+			m.advancedForm = NewInstallAdvancedForm(m.pendingSettings)
+		}
+		m.state = installStateAdvanced
+		return m, m.initScreenWithSize()
+
+	case SettingsSectionSubmitMsg:
+		if m.state != installStateAdvanced {
+			break
+		}
+		settings := msg.Settings
+		settings.Image = m.pendingImage
+		settings.Host = m.pendingHost
+		if err := settings.Validate(); err != nil {
+			m.err = err
+			return m, nil
+		}
+		m.pendingSettings = settings
+		// Reached from the Tailscale Service screen: the Service options the
+		// user already typed stay put, and it is that screen's Install button
+		// that starts the install.
+		if m.advancedFrom == InstallAdvancedFromTailscale {
+			m.prepareTailscaleForm()
+			m.state = installStateTailscale
+			return m, m.initScreenWithSize()
+		}
+		if m.target == InstallTargetTailnet && !m.tailscaleConfirmed {
+			m.prepareTailscaleForm()
+			m.state = installStateTailscale
+			return m, m.initScreenWithSize()
+		}
+		return m, m.startActivity(m.pendingSettings)
+
+	case SettingsSectionCancelMsg:
+		if m.state != installStateAdvanced {
+			break
+		}
+		m.state = m.advancedReturnState()
+		return m, nil
 
 	case InstallActivityFailedMsg:
 		_ = m.namespace.Refresh(context.Background())
@@ -264,6 +401,9 @@ func (m Install) View() string {
 			errorLine := lipgloss.NewStyle().Foreground(Colors.Error).Width(m.width).Align(lipgloss.Center).Render(docker.ErrorMessage(m.err))
 			formView = lipgloss.JoinVertical(lipgloss.Center, errorLine, "", formView)
 		}
+		if banner := m.warningBanner(); banner != "" {
+			formView = lipgloss.JoinVertical(lipgloss.Center, banner, "", formView)
+		}
 		contentView = formView
 	}
 
@@ -296,14 +436,41 @@ func (m Install) View() string {
 
 // Private
 
+// warningBanner renders the tailnet readiness warnings. They sit above the
+// tailnet name screen: advice the user can act on, not a gate on the install.
+func (m Install) warningBanner() string {
+	if m.state != installStateHostname || m.target != InstallTargetTailnet {
+		return ""
+	}
+	if len(m.tailnetWarnings) == 0 {
+		return ""
+	}
+
+	style := lipgloss.NewStyle().Foreground(Colors.Warning)
+	width := max(m.width-4, 20)
+
+	var lines []string
+	for _, warning := range m.tailnetWarnings {
+		lines = append(lines, style.Render("⚠ "+warning))
+	}
+
+	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
+}
+
 func (m Install) initCurrentScreen() tea.Cmd {
 	switch m.state {
 	case installStateAppList:
 		return m.appList.Init()
 	case installStateImageForm:
 		return m.imageForm.Init()
+	case installStateWhere:
+		return m.whereForm.Init()
 	case installStateHostname:
 		return m.hostnameForm.Init()
+	case installStateAdvanced:
+		return m.advancedForm.Init()
+	case installStateTailscale:
+		return m.tailscaleForm.Init()
 	}
 	return nil
 }
@@ -326,9 +493,21 @@ func (m *Install) updateCurrentScreen(msg tea.Msg) tea.Cmd {
 		var cmd tea.Cmd
 		m.imageForm, cmd = m.imageForm.Update(msg)
 		return cmd
+	case installStateWhere:
+		var cmd tea.Cmd
+		m.whereForm, cmd = m.whereForm.Update(msg)
+		return cmd
 	case installStateHostname:
 		var cmd tea.Cmd
 		m.hostnameForm, cmd = m.hostnameForm.Update(msg)
+		return cmd
+	case installStateAdvanced:
+		var cmd tea.Cmd
+		m.advancedForm, cmd = m.advancedForm.Update(msg)
+		return cmd
+	case installStateTailscale:
+		var cmd tea.Cmd
+		m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
 		return cmd
 	}
 	return nil
@@ -340,8 +519,14 @@ func (m Install) viewCurrentScreen() string {
 		return m.appList.View()
 	case installStateImageForm:
 		return m.imageForm.View()
+	case installStateWhere:
+		return m.whereForm.View()
 	case installStateHostname:
 		return m.hostnameForm.View()
+	case installStateAdvanced:
+		return m.advancedForm.View()
+	case installStateTailscale:
+		return m.tailscaleForm.View()
 	}
 	return ""
 }
@@ -353,18 +538,92 @@ func (m Install) handleBack() (Install, tea.Cmd) {
 	case installStateImageForm:
 		m.state = installStateAppList
 		return m, nil
-	case installStateHostname:
-		if m.cliMode {
-			return m, m.cancelFromScreen()
-		}
+	case installStateWhere:
 		if m.customImage {
 			m.state = installStateImageForm
 			return m, m.imageForm.Init()
 		}
 		m.state = installStateAppList
 		return m, nil
+	case installStateHostname:
+		if m.cliMode {
+			return m, m.cancelFromScreen()
+		}
+		m.state = installStateWhere
+		return m, nil
+	case installStateAdvanced:
+		m.state = m.advancedReturnState()
+		return m, nil
+	case installStateTailscale:
+		m.state = installStateHostname
+		return m, nil
 	}
 	return m, nil
+}
+
+// startActivity installs the app: the settings collected so far, the image and
+// host, and whether the app runs publicly or on the tailnet.
+func (m *Install) startActivity(settings docker.ApplicationSettings) tea.Cmd {
+	settings.Image = m.pendingImage
+	settings.Host = m.pendingHost
+	if m.target == InstallTargetTailnet {
+		settings.Tailscale = m.pendingTailscale
+	}
+	settings = m.target.Apply(settings)
+
+	if err := settings.Validate(); err != nil {
+		m.err = err
+		return nil
+	}
+
+	m.state = installStateActivity
+	m.activity = NewInstallActivity(m.namespace, m.pendingImage, m.pendingHost, m.registry, settings)
+	m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	return m.activity.Init()
+}
+
+// resetTarget returns the app to the default public target, discarding a
+// Tailscale Service chosen for a previously selected image.
+func (m *Install) resetTarget() {
+	m.target = InstallTargetPublic
+	m.pendingSettings = docker.ApplicationSettings{}
+	m.pendingTailscale = docker.TailscaleSettings{}
+	m.tailscaleConfirmed = false
+	m.advancedFrom = InstallAdvancedFromHostname
+	m.whereForm = NewInstallWhereForm()
+	m.tailnetWarnings = nil
+}
+
+// checkTailnetReadiness looks for the host-level problems that would keep
+// this host from advertising the app as a Tailscale Service. It runs in the
+// background, and its warnings are advice rather than a gate.
+func (m *Install) checkTailnetReadiness() tea.Cmd {
+	ns := m.namespace
+
+	return func() tea.Msg {
+		return installTailnetWarningsMsg{warnings: ns.TailnetReadiness(context.Background())}
+	}
+}
+
+// prepareTailscaleForm rebuilds the Service screen when it is aimed at a
+// different image or app port than the settings collected so far, and always
+// hands its Advanced settings action the hostname collected on the way here.
+func (m *Install) prepareTailscaleForm() {
+	if m.tailscaleForm.imageRef != m.pendingImage || m.tailscaleForm.appPort != m.pendingSettings.AppPort {
+		m.tailscaleForm = NewInstallTailscaleForm(m.pendingImage, m.pendingSettings.AppPort, m.pendingTailscale)
+	}
+	m.tailscaleForm.SetActionMessage(func() InstallAdvancedMsg {
+		return InstallAdvancedMsg{ImageRef: m.pendingImage, Hostname: m.pendingHost}
+	})
+}
+
+// advancedReturnState is where the advanced settings screen goes back to: the
+// screen that opened it.
+func (m Install) advancedReturnState() installState {
+	if m.advancedFrom == InstallAdvancedFromTailscale {
+		return installStateTailscale
+	}
+	return installStateHostname
 }
 
 func (m Install) imageErrorState() installState {
@@ -492,14 +751,21 @@ func (m Install) writeOverlayRow(sb *strings.Builder, row, left, width int, line
 func (m *Install) updateHelpBindings() {
 	if _, content := m.helpForState(); content != "" {
 		m.help.SetBindings([]key.Binding{installKeys.Help, installKeys.Back})
-	} else {
-		m.help.SetBindings([]key.Binding{installKeys.Back})
+		return
 	}
+	if m.state == installStateTailscale {
+		m.help.SetBindings([]key.Binding{installTailscaleFormKeys.Help, installKeys.Back})
+		return
+	}
+	m.help.SetBindings([]key.Binding{installKeys.Back})
 }
 
 func (m Install) helpForState() (string, string) {
 	switch m.state {
 	case installStateHostname:
+		if m.target == InstallTargetTailnet {
+			return "Naming the Service on your tailnet", installTailnetHelpText
+		}
 		return "Setting the hostname", installHostnameHelpText
 	}
 	return "", ""
@@ -515,6 +781,17 @@ For example, if you own example.com and are installing Campfire, you might choos
 When you use your own domain on a publicly-reachable server, ONCE will set up SSL automatically to secure your application.
 
 If you're installing only on your local machine, you can use a localhost domain instead. You can still use a subdomain to support multiple applications (like chat.localhost). When you install an application in this way, it won't get the automatic SSL.
+
+You can always change these settings later, too: look for them under Settings -> Application.
+`
+
+	installTailnetHelpText = `On this screen you should enter the name this application will be known by on your tailnet.
+
+ONCE publishes the app as a Tailscale Service, so the name only needs to be meaningful to you and your tailnet. It doesn't need to be a public domain, and there's no DNS to configure: MagicDNS resolves it for your other devices.
+
+For example, if your tailnet is example.ts.net and you're installing Campfire, you might choose campfire.example.ts.net.
+
+Because traffic stays on the tailnet, ONCE doesn't set up an SSL certificate for this application; Tailscale handles encryption between your devices.
 
 You can always change these settings later, too: look for them under Settings -> Application.
 `

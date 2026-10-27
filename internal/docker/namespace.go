@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
@@ -280,6 +279,25 @@ func (n *Namespace) containerAppName(containerName string) string {
 
 // Private
 
+// docktailServiceOwner returns the name of an existing application that
+// advertises the given docktail Service name, skipping the named app and any
+// application that doesn't publish a docktail label. The second return is true
+// when a conflict is found.
+func (n *Namespace) docktailServiceOwner(service, excludeApp string) (string, bool) {
+	for _, app := range n.applications {
+		if app.Settings.Name == excludeApp {
+			continue
+		}
+		if !app.Settings.DocktailEnabled() {
+			continue
+		}
+		if app.Settings.EffectiveServiceName() == service {
+			return app.Settings.Name, true
+		}
+	}
+	return "", false
+}
+
 type appCandidate struct {
 	app     *Application
 	created int64
@@ -321,14 +339,15 @@ func (n *Namespace) restoreState(ctx context.Context) error {
 						return err
 					}
 					app := NewApplication(n, settings)
+					app.State = string(c.State)
 					app.Running = c.State == "running"
-					if app.Running {
-						info, err := n.client.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
-						if err == nil && info.Container.State != nil {
-							if t, err := time.Parse(time.RFC3339Nano, info.Container.State.StartedAt); err == nil {
-								app.RunningSince = t
-							}
-						}
+					// Containers that aren't running are inspected for the
+					// details that explain why: their exit code, their
+					// restart count and their health. Running containers
+					// are inspected anyway, for their start time.
+					info, err := n.client.ContainerInspect(ctx, c.ID, client.ContainerInspectOptions{})
+					if err == nil {
+						app.applyInspect(info.Container)
 					}
 
 					existing, found := appsByName[settings.Name]
