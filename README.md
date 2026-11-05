@@ -178,7 +178,44 @@ once doctor myapp.example.com      # check just one, by hostname
 
 It exits non-zero when a check fails, so it can be used in a script.
 
+### Troubleshooting
+
+Work from the top down: first `once doctor` for the ONCE side, then the reconnection scenarios below for the Tailscale side. Most of these fix themselves once the missing piece is in place, because docktail reconciles continuously; the point of this section is to name the piece.
+
+A quick sanity check at any point, from the host:
+
+```bash
+tailscale status          # is the node connected to the tailnet at all?
+tailscale serve status    # are the services defined, and reachable ("(tailnet only)")?
+```
+
+**Service shows as not advertised, or the Services page says the host is offline.**
+The serve config and the advertisement are two separate things: a restart of tailscaled, a re-authentication (`tailscale up`, `tailscale login`), or in some docktail versions a restart of the docktail container can leave the serve config in place while the advertisement is not. Re-advertise the host for each service that has one:
+
+```bash
+sudo tailscale serve advertise svc:myapp
+```
+
+Repeat for each service name on the machine (`tailscale serve status` lists them as `svc:<name>`). This happens automatically when docktail advertises as part of its reconciliation -- if you find yourself re-running the command after every restart, it means docktail is only writing the serve config, and the advertisement gap is docktail's to close.
+
+**Everything is advertised but still unreachable.**
+In the admin console, the Service must exist, its host must be approved (unless an `autoApprovers.services` rule covers the node's tag), and a grant must allow clients to reach `svc:myapp` on port 443. After re-advertising above, the host may sit in "Pending approval" until an admin approves it. Note that when a node has no auto-approver, the current approved host is the last approved node, so if the node identity changed then the old approval may remain, pointing elsewhere -- update the approvers or re-approve manually.
+
+**After connecting an app to Tailnet or re-authenticating an existing node.**
+Two follow-ups are common:
+
+- The node's tags may need re-applying if the auth key didn't include them (`sudo tailscale up --advertise-tags=tag:server,tag:container`). Untagged nodes can't host approved Services.
+- Re-run `serve advertise` per the first point above; advertisement state does not survive logout.
+- After a re-login or longer period disconnected, think about MagicDNS: clients reach `myapp.<tailnet>.ts.net`, which requires MagicDNS enabled in the admin console's DNS settings.
+
+**The Service points at the wrong container after a redeploy.**
+A new app container gets a new Docker network IP, and both docktail and Tailscale's serve config can lag. Docktail reconciles on Docker events and on its regular loop, so it should catch a redeploy within a minute or two; give it that long, then restart it if needed (`docker restart docktail`), and check its logs (`docker logs docktail --tail 50`) for reconciliation lines, which show exactly what it decided to apply and what it currently serves. If the production app container is also stopped, that's the other possibility -- `docker ps` shows the container and its health.
+
+**The connections were fine and then nothing resolves.**
+Check the obvious first: is tailscaled running and connected (`tailscale status` should show the node Online), and do other tailnet hosts respond? If tailscaled itself is down it's not a docktail or ONCE problem. On a Raspberry Pi, a reboot due to power issues can leave Docker's containers in their previous states -- docktail runs with `restart: unless-stopped` in the snippet above, which keeps the reconciliation loop running across a reboot; tailscaled comes back as a systemd service and re-establishes connectivity on its own.
+
 ## Making a ONCE-compatible application
+
 
 Fundamentally, ONCE works with any web application that:
 
