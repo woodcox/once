@@ -184,7 +184,6 @@ func doctorReport(ctx context.Context, app *Application, probes DoctorProbes) Do
 	}
 
 	report.Checks = append(report.Checks, doctorLabelCheck(app, container, containerFound))
-	report.Checks = append(report.Checks, doctorAppPortListeningCheck(ctx, app, container, containerFound, probes))
 	report.Checks = append(report.Checks, doctorDocktailContainerCheck(ctx, probes))
 	report.Checks = append(report.Checks, doctorAdvertisementCheck(ctx, app, container, containerFound, probes))
 
@@ -268,10 +267,17 @@ func doctorAppPortCheck(ctx context.Context, app *Application, container DoctorC
 
 	err := probeBackend(ctx, protocol, container.IP, port, path, doctorProbeTimeout, probes.HTTPGet, probes.TCPDial)
 	if err != nil {
+		message := fmt.Sprintf("%d did not answer %s: %v", port, path, err)
+		// The app port is what docktail proxies to, so on failure name the
+		// ports the container does listen on: it saves a docker exec to find out.
+		if ports := doctorListeningPorts(ctx, container.Name, probes); len(ports) > 0 {
+			message += fmt.Sprintf(" (listening: %s)", formatPorts(ports))
+		}
+
 		return DoctorCheck{
 			Label:   "app port",
 			Status:  DoctorFail,
-			Message: fmt.Sprintf("%d did not answer %s: %v", port, path, err),
+			Message: message,
 			Remedy:  fmt.Sprintf("make sure the app listens on port %d inside the container", port),
 		}
 	}
@@ -326,51 +332,6 @@ func doctorLabelCheck(app *Application, container DoctorContainer, found bool) D
 			expected[docktailLabelName],
 			app.Settings.EffectiveAppPort(),
 			app.Settings.EffectiveServicePort()),
-	}
-}
-
-// doctorAppPortListeningCheck reports whether the port the Service advertises
-// — always the application's own port — is actually listening inside the
-// container.
-func doctorAppPortListeningCheck(ctx context.Context, app *Application, container DoctorContainer, found bool, probes DoctorProbes) DoctorCheck {
-	if !found || !container.Running() {
-		return DoctorCheck{
-			Label:   "app port listening",
-			Status:  DoctorSkip,
-			Message: ": container is not running",
-		}
-	}
-
-	if container.IP == "" {
-		return DoctorCheck{
-			Label:   "app port listening",
-			Status:  DoctorSkip,
-			Message: ": the container has no IP address on the Docker network",
-		}
-	}
-
-	port := app.Settings.EffectiveAppPort()
-	address := net.JoinHostPort(container.IP, strconv.Itoa(port))
-
-	err := doctorTCPDial(ctx, probes, address)
-	if err != nil {
-		message := fmt.Sprintf("%d: nothing is listening inside the container", port)
-		if ports := doctorListeningPorts(ctx, container.Name, probes); len(ports) > 0 {
-			message += fmt.Sprintf(" (listening: %s)", formatPorts(ports))
-		}
-
-		return DoctorCheck{
-			Label:   "app port listening",
-			Status:  DoctorFail,
-			Message: message,
-			Remedy:  fmt.Sprintf("set the app port to the port the app listens on (%d)", port),
-		}
-	}
-
-	return DoctorCheck{
-		Label:   "app port listening",
-		Status:  DoctorPass,
-		Message: fmt.Sprintf("%d is listening inside the container", port),
 	}
 }
 
@@ -614,18 +575,6 @@ func doctorListeningPorts(ctx context.Context, containerName string, probes Doct
 
 // doctorApprovalNote is shown after a docktail app's checklist.
 const doctorApprovalNote = "service approval and client grants live in the Tailscale admin console, so they can't be verified from here"
-
-// doctorTCPDial dials the app port through the probe.
-func doctorTCPDial(ctx context.Context, probes DoctorProbes, address string) error {
-	if probes.TCPDial == nil {
-		return errors.New("no TCP probe is available")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
-	defer cancel()
-
-	return probes.TCPDial(ctx, address)
-}
 
 // tailscaleServeTarget is a proxy target from the Tailscale serve status.
 type tailscaleServeTarget struct {
