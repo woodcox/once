@@ -46,7 +46,7 @@ func (d *doctorCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 		name = args[0]
 	}
 
-	result, err := docker.Doctor(ctx, ns, name, docker.DoctorProbesFor(ns))
+	result, err := docker.Doctor(ctx, ns.Applications(), name, docker.DoctorProbesFor(ns))
 	if err != nil {
 		return err
 	}

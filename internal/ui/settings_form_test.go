@@ -1031,6 +1031,22 @@ func TestSettingsFormTailscale_FitsTerminalHeight(t *testing.T) {
 	assert.LessOrEqual(t, lipgloss.Height(view), 24, "Tailscale section must fit a 24-row terminal")
 }
 
+func TestSettingsFormTailscale_AppliesViewportHeightOnce(t *testing.T) {
+	settings := docker.ApplicationSettings{
+		Tailscale: docker.TailscaleSettings{
+			Enabled: true,
+			Mode:    docker.DocktailMode,
+			Service: "budget",
+		},
+	}
+	form := NewSettingsFormTailscale(settings)
+	updateSettingsForm(&form, tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	// The base form applies formViewportHeight; the Tailscale form must not
+	// apply it a second time and lose five more rows.
+	assert.Equal(t, formViewportHeight(20), form.form.height)
+}
+
 func TestSettingsFormEnvironment_AutoGrow_VisibleInView(t *testing.T) {
 	form := NewSettingsFormEnvironment(docker.ApplicationSettings{})
 	environmentSendWindowSize(&form, 80, 40)

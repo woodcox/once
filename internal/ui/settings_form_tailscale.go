@@ -118,8 +118,6 @@ func (m SettingsFormTailscale) Update(msg tea.Msg) (SettingsSection, tea.Cmd) {
 		m.width = wsm.Width
 		m.height = wsm.Height
 		m.panel = nil
-		wsm.Height = formViewportHeight(wsm.Height)
-		msg = wsm
 	}
 
 	if m.panel != nil {

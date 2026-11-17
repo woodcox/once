@@ -180,7 +180,7 @@ func TestDashboardPanelIssuesLineMetricBreach(t *testing.T) {
 	panel.cards = [3]MetricCard{
 		NewMetricCard("CPU", []float64{82}, ChartScale{max: 100}, UnitPercent, "", defaultWarningPct, defaultErrorPct),
 	}
-	panel.issues = panelIssues(&panel.app, panel.cards)
+	panel.issues = panelIssues(&panel.app, panel.cards, false)
 
 	stripped := ansi.Strip(panel.View(false, false, true, 120))
 
@@ -192,7 +192,7 @@ func TestDashboardPanelIssuesLineMemoryBreach(t *testing.T) {
 	panel.cards = [3]MetricCard{
 		NewMetricCard("Memory", []float64{91}, ChartScale{max: 100}, UnitBytes, "", defaultWarningPct, defaultErrorPct),
 	}
-	panel.issues = panelIssues(&panel.app, panel.cards)
+	panel.issues = panelIssues(&panel.app, panel.cards, false)
 
 	stripped := ansi.Strip(panel.View(false, false, true, 120))
 
@@ -204,7 +204,7 @@ func TestDashboardPanelIssuesLineMetricBreachErrorRate(t *testing.T) {
 	panel.cards = [3]MetricCard{
 		NewTrafficCard([]float64{100}, []float64{4.2}, ChartScale{max: 100}, 4.2, trafficWarningPct, trafficErrorPct),
 	}
-	panel.issues = panelIssues(&panel.app, panel.cards)
+	panel.issues = panelIssues(&panel.app, panel.cards, false)
 
 	stripped := ansi.Strip(panel.View(false, false, true, 120))
 
@@ -283,7 +283,7 @@ func TestDashboardPanelBadgeIsErrorForCrashedApp(t *testing.T) {
 	panel := testPanelWithState(false, "exited")
 	panel.app.ExitCode = 1
 	panel.cards = healthyCards()
-	panel.issues = panelIssues(&panel.app, panel.cards)
+	panel.issues = panelIssues(&panel.app, panel.cards, false)
 
 	badge := panel.renderHealthBadge(panel.cards)
 
@@ -315,10 +315,10 @@ func TestRenderStateInfo(t *testing.T) {
 	running := &docker.Application{Running: true}
 	stopped := &docker.Application{Running: false}
 
-	assert.Contains(t, ansi.Strip(renderStateInfo(running, false)), "running")
-	assert.Contains(t, ansi.Strip(renderStateInfo(stopped, false)), "stopped")
-	assert.Contains(t, ansi.Strip(renderStateInfo(running, true)), "stopping...")
-	assert.Contains(t, ansi.Strip(renderStateInfo(stopped, true)), "starting...")
+	assert.Contains(t, ansi.Strip(renderStateInfo(running, false, false)), "running")
+	assert.Contains(t, ansi.Strip(renderStateInfo(stopped, false, false)), "stopped")
+	assert.Contains(t, ansi.Strip(renderStateInfo(running, true, false)), "stopping...")
+	assert.Contains(t, ansi.Strip(renderStateInfo(stopped, true, true)), "starting...")
 }
 
 func TestRenderBar(t *testing.T) {
@@ -375,11 +375,24 @@ func TestRenderStateInfoReflectsContainerState(t *testing.T) {
 		return &docker.Application{State: s, Running: running, ExitCode: exit}
 	}
 
-	assert.Contains(t, renderStateInfo(state("running", true, 0), false), "running")
-	assert.Contains(t, renderStateInfo(state("restarting", true, 0), false), "restarting")
-	assert.Contains(t, renderStateInfo(state("exited", false, 1), false), "crashed")
-	assert.Contains(t, renderStateInfo(state("exited", false, 0), false), "stopped")
-	assert.Contains(t, renderStateInfo(state("paused", false, 0), false), "paused")
-	assert.Contains(t, renderStateInfo(state("running", true, 0), true), "stopping")
-	assert.Contains(t, renderStateInfo(state("exited", false, 0), true), "starting")
+	assert.Contains(t, renderStateInfo(state("running", true, 0), false, false), "running")
+	assert.Contains(t, renderStateInfo(state("restarting", true, 0), false, false), "restarting")
+	assert.Contains(t, renderStateInfo(state("exited", false, 1), false, false), "crashed")
+	assert.Contains(t, renderStateInfo(state("exited", false, 0), false, false), "stopped")
+	assert.Contains(t, renderStateInfo(state("paused", false, 0), false, false), "paused")
+	assert.Contains(t, renderStateInfo(state("running", true, 0), true, false), "stopping")
+	assert.Contains(t, renderStateInfo(state("exited", false, 0), true, true), "starting")
+}
+
+func TestRenderStateInfoUserStoppedIsNotCrashed(t *testing.T) {
+	// A stop the user asked for can exit 137 (SIGKILL after the stop
+	// timeout) or 143 (SIGTERM); either reads as a clean stop, but only
+	// for that transition.
+	for _, exitCode := range []int{137, 143} {
+		app := &docker.Application{State: "exited", Running: false, ExitCode: exitCode}
+
+		assert.Contains(t, renderStateInfo(app, false, true), "stopped")
+		assert.Contains(t, renderStateInfo(app, false, false), "crashed",
+			"exit %d on its own is still a crash", exitCode)
+	}
 }

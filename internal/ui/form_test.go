@@ -393,6 +393,33 @@ func TestForm_LongFormWindowsAroundFocusedField(t *testing.T) {
 	assert.Contains(t, view, "↓", "hidden fields are indicated")
 }
 
+func TestForm_RoomForTheButtonRow(t *testing.T) {
+	// The button row is three lines tall; the windowing has to budget for
+	// it at every height, not just the heights that used to fit.
+	for _, height := range []int{12, 19, 27, 30, 40} {
+		form := longForm(6)
+		form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: height})
+
+		assert.LessOrEqual(t, lipgloss.Height(form.View()), height, "height %d", height)
+	}
+}
+
+func TestForm_MouseWheelReversesAtTheEdge(t *testing.T) {
+	form := longForm(8)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	// Wheel far past the end of the content.
+	for range 10 {
+		form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	}
+	atEdge := ansi.Strip(form.View())
+
+	// The counter is clamped to the bounds the render uses, so a single
+	// wheel up moves the window back instead of eating the extra downs.
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	assert.NotEqual(t, atEdge, ansi.Strip(form.View()), "scrolling reverses immediately at the edge")
+}
+
 func TestForm_LongFormKeepsFocusedFieldVisibleWhileScrolling(t *testing.T) {
 	form := longForm(6)
 	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})

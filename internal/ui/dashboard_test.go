@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -123,6 +124,61 @@ func TestDashboard_ActionsMenuStartStop(t *testing.T) {
 
 	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
 	assert.True(t, d.toggling)
+}
+
+func TestDashboard_UserStopIsNotACrash(t *testing.T) {
+	d := testDashboard(1)
+	d.width = 80
+	d.height = 40
+	d.updateViewportSize()
+	d.rebuildViewportContent()
+
+	// The user stops the app; the container then lands exited 137, as a
+	// stop often does once Docker escalates to SIGKILL.
+	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
+	assert.True(t, d.stoppedByUser["app-0"], "the stop the user asked for is recorded")
+
+	d, _ = updateDashboard(d, startStopFinishedMsg{stopping: true})
+	assert.True(t, d.stoppedByUser["app-0"], "a successful stop keeps the marker")
+
+	d.apps[0].Running = false
+	d.apps[0].State = "exited"
+	d.apps[0].ExitCode = 137
+	d.buildPanels()
+	d.rebuildViewportContent()
+
+	assert.Empty(t, d.panels[0].issues, "the stopped app reports no issue")
+	view := ansi.Strip(d.View())
+	assert.Contains(t, view, "stopped")
+	assert.NotContains(t, view, "crashed")
+
+	// Starting the app again clears the marker, so a later exit on its own
+	// is still reported as a crash.
+	d.apps[0].Running = false
+	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
+	d, _ = updateDashboard(d, startStopFinishedMsg{stopping: false})
+	assert.False(t, d.stoppedByUser["app-0"], "starting clears the marker")
+
+	d.apps[0].State = "exited"
+	d.apps[0].ExitCode = 1
+	d.buildPanels()
+	d.rebuildViewportContent()
+
+	assert.Equal(t, []PanelIssue{{Text: "exited with code 1", Health: healthError}}, d.panels[0].issues)
+	view = ansi.Strip(d.View())
+	assert.Contains(t, view, "crashed")
+}
+
+func TestDashboard_FailedStopDropsTheUserStopMarker(t *testing.T) {
+	d := testDashboard(1)
+	d.width = 80
+	d.height = 40
+
+	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
+	require.True(t, d.stoppedByUser["app-0"])
+
+	d, _ = updateDashboard(d, startStopFinishedMsg{err: assert.AnError, stopping: true})
+	assert.False(t, d.stoppedByUser["app-0"], "a stop that failed leaves the crash reporting alone")
 }
 
 func TestDashboard_ActionsMenuRemove(t *testing.T) {

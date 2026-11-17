@@ -54,6 +54,7 @@ type Dashboard struct {
 	viewport      viewport.Model
 	toggling      bool
 	togglingApp   string
+	stoppedByUser map[string]bool
 	progress      Progress
 	help          Help
 	overlay       Component
@@ -62,7 +63,8 @@ type Dashboard struct {
 type dashboardTickMsg struct{}
 
 type startStopFinishedMsg struct {
-	err error
+	err      error
+	stopping bool
 }
 
 func NewDashboard(ns *docker.Namespace, apps []*docker.Application, selectedIndex int,
@@ -85,6 +87,7 @@ func NewDashboard(ns *docker.Namespace, apps []*docker.Application, selectedInde
 		viewport:      vp,
 		header:        NewDashboardHeader(systemScraper),
 		hostname:      hostname,
+		stoppedByUser: make(map[string]bool),
 		progress:      NewProgress(0, Colors.Border),
 		help:          NewHelp(),
 	}
@@ -187,6 +190,15 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 			app := msg.app
 			m.toggling = true
 			m.togglingApp = app.Settings.Name
+			// Mark the transition before the container settles: a stop
+			// ONCE was asked for can exit 137 or 143, and that isn't a
+			// crash. Starting clears the mark again, so a later exit on
+			// its own still reads as a crash.
+			if app.Running {
+				m.stoppedByUser[app.Settings.Name] = true
+			} else {
+				delete(m.stoppedByUser, app.Settings.Name)
+			}
 			m.progress = NewProgress(m.width, Colors.Border)
 			m.updateViewportSize()
 			m.rebuildViewportContent()
@@ -198,8 +210,18 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 
 	case startStopFinishedMsg:
+		name := m.togglingApp
 		m.toggling = false
 		m.togglingApp = ""
+		if msg.err != nil {
+			// The toggle didn't take: fall back to what the container
+			// state alone says about the app.
+			if msg.stopping {
+				delete(m.stoppedByUser, name)
+			} else {
+				m.stoppedByUser[name] = true
+			}
+		}
 		m.updateViewportSize()
 		m.rebuildViewportContent()
 
@@ -293,14 +315,15 @@ func (m Dashboard) helpBindings() []key.Binding {
 }
 
 func (m Dashboard) runStartStop(app *docker.Application) tea.Cmd {
+	stopping := app.Running
 	return func() tea.Msg {
 		var err error
-		if app.Running {
+		if stopping {
 			err = app.Stop(context.Background())
 		} else {
 			err = app.Start(context.Background())
 		}
-		return startStopFinishedMsg{err: err}
+		return startStopFinishedMsg{err: err, stopping: stopping}
 	}
 }
 
@@ -401,5 +424,6 @@ func (m *Dashboard) buildPanels() {
 	m.panels = make([]DashboardPanel, len(m.apps))
 	for i, app := range m.apps {
 		m.panels[i] = NewDashboardPanel(app, m.scraper, m.dockerScraper, m.userStats)
+		m.panels[i].stoppedByUser = m.stoppedByUser[app.Settings.Name]
 	}
 }

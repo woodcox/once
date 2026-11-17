@@ -32,6 +32,18 @@ func TestParseListeningPorts_IPv6(t *testing.T) {
 	assert.Equal(t, []int{0x1F90}, ports)
 }
 
+func TestParseListeningPorts_DualStackListenerIsListedOnce(t *testing.T) {
+	output := `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+    0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000      0        0 3660278 1 00000000d2afcd77 100 0 0 10 0
+    1: 00000000000000000000000000000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000      0        0 12345 1 00000000000000000000000000000000 100 0 0 10 0
+`
+
+	ports, err := parseListeningPorts(output)
+	require.NoError(t, err)
+
+	assert.Equal(t, []int{0x0BB8}, ports, "the same port on IPv4 and IPv6 is one listener")
+}
+
 func TestParseProxyTarget(t *testing.T) {
 	target := parseProxyTarget("http://172.18.0.4:80")
 	assert.Equal(t, "172.18.0.4", target.host)

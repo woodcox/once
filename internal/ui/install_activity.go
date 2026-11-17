@@ -106,6 +106,9 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.progress = m.progress.SetWidth(min(m.width-4, 60))
+		if m.prompt != nil {
+			m.prompt.width = m.width
+		}
 
 	case installProgressMsg:
 		m.stage = msg.stage
@@ -123,22 +126,24 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 		return m.waitForProgress()
 
 	case installPromptMsg:
-		prompt := NewDocktailPrompt(docktailNotAdvertisedPrompt)
+		prompt := NewDocktailPrompt(docktailNotAdvertisedPrompt, m.width)
 		m.prompt = &prompt
 		return m.waitForProgress()
 
 	case docktailDecisionMsg:
 		if m.prompt == nil {
-			// A second decision arrived before the first was consumed.
-			// Drop it, but keep the progress pump alive.
-			return m.waitForProgress()
+			// A stray decision after the prompt was cleared is dropped:
+			// the pump the prompt message armed is still running.
+			return nil
 		}
 		m.prompt = nil
 		select {
 		case m.decisionChan <- msg.decision:
 		default:
 		}
-		return m.waitForProgress()
+		// The decision comes from the prompt, not the pump; re-arming here
+		// would start a second pump racing the first for every message.
+		return nil
 
 	case tea.KeyPressMsg, MouseEvent:
 		if m.prompt != nil {

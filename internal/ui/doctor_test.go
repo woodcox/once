@@ -75,6 +75,22 @@ func TestDoctor_InitRunsTheCheckAsynchronously(t *testing.T) {
 	assert.Contains(t, m.View(), "Checking myapp")
 }
 
+func TestDoctor_RunDoctorUsesTheApplicationSnapshot(t *testing.T) {
+	ns := newTestNamespace(docker.ApplicationSettings{Name: "myapp", Host: "myapp.example.com"})
+	m := NewDoctor(ns, ns.Applications()[0])
+
+	// No probes: the check completes without touching Docker or tailscale.
+	m.probes = docker.DoctorProbes{}
+
+	msg := m.Init()()
+	finished, ok := msg.(doctorFinishedMsg)
+	require.True(t, ok, "expected doctorFinishedMsg, got %T", msg)
+
+	require.NoError(t, finished.err)
+	require.Len(t, finished.result.Reports, 1)
+	assert.Equal(t, "myapp", finished.result.Reports[0].AppName)
+}
+
 func TestDoctor_RefreshRunsTheCheckAgain(t *testing.T) {
 	m := newTestDoctor()
 
@@ -186,6 +202,7 @@ func newTestDoctor() Doctor {
 	h.SetBindings([]key.Binding{doctorKeys.Refresh, doctorKeys.Back})
 
 	m := Doctor{
+		namespace: newTestNamespace(),
 		app: &docker.Application{
 			Settings: docker.ApplicationSettings{Name: "myapp", Host: "myapp.example.com"},
 		},

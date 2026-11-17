@@ -733,8 +733,14 @@ func probeBackend(ctx context.Context, protocol, ip string, port int, path strin
 		if err != nil {
 			return err
 		}
+		// Each probe builds its own transport, so a pooled idle connection
+		// would never be reused; disabling keep-alives releases it (and its
+		// goroutines) as soon as the response body is closed.
 		client := &http.Client{
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+			Transport: &http.Transport{
+				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+				DisableKeepAlives: true,
+			},
 		}
 		resp, err := client.Do(req)
 		if err != nil {

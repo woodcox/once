@@ -81,7 +81,7 @@ You can also use the action menu, `a` to start and stop applications, or remove 
 
 ONCE assumes applications follow the conventions described in [Making a ONCE-compatible application](#making-a-once-compatible-application): HTTP on port 80, a health check at `/up`, and data in `/storage`.
 
-Plenty of images don't. When installing a custom image, the `Advanced settings` button on the hostname screen lets you override them:
+Plenty of images don't. The `Advanced settings` button on the hostname screen lets you override them:
 
 - `Health check path` -- where ONCE and the proxy check that the application is up (default `/up`).
 - `App port` -- the port the application listens on inside its container (default `80`).
@@ -136,7 +136,7 @@ Requirements on the host:
   }
   ```
 
-Turn it on with `Tailscale Service` in the install advanced settings, later under Settings -> Application, or from the CLI:
+Turn it on by picking `Tailnet only` on the "Where should this app run?" screen during installation, later under Settings -> Tailscale, or from the CLI:
 
 ```sh
 once deploy <image> --host app.example.com --docktail --docktail-service myapp

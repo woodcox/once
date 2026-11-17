@@ -134,10 +134,6 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			var cmd tea.Cmd
 			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
 			return m, cmd
-		case tea.WindowSizeMsg:
-			var cmd tea.Cmd
-			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)
-			return m, cmd
 		case tea.KeyPressMsg, MouseEvent, tea.MouseWheelMsg:
 			var cmd tea.Cmd
 			m.tailscaleForm, cmd = m.tailscaleForm.Update(msg)

@@ -123,12 +123,14 @@ func (m Doctor) View() string {
 // Private
 
 func (m Doctor) runDoctor() tea.Cmd {
-	ns := m.namespace
+	// The namespace can be refreshed while the check runs, and a refresh
+	// replaces the application slice; hand the check a stable snapshot.
+	apps := m.namespace.Applications()
 	name := m.app.Settings.Name
 	probes := m.probes
 
 	return func() tea.Msg {
-		result, err := docker.Doctor(context.Background(), ns, name, probes)
+		result, err := docker.Doctor(context.Background(), apps, name, probes)
 		return doctorFinishedMsg{result: result, err: err}
 	}
 }
