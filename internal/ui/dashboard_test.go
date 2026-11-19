@@ -138,7 +138,7 @@ func TestDashboard_UserStopIsNotACrash(t *testing.T) {
 	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
 	assert.True(t, d.stoppedByUser["app-0"], "the stop the user asked for is recorded")
 
-	d, _ = updateDashboard(d, startStopFinishedMsg{stopping: true})
+	d, _ = updateDashboard(d, startStopFinishedMsg{})
 	assert.True(t, d.stoppedByUser["app-0"], "a successful stop keeps the marker")
 
 	d.apps[0].Running = false
@@ -156,7 +156,7 @@ func TestDashboard_UserStopIsNotACrash(t *testing.T) {
 	// is still reported as a crash.
 	d.apps[0].Running = false
 	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
-	d, _ = updateDashboard(d, startStopFinishedMsg{stopping: false})
+	d, _ = updateDashboard(d, startStopFinishedMsg{})
 	assert.False(t, d.stoppedByUser["app-0"], "starting clears the marker")
 
 	d.apps[0].State = "exited"
@@ -169,6 +169,42 @@ func TestDashboard_UserStopIsNotACrash(t *testing.T) {
 	assert.Contains(t, view, "crashed")
 }
 
+func TestDashboard_FailedStartRestoresCrashState(t *testing.T) {
+	d := testDashboard(1)
+	d.width = 80
+	d.height = 40
+	d.apps[0].Running = false
+	d.apps[0].State = "exited"
+	d.apps[0].ExitCode = 1
+	d.buildPanels()
+
+	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
+	d, _ = updateDashboard(d, startStopFinishedMsg{err: assert.AnError})
+	d.buildPanels()
+	d.rebuildViewportContent()
+
+	assert.False(t, d.stoppedByUser["app-0"])
+	assert.Equal(t, []PanelIssue{{Text: "exited with code 1", Health: healthError}}, d.panels[0].issues)
+	assert.Contains(t, ansi.Strip(d.View()), "crashed")
+}
+
+func TestDashboard_FailedStartRestoresIntentionalStop(t *testing.T) {
+	d := testDashboard(1)
+	d.width = 80
+	d.height = 40
+	d.apps[0].Running = false
+	d.stoppedByUser["app-0"] = true
+
+	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
+	d, _ = updateDashboard(d, startStopFinishedMsg{
+		err:                   assert.AnError,
+		previousStoppedByUser: true,
+		stopMarkerPresent:     true,
+	})
+
+	assert.True(t, d.stoppedByUser["app-0"])
+}
+
 func TestDashboard_FailedStopDropsTheUserStopMarker(t *testing.T) {
 	d := testDashboard(1)
 	d.width = 80
@@ -177,7 +213,7 @@ func TestDashboard_FailedStopDropsTheUserStopMarker(t *testing.T) {
 	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
 	require.True(t, d.stoppedByUser["app-0"])
 
-	d, _ = updateDashboard(d, startStopFinishedMsg{err: assert.AnError, stopping: true})
+	d, _ = updateDashboard(d, startStopFinishedMsg{err: assert.AnError})
 	assert.False(t, d.stoppedByUser["app-0"], "a stop that failed leaves the crash reporting alone")
 }
 

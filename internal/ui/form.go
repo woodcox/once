@@ -346,6 +346,14 @@ func (f Form) View() string {
 	}
 	start, end = f.applyWindowStart(start, end, itemToBlock)
 
+	windowHeight := hiddenFieldsLines(start, end, len(blocks))
+	for _, block := range blocks[start:end] {
+		windowHeight += lipgloss.Height(block)
+	}
+	if windowHeight+f.buttonRowHeight() > f.height {
+		return f.convergeBlock(itemToBlock, buttons)
+	}
+
 	parts := make([]string, 0, end-start+3)
 	if start > 0 {
 		parts = append(parts, hiddenFieldsIndicator("↑", start))
@@ -685,7 +693,25 @@ func (f Form) applyWindowStart(start, end int, itemToBlock []int) (int, int) {
 	if shift == 0 {
 		return start, end
 	}
-	return growWindowAround(blocks, start+shift, end+shift, f.contentBudget())
+
+	start += shift
+	end += shift
+	budget := f.contentBudget()
+	used := 0
+	for _, block := range blocks[start:end] {
+		used += lipgloss.Height(block)
+	}
+	for used+hiddenFieldsLines(start, end, n) > budget && end-start > 1 {
+		if shift > 0 {
+			used -= lipgloss.Height(blocks[start])
+			start++
+		} else {
+			end--
+			used -= lipgloss.Height(blocks[end])
+		}
+	}
+
+	return growWindowAround(blocks, start, end, budget)
 }
 
 func (f Form) focusNext() (Form, tea.Cmd) {

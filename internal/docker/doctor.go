@@ -452,16 +452,6 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 // its own.
 func doctorURLCheck(ctx context.Context, app *Application, probes DoctorProbes) (string, DoctorCheck) {
 	service := app.Settings.EffectiveServiceName()
-
-	suffix := doctorMagicDNSSuffix(ctx, probes)
-	if suffix == "" {
-		return "", DoctorCheck{
-			Label:   "url",
-			Status:  DoctorSkip,
-			Message: ": the tailnet's MagicDNS suffix is unavailable",
-		}
-	}
-
 	protocol := app.Settings.EffectiveServiceProtocol()
 	port := app.Settings.EffectiveServicePort()
 
@@ -473,6 +463,15 @@ func doctorURLCheck(ctx context.Context, app *Application, probes DoctorProbes) 
 			Label:   "url",
 			Status:  DoctorPass,
 			Message: endpoint,
+		}
+	}
+
+	suffix := doctorMagicDNSSuffix(ctx, probes)
+	if suffix == "" {
+		return "", DoctorCheck{
+			Label:   "url",
+			Status:  DoctorSkip,
+			Message: ": the tailnet's MagicDNS suffix is unavailable",
 		}
 	}
 
@@ -613,7 +612,11 @@ func tailscaleServeTargetFor(data []byte, serviceName string, servicePort int) (
 			continue
 		}
 
-		for _, web := range advertised.Web {
+		for address, web := range advertised.Web {
+			_, advertisedPort, err := net.SplitHostPort(address)
+			if err != nil || advertisedPort != strconv.Itoa(servicePort) {
+				continue
+			}
 			for _, handler := range web.Handlers {
 				return parseProxyTarget(handler.Proxy), true
 			}

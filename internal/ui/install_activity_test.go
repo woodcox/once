@@ -154,8 +154,14 @@ func TestInstallActivity_WarningsAreDrainedBeforeDone(t *testing.T) {
 	m.doneChan <- installDoneMsg{}
 
 	msg := m.waitForProgress()()
-	_, ok := msg.(installWarningMsg)
-	assert.True(t, ok, "expected installWarningMsg, got %T", msg)
+	done, ok := msg.(installDoneMsg)
+	require.True(t, ok, "expected installDoneMsg, got %T", msg)
+
+	cmd := m.Update(done)
+	require.NotNil(t, cmd)
+	assert.Equal(t, []string{"not advertised yet"}, m.warnings)
+	_, ok = cmd().(InstallActivityDoneMsg)
+	assert.True(t, ok, "the completion is preserved when its warning is recorded")
 }
 
 func TestInstall_ActivityKeysReachThePrompt(t *testing.T) {

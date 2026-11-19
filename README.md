@@ -104,7 +104,9 @@ ONCE_REDUCED_MOTION=true once
 
 ONCE can advertise an application to your tailnet as a native [Tailscale Service](https://tailscale.com/docs/features/tailscale-services) through [docktail](https://docktail.org/).
 
-ONCE doesn't talk to Tailscale itself: it bundles no Tailscale client, holds no auth keys, and never writes Tailscale configuration (that needs root). It only adds `docktail.*` labels to the application container, as you would in a `docker-compose.yml`, and the docktail container on the host does the rest. No ports are published off the host, and the application ends up at `https://<service>.<tailnet>.ts.net`.
+ONCE doesn't manage Tailscale credentials or configuration: it bundles no Tailscale client, holds no auth keys, and never writes Tailscale configuration (that needs root). It only adds `docktail.*` labels to the application container, as you would in a `docker-compose.yml`, and the docktail container on the host does the rest. ONCE does query the local Tailscale CLI read-only: `tailscale serve status --json` during verification and `tailscale status --json` for readiness.
+
+No ports are published off the host. The Service hostname is `<service>.<tailnet>.ts.net`, but the access method depends on its protocol: HTTP and HTTPS Services use `http://` or `https://` URLs on the configured service port, while `tcp` and `tls-terminated-tcp` Services are reached directly on that port (for example, `tcp:<service>:<port>`), not through an HTTPS URL.
 
 Requirements on the host:
 

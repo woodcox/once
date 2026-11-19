@@ -456,6 +456,32 @@ func TestForm_ShortFormIsUnchangedByWindowSize(t *testing.T) {
 	assert.Equal(t, 14, lipgloss.Height(tall))
 }
 
+func TestForm_CompactsFocusedBlockWhenIndicatorsDoNotFit(t *testing.T) {
+	newForm := func() Form {
+		first := NewTextField("first")
+		first.SetValue("first-value")
+		return NewForm("Submit",
+			FormItem{Label: "First", Field: first},
+			FormItem{Label: "Second", Field: NewTextField("second")},
+		)
+	}
+
+	form := newForm()
+	form = updateForm(form, tea.WindowSizeMsg{Width: 80, Height: 8})
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 8)
+	assert.Contains(t, view, "first-value")
+
+	form = newForm()
+	form = updateForm(form, tea.WindowSizeMsg{Width: 80, Height: 9})
+	view = ansi.Strip(form.View())
+	assert.Equal(t, 9, lipgloss.Height(view))
+	assert.Contains(t, view, "first-value")
+	assert.Contains(t, view, "↓")
+	assert.Contains(t, view, "Submit")
+	assert.Contains(t, view, "Cancel")
+}
+
 func TestForm_TinyHeightShowsFocusedField(t *testing.T) {
 	hostname := NewTextField("app.example.com")
 	hostname.SetValue("chat.example.com")
@@ -549,6 +575,30 @@ func TestForm_MouseWheelIsIgnoredWhenEverythingFits(t *testing.T) {
 	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 
 	assert.Equal(t, before, ansi.Strip(form.View()), "nothing is hidden, so the wheel does nothing")
+}
+
+func TestForm_MouseWheelRefitsVariableHeightBlocks(t *testing.T) {
+	tall := NewTextField("tall")
+	tall.SetValue("tall-value")
+	form := NewForm("Submit",
+		FormItem{Label: "First", Field: NewTextField("first")},
+		FormItem{Label: "Second", Field: NewTextField("second")},
+		FormItem{Label: "Tall", Field: tall, Description: strings.Repeat("detail\n", 6) + "detail"},
+		FormItem{Label: "Last", Field: NewTextField("last")},
+	)
+	form = updateForm(form, tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	blocks, _ := form.itemBlocks()
+	heights := make([]int, len(blocks))
+	for i, block := range blocks {
+		heights[i] = lipgloss.Height(block)
+	}
+	require.Equal(t, []int{5, 5, 12, 5}, heights)
+
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 20)
+	assert.Contains(t, view, "tall-value")
 }
 
 func TestForm_RowGroupPlacesMembersOnTheSameLine(t *testing.T) {

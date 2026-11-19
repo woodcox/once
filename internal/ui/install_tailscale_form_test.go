@@ -18,7 +18,7 @@ func TestInstallTailscaleForm_Defaults(t *testing.T) {
 	assert.Equal(t, "once-campfire", m.form.TextField(installTailscaleServiceField).Value())
 	assert.Empty(t, m.form.TextField(installTailscaleDescriptionField).Value())
 	assert.Empty(t, m.form.TextField(installTailscaleBackendProtocolField).Value())
-	assert.Equal(t, "443", m.form.TextField(installTailscaleServicePortField).Value())
+	assert.Empty(t, m.form.TextField(installTailscaleServicePortField).Value())
 	assert.Empty(t, m.form.TextField(installTailscaleServiceProtocolField).Value())
 	assert.Equal(t, "/", m.form.TextField(installTailscalePathField).Value())
 	assert.Empty(t, m.form.TextField(installTailscaleTagsField).Value())
@@ -32,7 +32,7 @@ func TestInstallTailscaleForm_SubmitDefaults(t *testing.T) {
 	assert.True(t, settings.Enabled)
 	assert.Equal(t, docker.DocktailMode, settings.Mode)
 	assert.Equal(t, "once-campfire", settings.Service)
-	assert.Equal(t, 443, settings.ServicePort)
+	assert.Zero(t, settings.ServicePort)
 	assert.Equal(t, "/", settings.Path)
 	assert.Empty(t, settings.Tags)
 	assert.Empty(t, settings.Description)
@@ -40,6 +40,17 @@ func TestInstallTailscaleForm_SubmitDefaults(t *testing.T) {
 	assert.Empty(t, settings.ServiceProtocol)
 	assert.Empty(t, settings.Network)
 	assert.Empty(t, settings.ProxyProtocol)
+}
+
+func TestInstallTailscaleForm_TCPBackendDoesNotSubmitDerivedPort(t *testing.T) {
+	m := NewInstallTailscaleForm("example/postgres", 5432, docker.TailscaleSettings{})
+	m.form.TextField(installTailscaleBackendProtocolField).SetValue("tcp")
+
+	settings := installTailscaleFormSubmit(t, m)
+	appSettings := tailscaleApplicationSettings("example/postgres", 5432, settings)
+
+	assert.Zero(t, settings.ServicePort)
+	assert.Equal(t, "tcp", appSettings.EffectiveServiceProtocol())
 }
 
 func TestInstallTailscaleForm_DefaultsReachTheLabels(t *testing.T) {

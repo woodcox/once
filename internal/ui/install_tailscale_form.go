@@ -66,7 +66,9 @@ func NewInstallTailscaleForm(imageRef string, appPort int, settings docker.Tails
 
 	servicePortField := NewTextField("443")
 	servicePortField.SetDigitsOnly(true)
-	servicePortField.SetValue(strconv.Itoa(tailscaleApplicationSettings(imageRef, appPort, settings).EffectiveServicePort()))
+	if settings.ServicePort != 0 {
+		servicePortField.SetValue(strconv.Itoa(settings.ServicePort))
+	}
 
 	serviceProtocolField := NewTextField("auto")
 	serviceProtocolField.SetValue(settings.ServiceProtocol)

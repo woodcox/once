@@ -40,8 +40,9 @@ type installProgressMsg struct {
 type installPromptMsg struct{}
 
 type installDoneMsg struct {
-	app *docker.Application
-	err error
+	app      *docker.Application
+	err      error
+	warnings []string
 }
 
 type InstallActivityDoneMsg struct {
@@ -151,6 +152,7 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 		}
 
 	case installDoneMsg:
+		m.warnings = append(m.warnings, msg.warnings...)
 		if msg.err != nil {
 			return func() tea.Msg { return InstallActivityFailedMsg{Err: msg.err} }
 		}
@@ -219,7 +221,13 @@ func (m *InstallActivity) waitForProgress() tea.Cmd {
 		// follows it, so drain warnings first to make sure they're seen.
 		select {
 		case warning := <-m.warningChan:
-			return warning
+			select {
+			case done := <-m.doneChan:
+				done.warnings = append(done.warnings, warning.warnings...)
+				return m.doneWithPendingWarnings(done)
+			default:
+				return warning
+			}
 		default:
 		}
 
@@ -233,9 +241,20 @@ func (m *InstallActivity) waitForProgress() tea.Cmd {
 		case prompt := <-m.promptChan:
 			return prompt
 		case done := <-m.doneChan:
-			return done
+			return m.doneWithPendingWarnings(done)
 		}
 		return nil
+	}
+}
+
+func (m *InstallActivity) doneWithPendingWarnings(done installDoneMsg) installDoneMsg {
+	for {
+		select {
+		case warning := <-m.warningChan:
+			done.warnings = append(done.warnings, warning.warnings...)
+		default:
+			return done
+		}
 	}
 }
 

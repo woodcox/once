@@ -63,6 +63,16 @@ func TestTailscaleServeTargetFor(t *testing.T) {
 	assert.Equal(t, "172.18.0.4", target.host)
 	assert.Equal(t, "80", target.port)
 
+	_, ok = tailscaleServeTargetFor(healthyServeStatus(), "write", 8443)
+	assert.False(t, ok, "a Web entry on a different service port doesn't match")
+
+	webAndTCPStatus := []byte(`{"Services":{"svc:write":{"Web":{"write.lemur-carat.ts.net:443":{"Handlers":{"/":{"Proxy":"http://172.18.0.4:80"}}}},"TCP":{"8443":{"TCPForward":"172.18.0.4:5432"}}}}}`)
+	target, ok = tailscaleServeTargetFor(webAndTCPStatus, "write", 8443)
+	require.True(t, ok, "a mismatched Web entry doesn't hide a matching TCP entry")
+	assert.Equal(t, "tcp", target.scheme)
+	assert.Equal(t, "172.18.0.4", target.host)
+	assert.Equal(t, "5432", target.port)
+
 	_, ok = tailscaleServeTargetFor(healthyServeStatus(), "budget", 443)
 	assert.False(t, ok)
 

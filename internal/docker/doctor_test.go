@@ -670,6 +670,28 @@ func TestDoctorURLFallsBackWithoutMagicDNS(t *testing.T) {
 	assert.Equal(t, DoctorSkip, url.Status)
 }
 
+func TestDoctorURLReportsTCPEndpointWithoutMagicDNS(t *testing.T) {
+	settings := healthyDocktailSettings()
+	settings.Tailscale.ServiceProtocol = "tcp"
+	settings.Tailscale.ServicePort = 5432
+	settings.AppPort = 5432
+	fixture := newDoctorFixture(t, settings)
+
+	probes := healthyProbes()
+	probes.TailscaleStatus = func(ctx context.Context) ([]byte, error) {
+		return nil, errors.New("tailscale not installed")
+	}
+
+	result, err := Doctor(context.Background(), fixture.apps(), "", probes)
+	require.NoError(t, err)
+
+	report := result.Reports[0]
+	url := checkByLabel(t, report, "url")
+	assert.Equal(t, DoctorPass, url.Status)
+	assert.Equal(t, "tcp:write:5432", url.Message)
+	assert.Equal(t, "tcp:write:5432", report.URL)
+}
+
 func TestDoctorURLIncludesNonDefaultPorts(t *testing.T) {
 	t.Run("https on 8443", func(t *testing.T) {
 		settings := healthyDocktailSettings()
