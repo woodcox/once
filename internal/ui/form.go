@@ -346,6 +346,14 @@ func (f Form) View() string {
 	}
 	start, end = f.applyWindowStart(start, end, itemToBlock)
 
+	windowHeight := hiddenFieldsLines(start, end, len(blocks))
+	for _, block := range blocks[start:end] {
+		windowHeight += lipgloss.Height(block)
+	}
+	if windowHeight+f.buttonRowHeight() > f.height {
+		return f.convergeBlock(itemToBlock, buttons)
+	}
+
 	parts := make([]string, 0, end-start+3)
 	if start > 0 {
 		parts = append(parts, hiddenFieldsIndicator("↑", start))
@@ -596,11 +604,23 @@ func (f Form) renderButtons() string {
 	return lipgloss.JoinHorizontal(lipgloss.Center, buttonParts...)
 }
 
+// buttonRowHeight measures the rendered button row, which is three lines
+// tall with its rounded borders; the content budget has to account for it.
+func (f Form) buttonRowHeight() int {
+	return lipgloss.Height(f.renderButtons())
+}
+
+// contentBudget is the height left for item blocks and the hidden-fields
+// indicators once the button row is accounted for.
+func (f Form) contentBudget() int {
+	return f.height - f.buttonRowHeight()
+}
+
 // visibleRange returns the slice of item blocks to render. When the form is
 // taller than the terminal it grows the window around the focused block, one
-// whole block at a time, and reserves a line for each hidden-fields indicator.
-// itemToBlock maps each item index to its block index; focused items that
-// share a row group land on the same block.
+// whole block at a time, and reserves a line for each hidden-fields indicator
+// plus the button row. itemToBlock maps each item index to its block index;
+// focused items that share a row group land on the same block.
 func (f Form) visibleRange(blocks []string, itemToBlock []int) (start, end int, windowed bool) {
 	n := len(blocks)
 	if f.height <= 0 || n == 0 {
@@ -611,7 +631,10 @@ func (f Form) visibleRange(blocks []string, itemToBlock []int) (start, end int, 
 	for _, block := range blocks {
 		total += lipgloss.Height(block)
 	}
-	if total+2 <= f.height {
+
+	// The unwindowed layout separates the items from the button row with
+	// a blank line.
+	if total+1+f.buttonRowHeight() <= f.height {
 		return 0, n, false
 	}
 
@@ -620,7 +643,7 @@ func (f Form) visibleRange(blocks []string, itemToBlock []int) (start, end int, 
 		anchor = itemToBlock[anchor]
 	}
 	anchor = min(max(anchor, 0), n-1)
-	start, end, _ = growWindow(blocks, anchor, f.height)
+	start, end, _ = growWindow(blocks, anchor, f.contentBudget())
 	return start, end, true
 }
 
@@ -631,7 +654,8 @@ func (f *Form) scrollWheel(msg tea.MouseWheelMsg) {
 		return
 	}
 	blocks, itemToBlock := f.itemBlocks()
-	if _, _, windowed := f.visibleRange(blocks, itemToBlock); !windowed {
+	start, end, windowed := f.visibleRange(blocks, itemToBlock)
+	if !windowed {
 		return
 	}
 
@@ -643,6 +667,10 @@ func (f *Form) scrollWheel(msg tea.MouseWheelMsg) {
 	default:
 		return
 	}
+
+	// Clamp to the same bounds applyWindowStart uses, so extra wheel events
+	// at the edges don't have to be undone before the window moves back.
+	f.wheelSteps = clamp(f.wheelSteps, -start, len(blocks)-end)
 }
 
 // applyWindowStart shifts the focus-anchored window by wheelSteps so a wheel
@@ -665,7 +693,25 @@ func (f Form) applyWindowStart(start, end int, itemToBlock []int) (int, int) {
 	if shift == 0 {
 		return start, end
 	}
-	return growWindowAround(blocks, start+shift, end+shift, f.height)
+
+	start += shift
+	end += shift
+	budget := f.contentBudget()
+	used := 0
+	for _, block := range blocks[start:end] {
+		used += lipgloss.Height(block)
+	}
+	for used+hiddenFieldsLines(start, end, n) > budget && end-start > 1 {
+		if shift > 0 {
+			used -= lipgloss.Height(blocks[start])
+			start++
+		} else {
+			end--
+			used -= lipgloss.Height(blocks[end])
+		}
+	}
+
+	return growWindowAround(blocks, start, end, budget)
 }
 
 func (f Form) focusNext() (Form, tea.Cmd) {
@@ -842,11 +888,11 @@ func clamp(v, low, high int) int {
 }
 
 // growWindow returns the widest whole-block window around the anchor item that
-// fits in the given height, reserving a line for each hidden-fields indicator.
-func growWindow(blocks []string, anchor, height int) (start, end int, windowed bool) {
+// fits in the given content budget, reserving a line for each hidden-fields
+// indicator.
+func growWindow(blocks []string, anchor, budget int) (start, end int, windowed bool) {
 	n := len(blocks)
 	anchor = clamp(anchor, 0, n-1)
-	budget := height - 1
 
 	start, end = anchor, anchor+1
 	used := lipgloss.Height(blocks[anchor])
@@ -879,17 +925,16 @@ func growWindow(blocks []string, anchor, height int) (start, end int, windowed b
 }
 
 // growWindowAround returns the widest whole-block window that already covers
-// the given range and fits in the height, growing outward as budget allows.
-// Used by wheel scrolling so the shifted window keeps the focused row visible
-// while still filling the available height.
-func growWindowAround(blocks []string, start, end, height int) (int, int) {
+// the given range and fits in the content budget, growing outward as budget
+// allows. Used by wheel scrolling so the shifted window keeps the focused row
+// visible while still filling the available height.
+func growWindowAround(blocks []string, start, end, budget int) (int, int) {
 	n := len(blocks)
 	start = clamp(start, 0, n-1)
 	end = clamp(end, 1, n)
 	if end <= start {
 		end = min(start+1, n)
 	}
-	budget := height - 1
 
 	used := 0
 	for i := start; i < end; i++ {

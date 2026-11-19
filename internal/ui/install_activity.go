@@ -40,8 +40,9 @@ type installProgressMsg struct {
 type installPromptMsg struct{}
 
 type installDoneMsg struct {
-	app *docker.Application
-	err error
+	app      *docker.Application
+	err      error
+	warnings []string
 }
 
 type InstallActivityDoneMsg struct {
@@ -106,6 +107,9 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.progress = m.progress.SetWidth(min(m.width-4, 60))
+		if m.prompt != nil {
+			m.prompt.width = m.width
+		}
 
 	case installProgressMsg:
 		m.stage = msg.stage
@@ -123,22 +127,24 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 		return m.waitForProgress()
 
 	case installPromptMsg:
-		prompt := NewDocktailPrompt(docktailNotAdvertisedPrompt)
+		prompt := NewDocktailPrompt(docktailNotAdvertisedPrompt, m.width)
 		m.prompt = &prompt
 		return m.waitForProgress()
 
 	case docktailDecisionMsg:
 		if m.prompt == nil {
-			// A second decision arrived before the first was consumed.
-			// Drop it, but keep the progress pump alive.
-			return m.waitForProgress()
+			// A stray decision after the prompt was cleared is dropped:
+			// the pump the prompt message armed is still running.
+			return nil
 		}
 		m.prompt = nil
 		select {
 		case m.decisionChan <- msg.decision:
 		default:
 		}
-		return m.waitForProgress()
+		// The decision comes from the prompt, not the pump; re-arming here
+		// would start a second pump racing the first for every message.
+		return nil
 
 	case tea.KeyPressMsg, MouseEvent:
 		if m.prompt != nil {
@@ -146,6 +152,7 @@ func (m *InstallActivity) Update(msg tea.Msg) tea.Cmd {
 		}
 
 	case installDoneMsg:
+		m.warnings = append(m.warnings, msg.warnings...)
 		if msg.err != nil {
 			return func() tea.Msg { return InstallActivityFailedMsg{Err: msg.err} }
 		}
@@ -214,7 +221,13 @@ func (m *InstallActivity) waitForProgress() tea.Cmd {
 		// follows it, so drain warnings first to make sure they're seen.
 		select {
 		case warning := <-m.warningChan:
-			return warning
+			select {
+			case done := <-m.doneChan:
+				done.warnings = append(done.warnings, warning.warnings...)
+				return m.doneWithPendingWarnings(done)
+			default:
+				return warning
+			}
 		default:
 		}
 
@@ -228,9 +241,20 @@ func (m *InstallActivity) waitForProgress() tea.Cmd {
 		case prompt := <-m.promptChan:
 			return prompt
 		case done := <-m.doneChan:
-			return done
+			return m.doneWithPendingWarnings(done)
 		}
 		return nil
+	}
+}
+
+func (m *InstallActivity) doneWithPendingWarnings(done installDoneMsg) installDoneMsg {
+	for {
+		select {
+		case warning := <-m.warningChan:
+			done.warnings = append(done.warnings, warning.warnings...)
+		default:
+			return done
+		}
 	}
 }
 

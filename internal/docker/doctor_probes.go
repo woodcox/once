@@ -53,7 +53,7 @@ func (n *Namespace) doctorAppContainer(ctx context.Context, appName string) (Doc
 		}
 	}
 
-	return DoctorContainer{}, fmt.Errorf("no container found for app %s", appName)
+	return DoctorContainer{}, fmt.Errorf("%w %s", ErrDoctorAppNotFound, appName)
 }
 
 // doctorContainers lists every container on the Docker host.
@@ -89,9 +89,11 @@ func (n *Namespace) doctorListeningPorts(ctx context.Context, containerName stri
 // Helpers
 
 // parseListeningPorts extracts the listening ports from the contents of
-// /proc/net/tcp and /proc/net/tcp6.
+// /proc/net/tcp and /proc/net/tcp6. A dual-stack listener appears in both
+// tables, but is reported once.
 func parseListeningPorts(output string) ([]int, error) {
 	var ports []int
+	seen := make(map[int]bool)
 
 	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Fields(line)
@@ -114,6 +116,10 @@ func parseListeningPorts(output string) ([]int, error) {
 			continue
 		}
 
+		if seen[int(number)] {
+			continue
+		}
+		seen[int(number)] = true
 		ports = append(ports, int(number))
 	}
 

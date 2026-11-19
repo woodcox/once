@@ -29,6 +29,7 @@ const (
 
 type DashboardPanel struct {
 	app           docker.Application
+	stoppedByUser bool
 	scraper       *metrics.MetricsScraper
 	dockerScraper *docker.Scraper
 	userStats     *userstats.Reader
@@ -63,7 +64,7 @@ func (p DashboardPanel) View(selected bool, toggling bool, showDetails bool, wid
 	name := lipgloss.NewStyle().Foreground(Colors.Border).Render("(" + docker.NameFromImageRef(p.app.Settings.Image) + ")")
 	badge := p.renderHealthBadge(cards)
 	left := badge + " " + url + " " + name
-	right := renderStateInfo(&p.app, toggling)
+	right := renderStateInfo(&p.app, toggling, p.stoppedByUser)
 	gap := max(innerWidth-2-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	titleLine := " " + left + strings.Repeat(" ", gap) + right + " "
 
@@ -126,7 +127,7 @@ func (p *DashboardPanel) Refresh(scales DashboardScales) {
 		p.cards = p.buildMetricCards(scales)
 	}
 
-	p.issues = panelIssues(&p.app, p.cards)
+	p.issues = panelIssues(&p.app, p.cards, p.stoppedByUser)
 }
 
 // Private
@@ -355,7 +356,7 @@ func fitIssues(texts []string, width int) (shown []string, more int) {
 	return shown, 0
 }
 
-func renderStateInfo(app *docker.Application, toggling bool) string {
+func renderStateInfo(app *docker.Application, toggling bool, stoppedByUser bool) string {
 	var status string
 	var statusColor color.Color
 	switch {
@@ -368,7 +369,7 @@ func renderStateInfo(app *docker.Application, toggling bool) string {
 	case app.State == "restarting":
 		status = "restarting"
 		statusColor = Colors.Warning
-	case !app.Running && app.ExitCode != 0:
+	case !app.Running && app.ExitCode != 0 && !stoppedByUser:
 		status = "crashed"
 		statusColor = Colors.Error
 	case app.State == "paused":

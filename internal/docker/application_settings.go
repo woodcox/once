@@ -126,12 +126,12 @@ const defaultDocktailTags = "tag:container"
 // TailscaleSettings configures exposure of an application as a native
 // Tailscale Service. Only docktail label mode is supported: ONCE sets
 // `docktail.*` labels on the app container and the host's docktail container
-// advertises it to tailscaled.
+// advertises it to tailscaled. The port docktail proxies to is always the
+// application's own port, so it isn't a separate setting here.
 type TailscaleSettings struct {
 	Enabled         bool   `json:"enabled,omitempty"`
 	Mode            string `json:"mode,omitempty"`
 	Service         string `json:"service,omitempty"`
-	Port            int    `json:"port,omitempty"`
 	ServicePort     int    `json:"servicePort,omitempty"`
 	Path            string `json:"path,omitempty"`
 	Tags            string `json:"tags,omitempty"`
@@ -139,26 +139,11 @@ type TailscaleSettings struct {
 	Protocol        string `json:"protocol,omitempty"`
 	ServiceProtocol string `json:"serviceProtocol,omitempty"`
 	ProxyProtocol   string `json:"proxyProtocol,omitempty"`
-	Direct          *bool  `json:"direct,omitempty"`
 	Network         string `json:"network,omitempty"`
 }
 
 func (t TailscaleSettings) Equal(other TailscaleSettings) bool {
-	if !equalDirect(t.Direct, other.Direct) {
-		return false
-	}
-	t.Direct, other.Direct = nil, nil
 	return t == other
-}
-
-// equalDirect treats a nil Direct and an explicit true as the same: docktail's
-// own default is true, so a settings value set by the CLI never needs to be
-// distinguished from one left unset in the UI.
-func equalDirect(a, b *bool) bool {
-	if a == nil || b == nil {
-		return (a == nil || *a) && (b == nil || *b)
-	}
-	return *a == *b
 }
 
 type ApplicationSettings struct {
@@ -222,9 +207,6 @@ func (s ApplicationSettings) Validate() error {
 // can be validated before the rest of the application is known (during
 // install, for example, where the image and generated name aren't set yet).
 func (s ApplicationSettings) ValidateTailscale() error {
-	if s.Tailscale.Port < 0 || s.Tailscale.Port > 65535 {
-		return ErrInvalidDocktailPort
-	}
 	if s.Tailscale.ServicePort < 0 || s.Tailscale.ServicePort > 65535 {
 		return ErrInvalidDocktailPort
 	}
@@ -327,15 +309,6 @@ func (s ApplicationSettings) EffectiveServiceName() string {
 	return SanitizeDNSLabel(s.Name)
 }
 
-// EffectiveTailscalePort returns the container port docktail should proxy to,
-// defaulting to the application's own port.
-func (s ApplicationSettings) EffectiveTailscalePort() int {
-	if s.Tailscale.Port != 0 {
-		return s.Tailscale.Port
-	}
-	return s.EffectiveAppPort()
-}
-
 // EffectiveServicePort returns the port Tailscale should listen on, defaulting
 // to 443 when the effective service protocol is https and 80 otherwise.
 func (s ApplicationSettings) EffectiveServicePort() int {
@@ -349,7 +322,7 @@ func (s ApplicationSettings) EffectiveServicePort() int {
 }
 
 // EffectiveProtocol returns the backend protocol docktail will use, defaulting
-// to https on the backend port 443 and http otherwise. Exposed so the install
+// to https on the app port 443 and http otherwise. Exposed so the install
 // form can show the same preview the docker package will end up emitting.
 func (s ApplicationSettings) EffectiveProtocol() string {
 	return s.effectiveProtocol()
@@ -380,12 +353,21 @@ func (s ApplicationSettings) DocktailLabels() map[string]string {
 
 	labels[docktailLabelEnable] = "true"
 	labels[docktailLabelName] = s.EffectiveServiceName()
-	labels[docktailLabelPort] = strconv.Itoa(s.EffectiveTailscalePort())
+	labels[docktailLabelPort] = strconv.Itoa(s.EffectiveAppPort())
 	labels[docktailLabelServicePort] = strconv.Itoa(s.EffectiveServicePort())
 	labels[docktailLabelProtocol] = s.effectiveProtocol()
 	labels[docktailLabelServiceProtocol] = s.effectiveServiceProtocol()
 
-	labels[docktailLabelDirect] = strconv.FormatBool(s.effectiveDirect())
+	// `direct` is always true, and deliberately not configurable. Direct mode
+	// is the only topology ONCE can support: the alternative — publishing the
+	// app's port on 127.0.0.1 for docktail to proxy through — would force
+	// ONCE to manage host-port allocation it cannot do safely. A redeploy
+	// holds the old container's binding until the new container is up, so the
+	// update fails with "port is already allocated"; two apps on the same app
+	// port collide; and the default app port 80 collides with kamal-proxy.
+	// Direct mode needs no host publishing at all, so docktail always talks
+	// to the container's own address on the Docker network.
+	labels[docktailLabelDirect] = "true"
 
 	tags := s.Tailscale.Tags
 	if tags == "" {
@@ -410,15 +392,6 @@ func (s ApplicationSettings) DocktailLabels() map[string]string {
 	}
 
 	return labels
-}
-
-// effectiveDirect returns the value to advertise for `docktail.service.direct`,
-// treating an unset Direct as true (which matches docktail's own default).
-func (s ApplicationSettings) effectiveDirect() bool {
-	if s.Tailscale.Direct == nil {
-		return true
-	}
-	return *s.Tailscale.Direct
 }
 
 func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
@@ -466,12 +439,12 @@ func (s ApplicationSettings) Equal(other ApplicationSettings) bool {
 // Private
 
 // effectiveProtocol returns the backend protocol docktail will use, defaulting
-// to https on the backend port 443 and http otherwise.
+// to https on the app port 443 and http otherwise.
 func (s ApplicationSettings) effectiveProtocol() string {
 	if s.Tailscale.Protocol != "" {
 		return s.Tailscale.Protocol
 	}
-	if s.EffectiveTailscalePort() == 443 {
+	if s.EffectiveAppPort() == 443 {
 		return "https"
 	}
 	return "http"
