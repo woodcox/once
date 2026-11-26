@@ -120,7 +120,7 @@ func TestDocktailPrompt_ViewWrapsToTheTerminalWidth(t *testing.T) {
 
 	require.Greater(t, len(long), len(short), "the decision text wraps instead of overflowing")
 	for _, line := range long {
-		assert.LessOrEqual(t, lipgloss.Width(line), 80, "no line renders wider than the terminal")
+		assert.LessOrEqual(t, lipgloss.Width(line), 80)
 	}
 }
 

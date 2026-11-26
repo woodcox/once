@@ -197,9 +197,8 @@ func TestDashboard_FailedStartRestoresIntentionalStop(t *testing.T) {
 
 	d, _ = updateDashboard(d, ActionsMenuSelectMsg{app: d.apps[0], action: ActionsMenuStartStop})
 	d, _ = updateDashboard(d, startStopFinishedMsg{
-		err:                   assert.AnError,
-		previousStoppedByUser: true,
-		stopMarkerPresent:     true,
+		err:    assert.AnError,
+		marker: stopMarker{value: true, present: true},
 	})
 
 	assert.True(t, d.stoppedByUser["app-0"])

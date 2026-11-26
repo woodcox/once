@@ -124,6 +124,10 @@ var ErrDoctorUnknownHost = errors.New("unknown host")
 // opposed to a probe that couldn't run at all.
 var ErrDoctorAppNotFound = errors.New("no container found for app")
 
+// ErrDoctorProbeUnavailable reports that a doctor probe wasn't provided, so
+// the check couldn't run at all.
+var ErrDoctorProbeUnavailable = errors.New("doctor probe unavailable")
+
 // Doctor inspects the given applications and reports on each of them. It only
 // inspects: nothing is deployed, started, stopped or written.
 //
@@ -200,6 +204,14 @@ func doctorReport(ctx context.Context, app *Application, probes DoctorProbes) Do
 // container that isn't there from a probe that couldn't run.
 func doctorContainerCheck(container DoctorContainer, err error) DoctorCheck {
 	if err != nil {
+		if errors.Is(err, ErrDoctorProbeUnavailable) {
+			return DoctorCheck{
+				Label:   "container",
+				Status:  DoctorSkip,
+				Message: ": the container probe is unavailable",
+			}
+		}
+
 		if errors.Is(err, ErrDoctorAppNotFound) {
 			return DoctorCheck{
 				Label:   "container",
@@ -455,7 +467,7 @@ func doctorURLCheck(ctx context.Context, app *Application, probes DoctorProbes) 
 	protocol := app.Settings.EffectiveServiceProtocol()
 	port := app.Settings.EffectiveServicePort()
 
-	if protocol == "tcp" {
+	if isTCPProtocol(protocol) {
 		// A TCP Service isn't reached through a URL, so it's reported as
 		// the endpoint clients connect to.
 		endpoint := fmt.Sprintf("tcp:%s:%d", service, port)
@@ -538,11 +550,11 @@ func doctorPublicURL(app *Application) string {
 }
 
 // doctorAppContainer finds the container backing the app. It returns
-// ErrDoctorAppNotFound when the app has no container, and any other error
-// when the probe itself failed.
+// ErrDoctorAppNotFound when the app has no container, ErrDoctorProbeUnavailable
+// when no probe was provided, and any other error when the probe itself failed.
 func doctorAppContainer(ctx context.Context, app *Application, probes DoctorProbes) (DoctorContainer, error) {
 	if probes.AppContainer == nil {
-		return DoctorContainer{}, ErrDoctorAppNotFound
+		return DoctorContainer{}, ErrDoctorProbeUnavailable
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
@@ -599,41 +611,20 @@ func (t tailscaleServeTarget) URL() string {
 }
 
 // tailscaleServeTargetFor returns the proxy target advertised for a Tailscale
-// Service, and whether the Service is advertised at all. It walks the same
-// serve status the verification path uses, so the two can't disagree.
+// Service, and whether the Service is advertised at all. It shares the
+// advertised-targets parser with the deploy verification path, so the two
+// read the serve status identically.
 func tailscaleServeTargetFor(data []byte, serviceName string, servicePort int) (tailscaleServeTarget, bool) {
-	var status tailscaleServeStatus
-	if err := json.Unmarshal(data, &status); err != nil {
+	targets, found, err := advertisedTargets(data, serviceName)
+	if err != nil || !found {
 		return tailscaleServeTarget{}, false
 	}
 
-	for name, advertised := range status.Services {
-		if normalizeServiceName(name) != normalizeServiceName(serviceName) {
-			continue
+	frontendPort := strconv.Itoa(servicePort)
+	for _, t := range targets {
+		if t.frontendPort == frontendPort {
+			return t.target, true
 		}
-
-		for address, web := range advertised.Web {
-			_, advertisedPort, err := net.SplitHostPort(address)
-			if err != nil || advertisedPort != strconv.Itoa(servicePort) {
-				continue
-			}
-			for _, handler := range web.Handlers {
-				return parseProxyTarget(handler.Proxy), true
-			}
-		}
-
-		for advertisedServicePort, tcp := range advertised.TCP {
-			if advertisedServicePort != strconv.Itoa(servicePort) {
-				continue
-			}
-			host, port, ok := parseTCPForward(tcp.TCPForward)
-			if !ok {
-				continue
-			}
-			return tailscaleServeTarget{scheme: "tcp", host: host, port: port}, true
-		}
-
-		return tailscaleServeTarget{}, false
 	}
 
 	return tailscaleServeTarget{}, false

@@ -112,6 +112,15 @@ func TestParseTailscaleServeStatus(t *testing.T) {
 			expectedHost: "172.21.0.2",
 		},
 		{
+			name:         "web service on the wrong frontend port does not verify",
+			data:         `{"Services":{"svc:budget":{"Web":{"budget.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://172.21.0.2:5006"}}}}}}}`,
+			service:      "budget",
+			port:         5006,
+			servicePort:  443,
+			expectedHost: "172.21.0.2",
+			wantErr:      true,
+		},
+		{
 			name:         "portless http proxy matches port 80",
 			data:         statusForProxy("http://172.21.0.2"),
 			service:      "budget",

@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
-	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -251,54 +250,87 @@ type tailscaleTCPConfig struct {
 	TCPForward string `json:"TCPForward"`
 }
 
-func parseTailscaleServeStatus(data []byte, serviceName string, port int, servicePort int, expectedHost string) error {
-	service := "svc:" + serviceName
+// advertisedTarget pairs a frontend port with the backend target docktail
+// forwards it to. Web handlers are advertised beneath their frontend
+// hostname:port, and TCP forwards beneath their frontend port.
+type advertisedTarget struct {
+	frontendPort string
+	target       tailscaleServeTarget
+}
 
+// advertisedTargets parses `tailscale serve status --json` and returns every
+// target advertised for the named service. found reports whether a service
+// with that name was advertised; parseErr reports output that couldn't be
+// parsed at all.
+func advertisedTargets(data []byte, serviceName string) (targets []advertisedTarget, found bool, parseErr error) {
 	var status tailscaleServeStatus
 	if err := json.Unmarshal(data, &status); err != nil {
-		return fmt.Errorf("%w: %w: parsing tailscale serve status: %w", ErrDocktailVerifyFailed, errTailscaleStatusUnparsable, err)
+		return nil, false, err
 	}
 
-	targetPort := strconv.Itoa(port)
-
 	for name, advertised := range status.Services {
-		if normalizeServiceName(name) != normalizeServiceName(service) {
+		if normalizeServiceName(name) != normalizeServiceName(serviceName) {
 			continue
 		}
 
-		for _, web := range advertised.Web {
+		for address, web := range advertised.Web {
+			_, frontendPort, err := net.SplitHostPort(address)
+			if err != nil {
+				continue
+			}
 			for _, handler := range web.Handlers {
-				if !proxyMatchesPort(handler.Proxy, targetPort) {
-					continue
-				}
-				if expectedHost != "" && !proxyHostEquals(handler.Proxy, expectedHost) {
-					continue
-				}
-				return nil
+				targets = append(targets, advertisedTarget{
+					frontendPort: frontendPort,
+					target:       parseProxyTarget(handler.Proxy),
+				})
 			}
 		}
 
-		for advertisedServicePort, tcp := range advertised.TCP {
-			if advertisedServicePort != strconv.Itoa(servicePort) {
-				continue
-			}
-			host, fwdPort, ok := parseTCPForward(tcp.TCPForward)
+		for frontendPort, tcp := range advertised.TCP {
+			host, port, ok := parseTCPForward(tcp.TCPForward)
 			if !ok {
 				continue
 			}
-			if fwdPort != targetPort {
-				continue
-			}
-			if expectedHost != "" && host != expectedHost {
-				continue
-			}
-			return nil
+			targets = append(targets, advertisedTarget{
+				frontendPort: frontendPort,
+				target:       tailscaleServeTarget{scheme: "tcp", host: host, port: port},
+			})
 		}
 
-		return fmt.Errorf("%w: service %q is advertised, but has no endpoint on port %d for host %q", ErrDocktailVerifyFailed, service, port, expectedHost)
+		return targets, true, nil
 	}
 
-	return fmt.Errorf("%w: no Tailscale Service named %q yet; check that the service name matches the one defined in your Tailscale admin console", ErrDocktailVerifyFailed, service)
+	return nil, false, nil
+}
+
+func parseTailscaleServeStatus(data []byte, serviceName string, port int, servicePort int, expectedHost string) error {
+	service := "svc:" + serviceName
+
+	targets, found, parseErr := advertisedTargets(data, serviceName)
+	if parseErr != nil {
+		return fmt.Errorf("%w: %w: parsing tailscale serve status: %w", ErrDocktailVerifyFailed, errTailscaleStatusUnparsable, parseErr)
+	}
+	if !found {
+		return fmt.Errorf("%w: no Tailscale Service named %q yet; check that the service name matches the one defined in your Tailscale admin console", ErrDocktailVerifyFailed, service)
+	}
+
+	frontendPort := strconv.Itoa(servicePort)
+	targetPort := strconv.Itoa(port)
+
+	for _, t := range targets {
+		if t.frontendPort != frontendPort {
+			continue
+		}
+		if t.target.port != targetPort {
+			continue
+		}
+		if expectedHost != "" && t.target.host != expectedHost {
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("%w: service %q is advertised, but has no endpoint on port %d for host %q", ErrDocktailVerifyFailed, service, port, expectedHost)
 }
 
 // Helpers
@@ -314,33 +346,6 @@ func tailscaleServeStatusOutput(ctx context.Context) ([]byte, error) {
 	defer cancel()
 
 	return exec.CommandContext(ctx, tailscaleCommand, "serve", "status", "--json").Output()
-}
-
-// proxyMatchesPort reports whether a serve handler's proxy URL targets the
-// given port. A portless proxy uses the scheme's default port.
-func proxyMatchesPort(proxy, port string) bool {
-	u, err := url.Parse(proxy)
-	if err != nil {
-		return false
-	}
-	if u.Port() != "" {
-		return u.Port() == port
-	}
-	if u.Scheme == "https" {
-		return port == "443"
-	}
-	return port == "80"
-}
-
-// proxyHostEquals reports whether a serve handler's proxy URL has the given
-// hostname. The hostname check ignores the trailing dot Docker resolves
-// FQDNs to, and matches IP literals exactly.
-func proxyHostEquals(proxy, expected string) bool {
-	u, err := url.Parse(proxy)
-	if err != nil {
-		return false
-	}
-	return u.Hostname() == expected
 }
 
 // parseTCPForward splits a TCP forward target into host and port. It

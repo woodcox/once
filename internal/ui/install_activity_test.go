@@ -29,7 +29,7 @@ func TestInstallActivity_PromptWrapsToTheTerminalWidth(t *testing.T) {
 	require.NotNil(t, m.prompt)
 
 	for line := range strings.SplitSeq(m.View(), "\n") {
-		assert.LessOrEqual(t, lipgloss.Width(line), 80, "no prompt or warning line renders wider than the terminal")
+		assert.LessOrEqual(t, lipgloss.Width(line), 80)
 	}
 }
 

@@ -358,15 +358,11 @@ func (s ApplicationSettings) DocktailLabels() map[string]string {
 	labels[docktailLabelProtocol] = s.effectiveProtocol()
 	labels[docktailLabelServiceProtocol] = s.effectiveServiceProtocol()
 
-	// `direct` is always true, and deliberately not configurable. Direct mode
-	// is the only topology ONCE can support: the alternative — publishing the
-	// app's port on 127.0.0.1 for docktail to proxy through — would force
-	// ONCE to manage host-port allocation it cannot do safely. A redeploy
-	// holds the old container's binding until the new container is up, so the
-	// update fails with "port is already allocated"; two apps on the same app
-	// port collide; and the default app port 80 collides with kamal-proxy.
-	// Direct mode needs no host publishing at all, so docktail always talks
-	// to the container's own address on the Docker network.
+	// `direct` is always true and not configurable: the alternative — publishing
+	// the app's port on 127.0.0.1 for docktail to proxy through — would force
+	// ONCE to manage host-port allocation it cannot do safely (a redeploy holds
+	// the old binding until the new one is up, two apps on one port collide, and
+	// port 80 collides with kamal-proxy).
 	labels[docktailLabelDirect] = "true"
 
 	tags := s.Tailscale.Tags

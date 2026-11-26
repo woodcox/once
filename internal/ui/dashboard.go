@@ -63,9 +63,15 @@ type Dashboard struct {
 type dashboardTickMsg struct{}
 
 type startStopFinishedMsg struct {
-	err                   error
-	previousStoppedByUser bool
-	stopMarkerPresent     bool
+	err    error
+	marker stopMarker
+}
+
+// stopMarker is the stopped-by-user flag captured before a start/stop toggle,
+// so a failed toggle can restore it.
+type stopMarker struct {
+	value   bool
+	present bool
 }
 
 func NewDashboard(ns *docker.Namespace, apps []*docker.Application, selectedIndex int,
@@ -190,7 +196,8 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 		case ActionsMenuStartStop:
 			app := msg.app
 			name := app.Settings.Name
-			previousStoppedByUser, stopMarkerPresent := m.stoppedByUser[name]
+			previous, present := m.stoppedByUser[name]
+			marker := stopMarker{value: previous, present: present}
 			m.toggling = true
 			m.togglingApp = name
 			// Mark the transition before the container settles: a stop
@@ -205,7 +212,7 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 			m.progress = NewProgress(m.width, Colors.Border)
 			m.updateViewportSize()
 			m.rebuildViewportContent()
-			return m, tea.Batch(m.progress.Init(), m.runStartStop(app, previousStoppedByUser, stopMarkerPresent))
+			return m, tea.Batch(m.progress.Init(), m.runStartStop(app, marker))
 		case ActionsMenuDiagnose:
 			return m, func() tea.Msg { return NavigateToDoctorMsg{App: msg.app} }
 		case ActionsMenuRemove:
@@ -217,8 +224,8 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 		m.toggling = false
 		m.togglingApp = ""
 		if msg.err != nil {
-			if msg.stopMarkerPresent {
-				m.stoppedByUser[name] = msg.previousStoppedByUser
+			if msg.marker.present {
+				m.stoppedByUser[name] = msg.marker.value
 			} else {
 				delete(m.stoppedByUser, name)
 			}
@@ -315,7 +322,7 @@ func (m Dashboard) helpBindings() []key.Binding {
 	return []key.Binding{dashboardKeys.NewApp, dashboardKeys.Quit}
 }
 
-func (m Dashboard) runStartStop(app *docker.Application, previousStoppedByUser, stopMarkerPresent bool) tea.Cmd {
+func (m Dashboard) runStartStop(app *docker.Application, marker stopMarker) tea.Cmd {
 	stopping := app.Running
 	return func() tea.Msg {
 		var err error
@@ -325,9 +332,8 @@ func (m Dashboard) runStartStop(app *docker.Application, previousStoppedByUser, 
 			err = app.Start(context.Background())
 		}
 		return startStopFinishedMsg{
-			err:                   err,
-			previousStoppedByUser: previousStoppedByUser,
-			stopMarkerPresent:     stopMarkerPresent,
+			err:    err,
+			marker: marker,
 		}
 	}
 }

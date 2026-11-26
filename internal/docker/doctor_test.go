@@ -423,6 +423,19 @@ func TestDoctorAppContainerProbeFailure(t *testing.T) {
 	assert.Equal(t, DoctorSkip, checkByLabel(t, result.Reports[0], "app port").Status)
 }
 
+func TestDoctorContainerProbeUnavailable(t *testing.T) {
+	fixture := newDoctorFixture(t, healthyDocktailSettings())
+
+	probes := healthyProbes()
+	probes.AppContainer = nil
+
+	result, err := Doctor(context.Background(), fixture.apps(), "", probes)
+	require.NoError(t, err)
+
+	container := checkByLabel(t, result.Reports[0], "container")
+	assert.Equal(t, DoctorSkip, container.Status)
+}
+
 func TestDoctorDocktailContainerNotRunning(t *testing.T) {
 	fixture := newDoctorFixture(t, healthyDocktailSettings())
 
@@ -673,6 +686,28 @@ func TestDoctorURLFallsBackWithoutMagicDNS(t *testing.T) {
 func TestDoctorURLReportsTCPEndpointWithoutMagicDNS(t *testing.T) {
 	settings := healthyDocktailSettings()
 	settings.Tailscale.ServiceProtocol = "tcp"
+	settings.Tailscale.ServicePort = 5432
+	settings.AppPort = 5432
+	fixture := newDoctorFixture(t, settings)
+
+	probes := healthyProbes()
+	probes.TailscaleStatus = func(ctx context.Context) ([]byte, error) {
+		return nil, errors.New("tailscale not installed")
+	}
+
+	result, err := Doctor(context.Background(), fixture.apps(), "", probes)
+	require.NoError(t, err)
+
+	report := result.Reports[0]
+	url := checkByLabel(t, report, "url")
+	assert.Equal(t, DoctorPass, url.Status)
+	assert.Equal(t, "tcp:write:5432", url.Message)
+	assert.Equal(t, "tcp:write:5432", report.URL)
+}
+
+func TestDoctorURLReportsTLSTerminatedTCPEndpoint(t *testing.T) {
+	settings := healthyDocktailSettings()
+	settings.Tailscale.ServiceProtocol = "tls-terminated-tcp"
 	settings.Tailscale.ServicePort = 5432
 	settings.AppPort = 5432
 	fixture := newDoctorFixture(t, settings)
