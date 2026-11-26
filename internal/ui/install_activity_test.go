@@ -33,6 +33,16 @@ func TestInstallActivity_PromptWrapsToTheTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestInstallActivity_WarningWrapsToTheTerminalWidth(t *testing.T) {
+	m := newTestActivity()
+	m.warnings = []string{"the Tailscale Service for this app has not been advertised yet, so ONCE is carrying on without verifying it on the tailnet"}
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+
+	for line := range strings.SplitSeq(m.View(), "\n") {
+		assert.LessOrEqual(t, lipgloss.Width(line), 80)
+	}
+}
+
 func TestInstallActivity_DecisionIsDelivered(t *testing.T) {
 	m := newTestActivity()
 	m.Update(installPromptMsg{})

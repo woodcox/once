@@ -190,6 +190,9 @@ func (m *InstallActivity) View() string {
 	// install carries on, but the user should know.
 	warningStyle := lipgloss.NewStyle().Foreground(Colors.Warning)
 	for _, warning := range m.warnings {
+		if m.width > 0 {
+			warning = lipgloss.Wrap(warning, m.width, " ")
+		}
 		parts = append(parts, Styles.CenteredLine(m.width, warningStyle.Render(warning)))
 	}
 
