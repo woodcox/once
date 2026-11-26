@@ -43,12 +43,14 @@ type docktailDecisionMsg struct {
 // deletes its data volume.
 type DocktailPrompt struct {
 	message string
+	width   int
 	focused int // 0 = retry, 1 = keep, 2 = delete
 }
 
-func NewDocktailPrompt(message string) DocktailPrompt {
+func NewDocktailPrompt(message string, width int) DocktailPrompt {
 	return DocktailPrompt{
 		message: message,
+		width:   width,
 		focused: 1,
 	}
 }
@@ -90,7 +92,13 @@ func (m DocktailPrompt) Update(msg tea.Msg) (DocktailPrompt, tea.Cmd) {
 }
 
 func (m DocktailPrompt) View() string {
-	messageView := lipgloss.NewStyle().Bold(true).Render(m.message)
+	// Wrap before styling so the decision text can't render wider than
+	// the terminal.
+	message := m.message
+	if m.width > 0 {
+		message = lipgloss.Wrap(message, m.width, "- ")
+	}
+	messageView := lipgloss.NewStyle().Bold(true).Render(message)
 
 	buttons := []struct {
 		label string

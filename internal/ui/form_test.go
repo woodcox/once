@@ -393,6 +393,33 @@ func TestForm_LongFormWindowsAroundFocusedField(t *testing.T) {
 	assert.Contains(t, view, "↓", "hidden fields are indicated")
 }
 
+func TestForm_RoomForTheButtonRow(t *testing.T) {
+	// The button row is three lines tall; the windowing has to budget for
+	// it at every height, not just the heights that used to fit.
+	for _, height := range []int{12, 19, 27, 30, 40} {
+		form := longForm(6)
+		form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: height})
+
+		assert.LessOrEqual(t, lipgloss.Height(form.View()), height, "height %d", height)
+	}
+}
+
+func TestForm_MouseWheelReversesAtTheEdge(t *testing.T) {
+	form := longForm(8)
+	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	// Wheel far past the end of the content.
+	for range 10 {
+		form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	}
+	atEdge := ansi.Strip(form.View())
+
+	// The counter is clamped to the bounds the render uses, so a single
+	// wheel up moves the window back instead of eating the extra downs.
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	assert.NotEqual(t, atEdge, ansi.Strip(form.View()), "scrolling reverses immediately at the edge")
+}
+
 func TestForm_LongFormKeepsFocusedFieldVisibleWhileScrolling(t *testing.T) {
 	form := longForm(6)
 	form, _ = form.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
@@ -427,6 +454,32 @@ func TestForm_ShortFormIsUnchangedByWindowSize(t *testing.T) {
 	sized, _ := form.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
 	assert.Equal(t, withoutMouseMarks(tall), withoutMouseMarks(sized.View()), "a form that fits is rendered exactly as before")
 	assert.Equal(t, 14, lipgloss.Height(tall))
+}
+
+func TestForm_CompactsFocusedBlockWhenIndicatorsDoNotFit(t *testing.T) {
+	newForm := func() Form {
+		first := NewTextField("first")
+		first.SetValue("first-value")
+		return NewForm("Submit",
+			FormItem{Label: "First", Field: first},
+			FormItem{Label: "Second", Field: NewTextField("second")},
+		)
+	}
+
+	form := newForm()
+	form = updateForm(form, tea.WindowSizeMsg{Width: 80, Height: 8})
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 8)
+	assert.Contains(t, view, "first-value")
+
+	form = newForm()
+	form = updateForm(form, tea.WindowSizeMsg{Width: 80, Height: 9})
+	view = ansi.Strip(form.View())
+	assert.Equal(t, 9, lipgloss.Height(view))
+	assert.Contains(t, view, "first-value")
+	assert.Contains(t, view, "↓")
+	assert.Contains(t, view, "Submit")
+	assert.Contains(t, view, "Cancel")
 }
 
 func TestForm_TinyHeightShowsFocusedField(t *testing.T) {
@@ -522,6 +575,30 @@ func TestForm_MouseWheelIsIgnoredWhenEverythingFits(t *testing.T) {
 	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
 
 	assert.Equal(t, before, ansi.Strip(form.View()), "nothing is hidden, so the wheel does nothing")
+}
+
+func TestForm_MouseWheelRefitsVariableHeightBlocks(t *testing.T) {
+	tall := NewTextField("tall")
+	tall.SetValue("tall-value")
+	form := NewForm("Submit",
+		FormItem{Label: "First", Field: NewTextField("first")},
+		FormItem{Label: "Second", Field: NewTextField("second")},
+		FormItem{Label: "Tall", Field: tall, Description: strings.Repeat("detail\n", 6) + "detail"},
+		FormItem{Label: "Last", Field: NewTextField("last")},
+	)
+	form = updateForm(form, tea.WindowSizeMsg{Width: 80, Height: 20})
+
+	blocks, _ := form.itemBlocks()
+	heights := make([]int, len(blocks))
+	for i, block := range blocks {
+		heights[i] = lipgloss.Height(block)
+	}
+	require.Equal(t, []int{5, 5, 12, 5}, heights)
+
+	form = updateForm(form, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	view := ansi.Strip(form.View())
+	assert.LessOrEqual(t, lipgloss.Height(view), 20)
+	assert.Contains(t, view, "tall-value")
 }
 
 func TestForm_RowGroupPlacesMembersOnTheSameLine(t *testing.T) {

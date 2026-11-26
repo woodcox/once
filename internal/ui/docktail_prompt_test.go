@@ -1,14 +1,16 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDocktailPrompt_DefaultFocusKeepsApp(t *testing.T) {
-	p := NewDocktailPrompt("Service not advertised")
+	p := NewDocktailPrompt("Service not advertised", 80)
 	assert.Equal(t, 1, p.focused, "deleting the app must never be the default")
 }
 
@@ -46,7 +48,7 @@ func TestDocktailPrompt_KeysChooseDecisions(t *testing.T) {
 
 func TestDocktailPrompt_TabCyclesFocus(t *testing.T) {
 	t.Run("tab", func(t *testing.T) {
-		p := NewDocktailPrompt("Service not advertised")
+		p := NewDocktailPrompt("Service not advertised", 80)
 
 		p, _ = p.Update(keyPressMsg("tab"))
 		assert.Equal(t, 2, p.focused)
@@ -56,7 +58,7 @@ func TestDocktailPrompt_TabCyclesFocus(t *testing.T) {
 	})
 
 	t.Run("shift+tab", func(t *testing.T) {
-		p := NewDocktailPrompt("Service not advertised")
+		p := NewDocktailPrompt("Service not advertised", 80)
 
 		p, _ = p.Update(keyPressMsg("shift+tab"))
 		assert.Equal(t, 0, p.focused)
@@ -66,7 +68,7 @@ func TestDocktailPrompt_TabCyclesFocus(t *testing.T) {
 	})
 
 	t.Run("enter activates the focused button", func(t *testing.T) {
-		p := NewDocktailPrompt("Service not advertised")
+		p := NewDocktailPrompt("Service not advertised", 80)
 		p, _ = p.Update(keyPressMsg("tab")) // focus delete
 
 		_, cmd := p.Update(keyPressMsg("enter"))
@@ -80,7 +82,7 @@ func TestDocktailPrompt_TabCyclesFocus(t *testing.T) {
 
 func TestDocktailPrompt_ClickChoosesDecision(t *testing.T) {
 	t.Run("keep", func(t *testing.T) {
-		p := NewDocktailPrompt("Service not advertised")
+		p := NewDocktailPrompt("Service not advertised", 80)
 
 		_, cmd := p.Update(MouseEvent{IsClick: true, Target: "docktail-keep"})
 		require.NotNil(t, cmd)
@@ -91,7 +93,7 @@ func TestDocktailPrompt_ClickChoosesDecision(t *testing.T) {
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		p := NewDocktailPrompt("Service not advertised")
+		p := NewDocktailPrompt("Service not advertised", 80)
 
 		_, cmd := p.Update(MouseEvent{IsClick: true, Target: "docktail-delete"})
 		require.NotNil(t, cmd)
@@ -103,7 +105,7 @@ func TestDocktailPrompt_ClickChoosesDecision(t *testing.T) {
 }
 
 func TestDocktailPrompt_ViewShowsMessageAndButtons(t *testing.T) {
-	p := NewDocktailPrompt("Service not advertised")
+	p := NewDocktailPrompt("Service not advertised", 80)
 	view := p.View()
 
 	assert.Contains(t, view, "Service not advertised")
@@ -112,12 +114,22 @@ func TestDocktailPrompt_ViewShowsMessageAndButtons(t *testing.T) {
 	assert.Contains(t, view, "Delete app")
 }
 
+func TestDocktailPrompt_ViewWrapsToTheTerminalWidth(t *testing.T) {
+	long := strings.Split(NewDocktailPrompt("The app is running, but its Tailscale Service hasn't appeared yet. Retry the check, keep the app, or delete it and its data?", 80).View(), "\n")
+	short := strings.Split(NewDocktailPrompt("Service not advertised", 80).View(), "\n")
+
+	require.Greater(t, len(long), len(short), "the decision text wraps instead of overflowing")
+	for _, line := range long {
+		assert.LessOrEqual(t, lipgloss.Width(line), 80)
+	}
+}
+
 // Helpers
 
 func promptDecision(t *testing.T, key string) (docktailDecision, bool) {
 	t.Helper()
 
-	p := NewDocktailPrompt("Service not advertised")
+	p := NewDocktailPrompt("Service not advertised", 80)
 	_, cmd := p.Update(keyPressMsg(key))
 	if cmd == nil {
 		return 0, false

@@ -104,24 +104,41 @@ type DoctorProbes struct {
 	ListeningPorts func(ctx context.Context, containerName string) ([]int, error)
 }
 
-// doctorProbeTimeout bounds every probe so a hung host can't stall the
-// doctor.
-const doctorProbeTimeout = 5 * time.Second
+// doctorProbeTimeout bounds the probes that talk to the Docker daemon or
+// the tailscale CLI, so a hung host can't stall the doctor. It's a variable
+// so tests can shrink it.
+var doctorProbeTimeout = 5 * time.Second
 
-// doctorDialTimeout bounds the TCP check of an advertised backend port.
+// doctorExecTimeout bounds a probe that runs a command inside a container,
+// which is slower than a Docker API call. It's a variable so tests can
+// shrink it.
+var doctorExecTimeout = 10 * time.Second
+
+// doctorDialTimeout bounds the TCP check of an advertised app port.
 const doctorDialTimeout = 3 * time.Second
 
 // ErrDoctorUnknownHost reports an argument that matches no deployed app.
 var ErrDoctorUnknownHost = errors.New("unknown host")
 
+// ErrDoctorAppNotFound reports that no container backs an application, as
+// opposed to a probe that couldn't run at all.
+var ErrDoctorAppNotFound = errors.New("no container found for app")
+
+// ErrDoctorProbeUnavailable reports that a doctor probe wasn't provided, so
+// the check couldn't run at all.
+var ErrDoctorProbeUnavailable = errors.New("doctor probe unavailable")
+
 // Doctor inspects the given applications and reports on each of them. It only
 // inspects: nothing is deployed, started, stopped or written.
 //
-// An empty name inspects every application in the namespace; a name inspects
+// The applications are passed as a slice so a caller that can be racing a
+// namespace refresh can hand in a stable snapshot: a refresh replaces the
+// namespace's slice wholesale, and Application values are never mutated in
+// place afterwards.
+//
+// An empty name inspects every application in the slice; a name inspects
 // only that application, matched on its host or its app name.
-func Doctor(ctx context.Context, ns *Namespace, name string, probes DoctorProbes) (DoctorResult, error) {
-	apps := ns.Applications()
-
+func Doctor(ctx context.Context, apps []*Application, name string, probes DoctorProbes) (DoctorResult, error) {
 	if name != "" {
 		app := findDoctorApplication(apps, name)
 		if app == nil {
@@ -159,9 +176,10 @@ func doctorReport(ctx context.Context, app *Application, probes DoctorProbes) Do
 		Host:    app.Settings.Host,
 	}
 
-	container, containerFound := doctorAppContainer(ctx, app, probes)
+	container, containerErr := doctorAppContainer(ctx, app, probes)
+	containerFound := containerErr == nil
 
-	report.Checks = append(report.Checks, doctorContainerCheck(container, containerFound))
+	report.Checks = append(report.Checks, doctorContainerCheck(container, containerErr))
 	report.Checks = append(report.Checks, doctorAppPortCheck(ctx, app, container, containerFound, probes))
 
 	if !app.Settings.DocktailEnabled() {
@@ -170,7 +188,6 @@ func doctorReport(ctx context.Context, app *Application, probes DoctorProbes) Do
 	}
 
 	report.Checks = append(report.Checks, doctorLabelCheck(app, container, containerFound))
-	report.Checks = append(report.Checks, doctorBackendPortCheck(ctx, app, container, containerFound, probes))
 	report.Checks = append(report.Checks, doctorDocktailContainerCheck(ctx, probes))
 	report.Checks = append(report.Checks, doctorAdvertisementCheck(ctx, app, container, containerFound, probes))
 
@@ -183,14 +200,32 @@ func doctorReport(ctx context.Context, app *Application, probes DoctorProbes) Do
 	return report
 }
 
-// doctorContainerCheck reports on the app's container.
-func doctorContainerCheck(container DoctorContainer, found bool) DoctorCheck {
-	if !found {
+// doctorContainerCheck reports on the app's container, distinguishing a
+// container that isn't there from a probe that couldn't run.
+func doctorContainerCheck(container DoctorContainer, err error) DoctorCheck {
+	if err != nil {
+		if errors.Is(err, ErrDoctorProbeUnavailable) {
+			return DoctorCheck{
+				Label:   "container",
+				Status:  DoctorSkip,
+				Message: ": the container probe is unavailable",
+			}
+		}
+
+		if errors.Is(err, ErrDoctorAppNotFound) {
+			return DoctorCheck{
+				Label:   "container",
+				Status:  DoctorFail,
+				Message: "not found for this app",
+				Remedy:  "redeploy the app so a container is created for it",
+			}
+		}
+
 		return DoctorCheck{
 			Label:   "container",
 			Status:  DoctorFail,
-			Message: "not found for this app",
-			Remedy:  "redeploy the app so a container is created for it",
+			Message: fmt.Sprintf(": couldn't inspect the app's containers: %v", err),
+			Remedy:  "make sure the Docker daemon is reachable",
 		}
 	}
 
@@ -244,10 +279,17 @@ func doctorAppPortCheck(ctx context.Context, app *Application, container DoctorC
 
 	err := probeBackend(ctx, protocol, container.IP, port, path, doctorProbeTimeout, probes.HTTPGet, probes.TCPDial)
 	if err != nil {
+		message := fmt.Sprintf("%d did not answer %s: %v", port, path, err)
+		// The app port is what docktail proxies to, so on failure name the
+		// ports the container does listen on: it saves a docker exec to find out.
+		if ports := doctorListeningPorts(ctx, container.Name, probes); len(ports) > 0 {
+			message += fmt.Sprintf(" (listening: %s)", formatPorts(ports))
+		}
+
 		return DoctorCheck{
 			Label:   "app port",
 			Status:  DoctorFail,
-			Message: fmt.Sprintf("%d did not answer %s: %v", port, path, err),
+			Message: message,
 			Remedy:  fmt.Sprintf("make sure the app listens on port %d inside the container", port),
 		}
 	}
@@ -298,60 +340,10 @@ func doctorLabelCheck(app *Application, container DoctorContainer, found bool) D
 	return DoctorCheck{
 		Label:  "docktail labels",
 		Status: DoctorPass,
-		Message: fmt.Sprintf(": service %s, backend port %d, service port %d",
+		Message: fmt.Sprintf(": service %s, app port %d, service port %d",
 			expected[docktailLabelName],
-			app.Settings.EffectiveTailscalePort(),
+			app.Settings.EffectiveAppPort(),
 			app.Settings.EffectiveServicePort()),
-	}
-}
-
-// doctorBackendPortCheck reports whether the advertised backend port is
-// actually listening inside the container.
-func doctorBackendPortCheck(ctx context.Context, app *Application, container DoctorContainer, found bool, probes DoctorProbes) DoctorCheck {
-	if !found || !container.Running() {
-		return DoctorCheck{
-			Label:   "backend port",
-			Status:  DoctorSkip,
-			Message: ": container is not running",
-		}
-	}
-
-	if container.IP == "" {
-		return DoctorCheck{
-			Label:   "backend port",
-			Status:  DoctorSkip,
-			Message: ": the container has no IP address on the Docker network",
-		}
-	}
-
-	port := app.Settings.EffectiveTailscalePort()
-
-	// In `direct=false` mode docktail reaches the backend through a
-	// loopback binding on the host rather than the container's network IP.
-	address := net.JoinHostPort(container.IP, strconv.Itoa(port))
-	if !app.Settings.effectiveDirect() {
-		address = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	}
-
-	err := doctorTCPDial(ctx, probes, address)
-	if err != nil {
-		message := fmt.Sprintf("%d: nothing is listening inside the container", port)
-		if ports := doctorListeningPorts(ctx, container.Name, probes); len(ports) > 0 {
-			message += fmt.Sprintf(" (listening: %s)", formatPorts(ports))
-		}
-
-		return DoctorCheck{
-			Label:   "backend port",
-			Status:  DoctorFail,
-			Message: message,
-			Remedy:  fmt.Sprintf("set the Tailscale backend port to the port the app listens on (%d)", app.Settings.EffectiveAppPort()),
-		}
-	}
-
-	return DoctorCheck{
-		Label:   "backend port",
-		Status:  DoctorPass,
-		Message: fmt.Sprintf("%d is listening inside the container", port),
 	}
 }
 
@@ -366,7 +358,10 @@ func doctorDocktailContainerCheck(ctx context.Context, probes DoctorProbes) Doct
 		}
 	}
 
-	containers, err := probes.Containers(ctx)
+	probeCtx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
+	defer cancel()
+
+	containers, err := probes.Containers(probeCtx)
 	if err != nil {
 		return DoctorCheck{
 			Label:   "docktail container",
@@ -405,7 +400,10 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 		}
 	}
 
-	data, err := probes.ServeStatus(ctx)
+	probeCtx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
+	defer cancel()
+
+	data, err := probes.ServeStatus(probeCtx)
 	if err != nil {
 		return DoctorCheck{
 			Label:   "advertised",
@@ -434,7 +432,7 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 		}
 	}
 
-	wantPort := strconv.Itoa(app.Settings.EffectiveTailscalePort())
+	wantPort := strconv.Itoa(app.Settings.EffectiveAppPort())
 	if target.port != wantPort {
 		return DoctorCheck{
 			Label:   "advertised",
@@ -444,10 +442,7 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 		}
 	}
 
-	// In `direct=false` mode docktail proxies through the host's loopback
-	// binding, so the handler's host isn't the container's network IP.
-	direct := app.Settings.effectiveDirect()
-	if direct && target.host != container.IP {
+	if target.host != container.IP {
 		return DoctorCheck{
 			Label:   "advertised",
 			Status:  DoctorFail,
@@ -463,11 +458,25 @@ func doctorAdvertisementCheck(ctx context.Context, app *Application, container D
 	}
 }
 
-// doctorURLCheck works out the URL the app is reachable at on the tailnet.
-// The URL is returned separately so it can be reported once, rather than as
-// a check of its own.
+// doctorURLCheck works out the URL the app is reachable at on the tailnet,
+// using the service protocol and port the app advertises. The URL is
+// returned separately so it can be reported once, rather than as a check of
+// its own.
 func doctorURLCheck(ctx context.Context, app *Application, probes DoctorProbes) (string, DoctorCheck) {
 	service := app.Settings.EffectiveServiceName()
+	protocol := app.Settings.EffectiveServiceProtocol()
+	port := app.Settings.EffectiveServicePort()
+
+	if isTCPProtocol(protocol) {
+		// A TCP Service isn't reached through a URL, so it's reported as
+		// the endpoint clients connect to.
+		endpoint := fmt.Sprintf("tcp:%s:%d", service, port)
+		return endpoint, DoctorCheck{
+			Label:   "url",
+			Status:  DoctorPass,
+			Message: endpoint,
+		}
+	}
 
 	suffix := doctorMagicDNSSuffix(ctx, probes)
 	if suffix == "" {
@@ -478,7 +487,12 @@ func doctorURLCheck(ctx context.Context, app *Application, probes DoctorProbes) 
 		}
 	}
 
-	url := "https://" + service + "." + suffix
+	host := service + "." + suffix
+
+	url := protocol + "://" + host
+	if !isDefaultServicePort(protocol, port) {
+		url = fmt.Sprintf("%s://%s:%d", protocol, host, port)
+	}
 
 	return url, DoctorCheck{
 		Label:   "url",
@@ -494,7 +508,10 @@ func doctorMagicDNSSuffix(ctx context.Context, probes DoctorProbes) string {
 		return ""
 	}
 
-	data, err := probes.TailscaleStatus(ctx)
+	probeCtx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
+	defer cancel()
+
+	data, err := probes.TailscaleStatus(probeCtx)
 	if err != nil {
 		return ""
 	}
@@ -532,26 +549,30 @@ func doctorPublicURL(app *Application) string {
 	return "http://" + app.Settings.Host
 }
 
-// doctorAppContainer finds the container backing the app.
-func doctorAppContainer(ctx context.Context, app *Application, probes DoctorProbes) (DoctorContainer, bool) {
+// doctorAppContainer finds the container backing the app. It returns
+// ErrDoctorAppNotFound when the app has no container, ErrDoctorProbeUnavailable
+// when no probe was provided, and any other error when the probe itself failed.
+func doctorAppContainer(ctx context.Context, app *Application, probes DoctorProbes) (DoctorContainer, error) {
 	if probes.AppContainer == nil {
-		return DoctorContainer{}, false
+		return DoctorContainer{}, ErrDoctorProbeUnavailable
 	}
 
-	container, err := probes.AppContainer(ctx, app.Settings.Name)
-	if err != nil {
-		return DoctorContainer{}, false
-	}
+	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
+	defer cancel()
 
-	return container, true
+	return probes.AppContainer(ctx, app.Settings.Name)
 }
 
 // doctorListeningPorts returns the ports the container listens on, when the
-// probe can determine them.
+// probe can determine them. Reading them runs a command inside the
+// container, so it gets the exec budget rather than the probe one.
 func doctorListeningPorts(ctx context.Context, containerName string, probes DoctorProbes) []int {
 	if probes.ListeningPorts == nil {
 		return nil
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, doctorExecTimeout)
+	defer cancel()
 
 	ports, err := probes.ListeningPorts(ctx, containerName)
 	if err != nil {
@@ -565,18 +586,6 @@ func doctorListeningPorts(ctx context.Context, containerName string, probes Doct
 
 // doctorApprovalNote is shown after a docktail app's checklist.
 const doctorApprovalNote = "service approval and client grants live in the Tailscale admin console, so they can't be verified from here"
-
-// doctorTCPDial dials the backend port through the probe.
-func doctorTCPDial(ctx context.Context, probes DoctorProbes, address string) error {
-	if probes.TCPDial == nil {
-		return errors.New("no TCP probe is available")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, doctorProbeTimeout)
-	defer cancel()
-
-	return probes.TCPDial(ctx, address)
-}
 
 // tailscaleServeTarget is a proxy target from the Tailscale serve status.
 type tailscaleServeTarget struct {
@@ -602,37 +611,20 @@ func (t tailscaleServeTarget) URL() string {
 }
 
 // tailscaleServeTargetFor returns the proxy target advertised for a Tailscale
-// Service, and whether the Service is advertised at all. It walks the same
-// serve status the verification path uses, so the two can't disagree.
+// Service, and whether the Service is advertised at all. It shares the
+// advertised-targets parser with the deploy verification path, so the two
+// read the serve status identically.
 func tailscaleServeTargetFor(data []byte, serviceName string, servicePort int) (tailscaleServeTarget, bool) {
-	var status tailscaleServeStatus
-	if err := json.Unmarshal(data, &status); err != nil {
+	targets, found, err := advertisedTargets(data, serviceName)
+	if err != nil || !found {
 		return tailscaleServeTarget{}, false
 	}
 
-	for name, advertised := range status.Services {
-		if normalizeServiceName(name) != normalizeServiceName(serviceName) {
-			continue
+	frontendPort := strconv.Itoa(servicePort)
+	for _, t := range targets {
+		if t.frontendPort == frontendPort {
+			return t.target, true
 		}
-
-		for _, web := range advertised.Web {
-			for _, handler := range web.Handlers {
-				return parseProxyTarget(handler.Proxy), true
-			}
-		}
-
-		for advertisedServicePort, tcp := range advertised.TCP {
-			if advertisedServicePort != strconv.Itoa(servicePort) {
-				continue
-			}
-			host, port, ok := parseTCPForward(tcp.TCPForward)
-			if !ok {
-				continue
-			}
-			return tailscaleServeTarget{scheme: "tcp", host: host, port: port}, true
-		}
-
-		return tailscaleServeTarget{}, false
 	}
 
 	return tailscaleServeTarget{}, false
@@ -665,4 +657,13 @@ func formatPorts(ports []int) string {
 		parts = append(parts, strconv.Itoa(port))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// isDefaultServicePort reports whether a URL for the protocol can omit the
+// port.
+func isDefaultServicePort(protocol string, port int) bool {
+	if protocol == "https" {
+		return port == 443
+	}
+	return port == 80
 }

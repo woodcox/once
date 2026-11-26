@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -223,6 +224,38 @@ func TestRunHealthCheckProbe(t *testing.T) {
 		err = runHealthCheckProbe(context.Background(), "https", host, port, "/up")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "500")
+	})
+
+	t.Run("https doesn't leave connections open on the server", func(t *testing.T) {
+		// The health loop probes once a second for up to two minutes, and
+		// each probe builds its own transport. A pooled idle connection
+		// would never be reused, so the probe must close it instead.
+		var open atomic.Int64
+		server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		server.Config.ConnState = func(c net.Conn, state http.ConnState) {
+			switch state {
+			case http.StateNew:
+				open.Add(1)
+			case http.StateClosed:
+				open.Add(-1)
+			}
+		}
+		server.StartTLS()
+		defer server.Close()
+
+		host, portStr, err := net.SplitHostPort(server.Listener.Addr().String())
+		require.NoError(t, err)
+		port, err := strconv.Atoi(portStr)
+		require.NoError(t, err)
+
+		for range 5 {
+			require.NoError(t, runHealthCheckProbe(context.Background(), "https", host, port, "/up"))
+		}
+
+		require.Eventually(t, func() bool { return open.Load() == 0 },
+			2*time.Second, 10*time.Millisecond, "the probes' connections were closed")
 	})
 
 	t.Run("tcp succeeds when a listener accepts the connection", func(t *testing.T) {

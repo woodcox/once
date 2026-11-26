@@ -54,6 +54,7 @@ type Dashboard struct {
 	viewport      viewport.Model
 	toggling      bool
 	togglingApp   string
+	stoppedByUser map[string]time.Time
 	progress      Progress
 	help          Help
 	overlay       Component
@@ -62,7 +63,16 @@ type Dashboard struct {
 type dashboardTickMsg struct{}
 
 type startStopFinishedMsg struct {
-	err error
+	err    error
+	marker stopMarker
+}
+
+// stopMarker is the stopped-by-user state captured before a start/stop toggle,
+// so a failed toggle can restore it. stoppedAt records when the stop was asked
+// for, so a later run can invalidate the marker.
+type stopMarker struct {
+	stoppedAt time.Time
+	present   bool
 }
 
 func NewDashboard(ns *docker.Namespace, apps []*docker.Application, selectedIndex int,
@@ -85,6 +95,7 @@ func NewDashboard(ns *docker.Namespace, apps []*docker.Application, selectedInde
 		viewport:      vp,
 		header:        NewDashboardHeader(systemScraper),
 		hostname:      hostname,
+		stoppedByUser: make(map[string]time.Time),
 		progress:      NewProgress(0, Colors.Border),
 		help:          NewHelp(),
 	}
@@ -185,12 +196,24 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 		switch msg.action {
 		case ActionsMenuStartStop:
 			app := msg.app
+			name := app.Settings.Name
+			previous, present := m.stoppedByUser[name]
+			marker := stopMarker{stoppedAt: previous, present: present}
 			m.toggling = true
-			m.togglingApp = app.Settings.Name
+			m.togglingApp = name
+			// Mark the transition before the container settles: a stop
+			// ONCE was asked for can exit 137 or 143, and that isn't a
+			// crash. Starting clears the mark again, so a later exit on
+			// its own still reads as a crash.
+			if app.Running {
+				m.stoppedByUser[name] = time.Now()
+			} else {
+				delete(m.stoppedByUser, name)
+			}
 			m.progress = NewProgress(m.width, Colors.Border)
 			m.updateViewportSize()
 			m.rebuildViewportContent()
-			return m, tea.Batch(m.progress.Init(), m.runStartStop(app))
+			return m, tea.Batch(m.progress.Init(), m.runStartStop(app, marker))
 		case ActionsMenuDiagnose:
 			return m, func() tea.Msg { return NavigateToDoctorMsg{App: msg.app} }
 		case ActionsMenuRemove:
@@ -198,8 +221,24 @@ func (m Dashboard) Update(msg tea.Msg) (Component, tea.Cmd) {
 		}
 
 	case startStopFinishedMsg:
+		name := m.togglingApp
 		m.toggling = false
 		m.togglingApp = ""
+		if msg.err != nil {
+			if msg.marker.present {
+				m.stoppedByUser[name] = msg.marker.stoppedAt
+			} else {
+				delete(m.stoppedByUser, name)
+			}
+		}
+		// A namespace event that rebuilt the panels mid-toggle snapshotted
+		// the marker before this restore; sync the matching panel so the
+		// restored value is what actually renders.
+		for i := range m.panels {
+			if m.panels[i].app.Settings.Name == name {
+				_, m.panels[i].stoppedByUser = m.stoppedByUser[name]
+			}
+		}
 		m.updateViewportSize()
 		m.rebuildViewportContent()
 
@@ -292,15 +331,19 @@ func (m Dashboard) helpBindings() []key.Binding {
 	return []key.Binding{dashboardKeys.NewApp, dashboardKeys.Quit}
 }
 
-func (m Dashboard) runStartStop(app *docker.Application) tea.Cmd {
+func (m Dashboard) runStartStop(app *docker.Application, marker stopMarker) tea.Cmd {
+	stopping := app.Running
 	return func() tea.Msg {
 		var err error
-		if app.Running {
+		if stopping {
 			err = app.Stop(context.Background())
 		} else {
 			err = app.Start(context.Background())
 		}
-		return startStopFinishedMsg{err: err}
+		return startStopFinishedMsg{
+			err:    err,
+			marker: marker,
+		}
 	}
 }
 
@@ -400,6 +443,15 @@ func (m *Dashboard) panelIndexAtY(y int) (int, bool) {
 func (m *Dashboard) buildPanels() {
 	m.panels = make([]DashboardPanel, len(m.apps))
 	for i, app := range m.apps {
+		// A deliberate stop only explains an exit until the app runs again.
+		// If a later run has started (e.g. from outside the dashboard), the
+		// marker is stale and must not suppress a subsequent crash.
+		stoppedAt, stopped := m.stoppedByUser[app.Settings.Name]
+		if stopped && app.Running && app.RunningSince.After(stoppedAt) {
+			delete(m.stoppedByUser, app.Settings.Name)
+			stopped = false
+		}
 		m.panels[i] = NewDashboardPanel(app, m.scraper, m.dockerScraper, m.userStats)
+		m.panels[i].stoppedByUser = stopped
 	}
 }

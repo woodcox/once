@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -18,6 +20,27 @@ func TestInstallActivity_PromptRaisesAndClears(t *testing.T) {
 	require.NotNil(t, m.prompt)
 	assert.Contains(t, m.activityView(), "Keep app")
 	assert.Equal(t, 1, m.prompt.focused)
+}
+
+func TestInstallActivity_PromptWrapsToTheTerminalWidth(t *testing.T) {
+	m := newTestActivity()
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m.Update(installPromptMsg{})
+	require.NotNil(t, m.prompt)
+
+	for line := range strings.SplitSeq(m.View(), "\n") {
+		assert.LessOrEqual(t, lipgloss.Width(line), 80)
+	}
+}
+
+func TestInstallActivity_WarningWrapsToTheTerminalWidth(t *testing.T) {
+	m := newTestActivity()
+	m.warnings = []string{"the Tailscale Service for this app has not been advertised yet, so ONCE is carrying on without verifying it on the tailnet"}
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+
+	for line := range strings.SplitSeq(m.View(), "\n") {
+		assert.LessOrEqual(t, lipgloss.Width(line), 80)
+	}
 }
 
 func TestInstallActivity_DecisionIsDelivered(t *testing.T) {
@@ -43,6 +66,31 @@ func TestInstallActivity_KeysIgnoredWithoutPrompt(t *testing.T) {
 
 	assert.Nil(t, m.Update(keyPressMsg("d")))
 	assert.Nil(t, m.Update(keyPressMsg("esc")))
+}
+
+func TestInstallActivity_DecisionDoesNotArmASecondPump(t *testing.T) {
+	m := newTestActivity()
+	m.Update(installPromptMsg{})
+
+	cmd := m.Update(keyPressMsg("k"))
+	require.NotNil(t, cmd)
+
+	// The decision comes from the prompt command, not the pump, and the
+	// pump the prompt message armed is still the only one: the decision
+	// must not arm another, or the two would race to deliver progress,
+	// warnings and the terminal message.
+	msg, ok := cmd().(docktailDecisionMsg)
+	require.True(t, ok, "expected docktailDecisionMsg, got %T", msg)
+
+	decisionCmd := m.Update(msg)
+	assert.Nil(t, decisionCmd, "the decision is delivered without arming a second pump")
+
+	select {
+	case decision := <-m.decisionChan:
+		assert.Equal(t, docktailKeep, decision)
+	default:
+		t.Fatal("expected a decision on the decision channel, got none")
+	}
 }
 
 func TestInstallActivity_SecondDecisionIsIgnored(t *testing.T) {
@@ -94,7 +142,7 @@ func TestInstallActivity_DecisionSendNeverBlocks(t *testing.T) {
 		assert.Nil(t, cmd, "no prompt means the key produces no command")
 
 		cmd = m.Update(docktailDecisionMsg{decision: docktailKeep})
-		assert.NotNil(t, cmd, "a stray decision is dropped but the progress pump keeps running")
+		assert.Nil(t, cmd, "a stray decision is dropped without arming a second progress pump")
 	}()
 	select {
 	case <-done:
@@ -116,8 +164,14 @@ func TestInstallActivity_WarningsAreDrainedBeforeDone(t *testing.T) {
 	m.doneChan <- installDoneMsg{}
 
 	msg := m.waitForProgress()()
-	_, ok := msg.(installWarningMsg)
-	assert.True(t, ok, "expected installWarningMsg, got %T", msg)
+	done, ok := msg.(installDoneMsg)
+	require.True(t, ok, "expected installDoneMsg, got %T", msg)
+
+	cmd := m.Update(done)
+	require.NotNil(t, cmd)
+	assert.Equal(t, []string{"not advertised yet"}, m.warnings)
+	_, ok = cmd().(InstallActivityDoneMsg)
+	assert.True(t, ok, "the completion is preserved when its warning is recorded")
 }
 
 func TestInstall_ActivityKeysReachThePrompt(t *testing.T) {

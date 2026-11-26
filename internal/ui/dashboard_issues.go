@@ -21,20 +21,22 @@ type PanelIssue struct {
 // panelIssues collects the issues for an app from the container state it is
 // known to have and the metric cards it is showing. It makes no network
 // calls: everything it needs is already in hand.
-func panelIssues(app *docker.Application, cards [3]MetricCard) []PanelIssue {
+func panelIssues(app *docker.Application, cards [3]MetricCard, stoppedByUser bool) []PanelIssue {
 	var issues []PanelIssue
 
-	issues = append(issues, containerIssues(app)...)
+	issues = append(issues, containerIssues(app, stoppedByUser)...)
 	issues = append(issues, metricIssues(cards)...)
 
 	return issues
 }
 
 // containerIssues reports the problems visible in the app's container state.
-func containerIssues(app *docker.Application) []PanelIssue {
+// A stop the user asked for suppresses the exit-code issue: a stopped app
+// often exits 137 or 143 as Docker escalates from SIGTERM to SIGKILL.
+func containerIssues(app *docker.Application, stoppedByUser bool) []PanelIssue {
 	switch app.State {
 	case "exited", "dead":
-		if app.ExitCode == 0 {
+		if app.ExitCode == 0 || stoppedByUser {
 			return nil
 		}
 		return []PanelIssue{{
