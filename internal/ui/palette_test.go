@@ -35,13 +35,15 @@ func TestDefaultPaletteSemanticAliases(t *testing.T) {
 func TestSynthesizeOrangeDarkTheme(t *testing.T) {
 	// Tokyo Night blue
 	blue, _ := colorful.Hex("#7AA2F7")
-	orange := synthesizeOrange(blue)
+	orange := synthesizeOrange(blue, true)
 
 	cf, ok := colorful.MakeColor(orange)
 	require.True(t, ok)
 
-	_, c, h := cf.OkLch()
-	assert.InDelta(t, 55, h, 25, "hue should be in the orange range")
+	l, c, h := cf.OkLch()
+	assert.GreaterOrEqual(t, h, 55.0, "hue should be in the orange range")
+	assert.LessOrEqual(t, h, 80.0, "hue should be in the orange range")
+	assert.GreaterOrEqual(t, l, 0.65, "should stay bright on a dark background")
 	assert.Greater(t, c, 0.08, "should have visible chroma")
 	assert.True(t, cf.IsValid(), "should be a valid RGB color")
 }
@@ -49,28 +51,73 @@ func TestSynthesizeOrangeDarkTheme(t *testing.T) {
 func TestSynthesizeOrangeLightTheme(t *testing.T) {
 	// Light theme blue
 	blue, _ := colorful.Hex("#2e7de9")
-	orange := synthesizeOrange(blue)
+	orange := synthesizeOrange(blue, false)
 
 	cf, ok := colorful.MakeColor(orange)
 	require.True(t, ok)
 
-	_, _, h := cf.OkLch()
-	assert.InDelta(t, 55, h, 25, "hue should be in the orange range")
+	l, _, h := cf.OkLch()
+	assert.GreaterOrEqual(t, h, 55.0, "hue should be in the orange range")
+	assert.LessOrEqual(t, h, 80.0, "hue should be in the orange range")
+	assert.LessOrEqual(t, l, 0.65, "should stay dark enough on a light background")
 	assert.True(t, cf.IsValid(), "should be a valid RGB color")
 }
 
 func TestSynthesizeOrangeHueClamping(t *testing.T) {
 	// Extreme blue that would produce a non-orange complement
 	blue, _ := colorful.Hex("#0000ff")
-	orange := synthesizeOrange(blue)
+	orange := synthesizeOrange(blue, true)
 
 	cf, ok := colorful.MakeColor(orange)
 	require.True(t, ok)
 
 	// OKLCH→RGB clamping can shift hue by a few degrees
 	_, _, h := cf.OkLch()
-	assert.GreaterOrEqual(t, h, 30.0, "hue should be approximately clamped to orange range")
-	assert.LessOrEqual(t, h, 80.0, "hue should be approximately clamped to orange range")
+	assert.GreaterOrEqual(t, h, 55.0, "hue should be clamped to the orange band")
+	assert.LessOrEqual(t, h, 80.0, "hue should be clamped to the orange band")
+}
+
+func TestSynthesizeOrangeDarkBlueStaysOrange(t *testing.T) {
+	// Windows Terminal's Campbell blue is dark and vivid. Without a chroma
+	// cap the out-of-gamut orange clamps to a dark red (#BF4900).
+	blue, _ := colorful.Hex("#0037DA")
+	orange := synthesizeOrange(blue, true)
+
+	cf, ok := colorful.MakeColor(orange)
+	require.True(t, ok)
+
+	l, c, h := cf.OkLch()
+	assert.GreaterOrEqual(t, h, 55.0, "hue should stay in the orange band")
+	assert.LessOrEqual(t, h, 80.0, "hue should stay in the orange band")
+	assert.GreaterOrEqual(t, l, 0.65, "focus should stay bright on a dark background")
+	assert.LessOrEqual(t, c, 0.15, "chroma should stay in gamut")
+}
+
+func TestNewPalettePicksFocusLightnessFromBackground(t *testing.T) {
+	check := func(t *testing.T, bg string, wantDark bool) {
+		var d DetectedColors
+		d.Colors[sampleBackground], _ = colorful.Hex(bg)
+		d.Detected[sampleBackground] = true
+		d.Colors[int(ansi.Blue)], _ = colorful.Hex("#0037da")
+		d.Detected[int(ansi.Blue)] = true
+
+		p := NewPalette(d)
+		require.Equal(t, wantDark, p.isDark)
+
+		cf, ok := colorful.MakeColor(p.FocusOrange)
+		require.True(t, ok)
+
+		l, _, h := cf.OkLch()
+		assert.GreaterOrEqual(t, h, 55.0, "hue should stay in the orange band")
+		if wantDark {
+			assert.GreaterOrEqual(t, l, 0.65, "focus should be bright on a dark background")
+		} else {
+			assert.LessOrEqual(t, l, 0.65, "focus should be darker on a light background")
+		}
+	}
+
+	t.Run("dark background", func(t *testing.T) { check(t, "#0c0c0c", true) })
+	t.Run("light background", func(t *testing.T) { check(t, "#d5d6db", false) })
 }
 
 func TestSynthesizeTintDarkBackground(t *testing.T) {
