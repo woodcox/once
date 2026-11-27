@@ -96,7 +96,8 @@ func (s *TailscaleScraper) LastError() error {
 
 func (s *TailscaleScraper) Scrape(ctx context.Context) {
 	if !s.scrapeMu.TryLock() {
-		return // a scrape is already in flight; skip this tick
+		s.recordIdleInterval()
+		return // a scrape is already in flight; record a zero and skip this tick
 	}
 	defer s.scrapeMu.Unlock()
 
@@ -135,6 +136,18 @@ func (s *TailscaleScraper) fail(err error) {
 	s.lastError = err
 	for _, data := range s.services {
 		data.prevCounters = nil
+		data.samples.push(TailscaleSample{})
+	}
+}
+
+// recordIdleInterval advances every Service's ring with a zero sample when a
+// scrape tick is skipped because another scrape is still in flight. Without it
+// a run of slow timeouts advances the ring slower than the tick cadence, so
+// pre-outage traffic would linger in the sliding window after recovery.
+func (s *TailscaleScraper) recordIdleInterval() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, data := range s.services {
 		data.samples.push(TailscaleSample{})
 	}
 }

@@ -167,6 +167,54 @@ func TestTailscaleScraperSkipsOverlappingScrape(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load())
 }
 
+func TestTailscaleScraperSkippedTicksAgeOutTraffic(t *testing.T) {
+	// Pre-seed a tracked Service with nonzero traffic.
+	scraper := NewTailscaleScraper(TailscaleScraperSettings{BufferSize: 3})
+	scraper.recordSamples(map[string]*tailscaleCounters{
+		"write": {inbound: 1000, outbound: 5000},
+	})
+	scraper.recordSamples(map[string]*tailscaleCounters{
+		"write": {inbound: 2000, outbound: 6000},
+	})
+
+	// A scrape that blocks, so later Scrape calls are skipped as overlapping.
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		fmt.Fprintln(w, "")
+	}))
+	defer server.Close()
+	scraper.settings.URL = server.URL
+
+	done := make(chan struct{})
+	go func() {
+		scraper.Scrape(context.Background())
+		close(done)
+	}()
+
+	<-started
+
+	// Enough skipped ticks to age the nonzero samples out of the small ring.
+	for range 3 {
+		scraper.Scrape(context.Background())
+	}
+
+	close(release)
+	<-done
+
+	samples := scraper.Fetch("write", 3)
+	require.Len(t, samples, 3)
+	for _, s := range samples {
+		assert.Zero(t, s.InboundBytes)
+		assert.Zero(t, s.OutboundBytes)
+	}
+}
+
 func TestTailscaleScraperExpiresAbsentService(t *testing.T) {
 	scraper := NewTailscaleScraper(TailscaleScraperSettings{BufferSize: 10})
 
