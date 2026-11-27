@@ -40,24 +40,25 @@ var dashboardKeys = struct {
 }
 
 type Dashboard struct {
-	namespace     *docker.Namespace
-	scraper       *metrics.MetricsScraper
-	dockerScraper *docker.Scraper
-	systemScraper *system.Scraper
-	userStats     *userstats.Reader
-	apps          []*docker.Application
-	panels        []DashboardPanel
-	header        DashboardHeader
-	hostname      string
-	selectedIndex int
-	width, height int
-	viewport      viewport.Model
-	toggling      bool
-	togglingApp   string
-	stoppedByUser map[string]time.Time
-	progress      Progress
-	help          Help
-	overlay       Component
+	namespace      *docker.Namespace
+	scraper        *metrics.MetricsScraper
+	dockerScraper  *docker.Scraper
+	systemScraper  *system.Scraper
+	userStats      *userstats.Reader
+	tailscaleStats tailscaleStatsFetcher
+	apps           []*docker.Application
+	panels         []DashboardPanel
+	header         DashboardHeader
+	hostname       string
+	selectedIndex  int
+	width, height  int
+	viewport       viewport.Model
+	toggling       bool
+	togglingApp    string
+	stoppedByUser  map[string]time.Time
+	progress       Progress
+	help           Help
+	overlay        Component
 }
 
 type dashboardTickMsg struct{}
@@ -77,6 +78,7 @@ type stopMarker struct {
 
 func NewDashboard(ns *docker.Namespace, apps []*docker.Application, selectedIndex int,
 	scraper *metrics.MetricsScraper, dockerScraper *docker.Scraper, systemScraper *system.Scraper, userStats *userstats.Reader,
+	tailscaleStats tailscaleStatsFetcher,
 ) Dashboard {
 	vp := viewport.New()
 	vp.MouseWheelEnabled = false
@@ -85,19 +87,20 @@ func NewDashboard(ns *docker.Namespace, apps []*docker.Application, selectedInde
 	hostname, _ := os.Hostname()
 
 	d := Dashboard{
-		namespace:     ns,
-		scraper:       scraper,
-		dockerScraper: dockerScraper,
-		systemScraper: systemScraper,
-		userStats:     userStats,
-		apps:          apps,
-		selectedIndex: selectedIndex,
-		viewport:      vp,
-		header:        NewDashboardHeader(systemScraper),
-		hostname:      hostname,
-		stoppedByUser: make(map[string]time.Time),
-		progress:      NewProgress(0, Colors.Border),
-		help:          NewHelp(),
+		namespace:      ns,
+		scraper:        scraper,
+		dockerScraper:  dockerScraper,
+		systemScraper:  systemScraper,
+		userStats:      userStats,
+		tailscaleStats: tailscaleStats,
+		apps:           apps,
+		selectedIndex:  selectedIndex,
+		viewport:       vp,
+		header:         NewDashboardHeader(systemScraper),
+		hostname:       hostname,
+		stoppedByUser:  make(map[string]time.Time),
+		progress:       NewProgress(0, Colors.Border),
+		help:           NewHelp(),
 	}
 	d.buildPanels()
 	d.help.SetBindings(d.helpBindings())
@@ -388,15 +391,19 @@ func (m *Dashboard) rebuildViewportContent() {
 }
 
 func (m *Dashboard) computeScales() DashboardScales {
-	var maxTraffic float64
+	var maxTraffic, maxTailnetTraffic float64
 	for i := range m.panels {
-		traffic := m.panels[i].DataMaxes()
-		maxTraffic = max(maxTraffic, traffic)
+		if m.panels[i].app.Settings.DocktailEnabled() {
+			maxTailnetTraffic = max(maxTailnetTraffic, m.panels[i].TailnetDataMaxes())
+		} else {
+			maxTraffic = max(maxTraffic, m.panels[i].DataMaxes())
+		}
 	}
 	return DashboardScales{
-		CPU:     ChartScale{max: float64(m.systemScraper.NumCPUs()) * 100},
-		Memory:  ChartScale{max: float64(m.systemScraper.MemTotal())},
-		Traffic: NewChartScale(UnitCount, maxTraffic),
+		CPU:            ChartScale{max: float64(m.systemScraper.NumCPUs()) * 100},
+		Memory:         ChartScale{max: float64(m.systemScraper.MemTotal())},
+		Traffic:        NewChartScale(UnitCount, maxTraffic),
+		TailnetTraffic: NewChartScale(UnitBytes, maxTailnetTraffic),
 	}
 }
 
@@ -451,7 +458,7 @@ func (m *Dashboard) buildPanels() {
 			delete(m.stoppedByUser, app.Settings.Name)
 			stopped = false
 		}
-		m.panels[i] = NewDashboardPanel(app, m.scraper, m.dockerScraper, m.userStats)
+		m.panels[i] = NewDashboardPanel(app, m.scraper, m.dockerScraper, m.userStats, m.tailscaleStats)
 		m.panels[i].stoppedByUser = stopped
 	}
 }

@@ -57,6 +57,11 @@ type MetricCard struct {
 	isTraffic bool
 	errData   []float64
 
+	// Byte-traffic fields
+	isByteTraffic bool
+	inData        []float64
+	outData       []float64
+
 	// issueLabel is how the card names itself in the panel's issue line.
 	issueLabel string
 }
@@ -100,6 +105,27 @@ func NewTrafficCard(reqData, errData []float64, scale ChartScale, errPct float64
 	}
 }
 
+// NewByteTrafficCard builds the Traffic card for an app whose traffic is
+// measured as Tailscale Serve bytes rather than proxy requests.
+func NewByteTrafficCard(total, inbound, outbound []float64, scale ChartScale) MetricCard {
+	scaleLabel := ""
+	if scale.Max() > 0 {
+		scaleLabel = UnitBytes.Format(scale.Max())
+	}
+
+	return MetricCard{
+		title:         "Traffic",
+		data:          total,
+		scale:         scale,
+		unit:          UnitBytes,
+		limitLabel:    scaleLabel,
+		isByteTraffic: true,
+		inData:        inbound,
+		outData:       outbound,
+		issueLabel:    "traffic",
+	}
+}
+
 func (c MetricCard) Health() HealthState {
 	return c.thresholds.Health(c.healthPct)
 }
@@ -111,9 +137,12 @@ func (c MetricCard) View(width int) string {
 	right := boxSide()
 
 	var barStr, valueLine, detailLine string
-	if c.isTraffic {
+	switch {
+	case c.isByteTraffic:
+		barStr, valueLine, detailLine = c.byteTrafficLines(inner)
+	case c.isTraffic:
 		barStr, valueLine, detailLine = c.trafficLines(inner)
-	} else {
+	default:
 		barStr, valueLine, detailLine = c.metricLines(inner)
 	}
 
@@ -144,6 +173,13 @@ func (c MetricCard) metricLines(inner int) (barStr, valueLine, detailLine string
 	barStr, current, peak := c.renderBarLine(inner)
 	valueLine = formatValueLine(" "+c.unit.Format(current), c.limitLabel, inner)
 	detailLine = " peak: " + c.unit.Format(peak)
+	return
+}
+
+func (c MetricCard) byteTrafficLines(inner int) (barStr, valueLine, detailLine string) {
+	barStr, current, _ := c.renderBarLine(inner)
+	valueLine = formatValueLine(" "+c.unit.Format(current)+"/min", c.limitLabel, inner)
+	detailLine = " in " + UnitBytes.Format(lastValue(c.inData)) + " / out " + UnitBytes.Format(lastValue(c.outData))
 	return
 }
 

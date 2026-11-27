@@ -333,6 +333,48 @@ func TestRenderBarZeroWidth(t *testing.T) {
 	assert.Empty(t, renderBar(50, 0, 100, Colors.Success, 0))
 }
 
+func TestDashboardPanelTailnetVisitsNotMeasured(t *testing.T) {
+	panel := testDocktailPanel(true)
+	view := ansi.Strip(panel.View(false, false, true, 120))
+
+	assert.Contains(t, view, "not measured")
+	assert.Contains(t, view, "on tailnet")
+}
+
+func TestDashboardPanelTailnetTrafficUsesBytes(t *testing.T) {
+	panel := testDocktailPanel(true)
+	panel.tailscaleStats = stubTailscaleStats{
+		samples: []metrics.TailscaleSample{
+			{InboundBytes: 1024, OutboundBytes: 2048},
+		},
+	}
+	panel.Refresh(DashboardScales{
+		TailnetTraffic: NewChartScale(UnitBytes, 10*1024*1024),
+	})
+
+	card := panel.cards[2]
+	assert.True(t, card.isByteTraffic)
+	assert.Equal(t, UnitBytes, card.unit)
+	assert.Equal(t, float64(3072), lastValue(card.data))
+
+	view := ansi.Strip(card.View(40))
+	assert.Contains(t, view, "Traffic")
+	assert.Contains(t, view, "/min")
+	assert.Contains(t, view, "in 1K / out 2K")
+}
+
+func TestDashboardPanelTailnetDataMaxes(t *testing.T) {
+	panel := testDocktailPanel(true)
+	panel.tailscaleStats = stubTailscaleStats{
+		samples: []metrics.TailscaleSample{
+			{InboundBytes: 1000, OutboundBytes: 2000},
+		},
+	}
+
+	assert.Equal(t, float64(3000), panel.TailnetDataMaxes())
+	assert.Zero(t, panel.DataMaxes(), "tailnet apps don't use proxy request traffic")
+}
+
 // Helpers
 
 func testPanel(running bool) DashboardPanel {
@@ -352,7 +394,38 @@ func testPanelWithState(running bool, state string) DashboardPanel {
 	scraper := metrics.NewMetricsScraper(metrics.ScraperSettings{})
 	dockerScraper := &docker.Scraper{}
 
-	return NewDashboardPanel(app, scraper, dockerScraper, nil)
+	return NewDashboardPanel(app, scraper, dockerScraper, nil, nil)
+}
+
+func testDocktailPanel(running bool) DashboardPanel {
+	app := &docker.Application{
+		Running: running,
+		Settings: docker.ApplicationSettings{
+			Name:  "writebook",
+			Host:  "write.example.ts.net",
+			Image: "ghcr.io/basecamp/writebook:latest",
+			Tailscale: docker.TailscaleSettings{
+				Enabled: true,
+				Mode:    docker.DocktailMode,
+				Service: "write",
+			},
+		},
+	}
+	scraper := metrics.NewMetricsScraper(metrics.ScraperSettings{})
+	dockerScraper := &docker.Scraper{}
+
+	return NewDashboardPanel(app, scraper, dockerScraper, nil, nil)
+}
+
+type stubTailscaleStats struct {
+	samples []metrics.TailscaleSample
+}
+
+func (s stubTailscaleStats) Fetch(service string, n int) []metrics.TailscaleSample {
+	if service != "write" {
+		return nil
+	}
+	return s.samples[:min(n, len(s.samples))]
 }
 
 // badgeWithColor renders the health badge in the given colour, so a test can
