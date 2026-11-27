@@ -44,6 +44,14 @@ func (t MetricThresholds) Color(pct float64) color.Color {
 	return t.Health(pct).Color()
 }
 
+type cardKind int
+
+const (
+	cardMetric cardKind = iota
+	cardTraffic
+	cardByteTraffic
+)
+
 type MetricCard struct {
 	title      string
 	data       []float64
@@ -52,15 +60,14 @@ type MetricCard struct {
 	limitLabel string
 	healthPct  float64
 	thresholds MetricThresholds
+	kind       cardKind
 
 	// Traffic-specific fields
-	isTraffic bool
-	errData   []float64
+	errData []float64
 
 	// Byte-traffic fields
-	isByteTraffic bool
-	inData        []float64
-	outData       []float64
+	inData  []float64
+	outData []float64
 
 	// issueLabel is how the card names itself in the panel's issue line.
 	issueLabel string
@@ -99,7 +106,7 @@ func NewTrafficCard(reqData, errData []float64, scale ChartScale, errPct float64
 		limitLabel: scaleLabel,
 		healthPct:  errPct,
 		thresholds: MetricThresholds{Warning: warning, Error: error},
-		isTraffic:  true,
+		kind:       cardTraffic,
 		errData:    errData,
 		issueLabel: "error rate",
 	}
@@ -110,19 +117,19 @@ func NewTrafficCard(reqData, errData []float64, scale ChartScale, errPct float64
 func NewByteTrafficCard(total, inbound, outbound []float64, scale ChartScale) MetricCard {
 	scaleLabel := ""
 	if scale.Max() > 0 {
-		scaleLabel = UnitBytes.Format(scale.Max())
+		scaleLabel = UnitBytesRate.Format(scale.Max())
 	}
 
 	return MetricCard{
-		title:         "Traffic",
-		data:          total,
-		scale:         scale,
-		unit:          UnitBytes,
-		limitLabel:    scaleLabel,
-		isByteTraffic: true,
-		inData:        inbound,
-		outData:       outbound,
-		issueLabel:    "traffic",
+		title:      "Traffic",
+		data:       total,
+		scale:      scale,
+		unit:       UnitBytesRate,
+		limitLabel: scaleLabel,
+		kind:       cardByteTraffic,
+		inData:     inbound,
+		outData:    outbound,
+		issueLabel: "traffic",
 	}
 }
 
@@ -137,10 +144,10 @@ func (c MetricCard) View(width int) string {
 	right := boxSide()
 
 	var barStr, valueLine, detailLine string
-	switch {
-	case c.isByteTraffic:
+	switch c.kind {
+	case cardByteTraffic:
 		barStr, valueLine, detailLine = c.byteTrafficLines(inner)
-	case c.isTraffic:
+	case cardTraffic:
 		barStr, valueLine, detailLine = c.trafficLines(inner)
 	default:
 		barStr, valueLine, detailLine = c.metricLines(inner)

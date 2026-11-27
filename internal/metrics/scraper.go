@@ -50,9 +50,7 @@ type MetricsScraper struct {
 }
 
 type serviceData struct {
-	samples      []Sample
-	head         int
-	count        int
+	samples      sampleRing[Sample]
 	prevCounters *counterState
 }
 
@@ -82,14 +80,7 @@ func (s *MetricsScraper) Fetch(service string, n int) []Sample {
 		return nil
 	}
 
-	available := min(n, data.count)
-	result := make([]Sample, available)
-	for i := range available {
-		idx := (data.head - 1 - i + len(data.samples)) % len(data.samples)
-		result[i] = data.samples[idx]
-	}
-
-	return result
+	return data.samples.lastN(n)
 }
 
 func (s *MetricsScraper) LastError() error {
@@ -101,20 +92,14 @@ func (s *MetricsScraper) LastError() error {
 func (s *MetricsScraper) Scrape(ctx context.Context) {
 	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", s.settings.Port)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	body, err := httpGet(ctx, s.client, url)
 	if err != nil {
-		s.setError(fmt.Errorf("creating request: %w", err))
+		s.setError(err)
 		return
 	}
+	defer body.Close()
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		s.setError(fmt.Errorf("fetching metrics: %w", err))
-		return
-	}
-	defer resp.Body.Close()
-
-	counters, err := s.parseMetrics(resp.Body)
+	counters, err := s.parseMetrics(body)
 	if err != nil {
 		s.setError(fmt.Errorf("parsing metrics: %w", err))
 		return
@@ -184,7 +169,7 @@ func (s *MetricsScraper) recordSamples(counters map[string]*counterState) {
 		data, ok := s.services[service]
 		if !ok {
 			data = &serviceData{
-				samples: make([]Sample, s.settings.BufferSize),
+				samples: newSampleRing[Sample](s.settings.BufferSize),
 			}
 			s.services[service] = data
 		}
@@ -197,15 +182,30 @@ func (s *MetricsScraper) recordSamples(counters map[string]*counterState) {
 		}
 		data.prevCounters = current
 
-		data.samples[data.head] = sample
-		data.head = (data.head + 1) % len(data.samples)
-		if data.count < len(data.samples) {
-			data.count++
-		}
+		data.samples.push(sample)
 	}
 }
 
 // Helpers
+
+func httpGet(ctx context.Context, client *http.Client, url string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching metrics: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("fetching metrics: unexpected status %s", resp.Status)
+	}
+
+	return resp.Body, nil
+}
 
 func getLabel(metric *prom.Metric, name string) string {
 	for _, label := range metric.GetLabel() {

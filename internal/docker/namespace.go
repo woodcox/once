@@ -103,6 +103,15 @@ func (n *Namespace) Applications() []*Application {
 	return n.applications
 }
 
+func (n *Namespace) HasTailnetApps() bool {
+	for _, app := range n.applications {
+		if app.Settings.DocktailEnabled() {
+			return true
+		}
+	}
+	return false
+}
+
 func (n *Namespace) ApplicationByHost(host string) *Application {
 	for _, app := range n.applications {
 		if app.Settings.Host == host {

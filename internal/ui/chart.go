@@ -18,31 +18,18 @@ const (
 type UnitType int
 
 const (
-	UnitCount   UnitType = iota // 1K, 1M (requests, errors)
-	UnitPercent                 // 50.0%
-	UnitBytes                   // 128 MiB, 1.5 GiB
+	UnitCount     UnitType = iota // 1K, 1M (requests, errors)
+	UnitPercent                   // 50.0%
+	UnitBytes                     // 128 MiB, 1.5 GiB
+	UnitBytesRate                 // per-minute byte rate, same units as bytes
 )
 
 func (u UnitType) Format(value float64) string {
 	switch u {
 	case UnitPercent:
 		return fmt.Sprintf("%.0f%%", value)
-	case UnitBytes:
-		const (
-			KiB = 1024
-			MiB = KiB * 1024
-			GiB = MiB * 1024
-		)
-		switch {
-		case value >= GiB:
-			return fmt.Sprintf("%.1fG", value/GiB)
-		case value >= MiB:
-			return fmt.Sprintf("%.0fM", value/MiB)
-		case value >= KiB:
-			return fmt.Sprintf("%.0fK", value/KiB)
-		default:
-			return fmt.Sprintf("%.0fB", value)
-		}
+	case UnitBytes, UnitBytesRate:
+		return formatBytes(value)
 	default: // UnitCount
 		if value >= 1_000_000 {
 			return fmt.Sprintf("%.1fM", value/1_000_000)
@@ -211,6 +198,25 @@ func SlidingSum(data []float64, window int) []float64 {
 }
 
 // Helpers
+
+func formatBytes(value float64) string {
+	const (
+		KiB = 1024
+		MiB = KiB * 1024
+		GiB = MiB * 1024
+	)
+
+	switch {
+	case value >= GiB:
+		return fmt.Sprintf("%.1fG", value/GiB)
+	case value >= MiB:
+		return fmt.Sprintf("%.0fM", value/MiB)
+	case value >= KiB:
+		return fmt.Sprintf("%.0fK", value/KiB)
+	default:
+		return fmt.Sprintf("%.0fB", value)
+	}
+}
 
 func barColor(pct float64) HealthState {
 	switch {

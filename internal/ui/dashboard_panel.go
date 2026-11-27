@@ -11,7 +11,6 @@ import (
 
 	"github.com/basecamp/once/internal/docker"
 	"github.com/basecamp/once/internal/metrics"
-	"github.com/basecamp/once/internal/userstats"
 )
 
 const PanelHeight = 7
@@ -27,47 +26,38 @@ const (
 	trafficErrorPct   = 5
 )
 
-type tailscaleStatsFetcher interface {
+type tailnetStatsFetcher interface {
 	Fetch(service string, n int) []metrics.TailscaleSample
+	LastError() error
 }
 
 type DashboardPanel struct {
-	app            docker.Application
-	stoppedByUser  bool
-	scraper        *metrics.MetricsScraper
-	dockerScraper  *docker.Scraper
-	userStats      *userstats.Reader
-	tailscaleStats tailscaleStatsFetcher
-	cards          [3]MetricCard
-	issues         []PanelIssue
+	app           docker.Application
+	stoppedByUser bool
+	sources       dataSources
+	cards         [3]MetricCard
+	issues        []PanelIssue
 }
 
-func NewDashboardPanel(app *docker.Application, scraper *metrics.MetricsScraper, dockerScraper *docker.Scraper, userStats *userstats.Reader, tailscaleStats tailscaleStatsFetcher) DashboardPanel {
+func NewDashboardPanel(app *docker.Application, sources dataSources) DashboardPanel {
 	return DashboardPanel{
-		app:            *app,
-		scraper:        scraper,
-		dockerScraper:  dockerScraper,
-		userStats:      userStats,
-		tailscaleStats: tailscaleStats,
+		app:     *app,
+		sources: sources,
 	}
 }
 
-func (p DashboardPanel) DataMaxes() (traffic float64) {
-	if !p.app.Running || p.app.Settings.DocktailEnabled() {
+func (p DashboardPanel) Maxes() (traffic, tailnet float64) {
+	if !p.app.Running {
 		return
+	}
+
+	if p.usesTailnetMetrics() {
+		_, _, total := p.fetchTailnetMetricsData()
+		return 0, maxValue(total)
 	}
 
 	reqData, _ := p.fetchMetricsData()
-	return maxValue(reqData)
-}
-
-func (p DashboardPanel) TailnetDataMaxes() (traffic float64) {
-	if !p.app.Running || !p.app.Settings.DocktailEnabled() {
-		return
-	}
-
-	_, _, total := p.fetchTailnetMetricsData()
-	return maxValue(total)
+	return maxValue(reqData), 0
 }
 
 func (p DashboardPanel) View(selected bool, toggling bool, showDetails bool, width int) string {
@@ -143,9 +133,19 @@ func (p *DashboardPanel) Refresh(scales DashboardScales) {
 	}
 
 	p.issues = panelIssues(&p.app, p.cards, p.stoppedByUser)
+
+	if p.app.Running && p.usesTailnetMetrics() && p.sources.tailnet != nil {
+		if err := p.sources.tailnet.LastError(); err != nil {
+			p.issues = append(p.issues, PanelIssue{Text: "tailnet traffic unavailable", Health: healthWarning})
+		}
+	}
 }
 
 // Private
+
+func (p DashboardPanel) usesTailnetMetrics() bool {
+	return p.app.Settings.DocktailEnabled()
+}
 
 func (p DashboardPanel) renderHealthBadge(cards [3]MetricCard) string {
 	worst := healthNormal
@@ -230,7 +230,7 @@ func (p DashboardPanel) buildMetricCards(scales DashboardScales) [3]MetricCard {
 	cpuCard := NewMetricCard("CPU", cpuData, cpuScale, UnitPercent, cpuLimit, defaultWarningPct, defaultErrorPct)
 	memCard := NewMetricCard("Memory", memData, memScale, UnitBytes, memLimit, defaultWarningPct, defaultErrorPct)
 
-	if p.app.Settings.DocktailEnabled() {
+	if p.usesTailnetMetrics() {
 		return [3]MetricCard{cpuCard, memCard, p.buildTailnetTrafficCard(scales.TailnetTraffic)}
 	}
 
@@ -262,11 +262,11 @@ func (p DashboardPanel) renderVisitsCard(width int) string {
 
 	var dayLine, weekLine string
 	switch {
-	case p.app.Settings.DocktailEnabled():
+	case p.usesTailnetMetrics():
 		dayLine = " not measured"
 		weekLine = " on tailnet"
-	case p.userStats != nil:
-		stats := p.userStats.Fetch(p.app.Settings.Name)
+	case p.sources.userStats != nil:
+		stats := p.sources.userStats.Fetch(p.app.Settings.Name)
 		if stats != nil && (stats.UniqueUsers24h > 0 || stats.UniqueUsers7d > 0) {
 			noun := "visitors"
 			if stats.UniqueUsers24h == 1 {
@@ -319,7 +319,7 @@ func (p DashboardPanel) renderIndicator(selected bool, height int) string {
 }
 
 func (p DashboardPanel) fetchDockerData() (cpu, memory []float64) {
-	samples := p.dockerScraper.Fetch(p.app.Settings.Name, containerStatsBuffer)
+	samples := p.sources.docker.Fetch(p.app.Settings.Name, containerStatsBuffer)
 	cpu = make([]float64, len(samples))
 	memory = make([]float64, len(samples))
 	for i, s := range samples {
@@ -332,7 +332,7 @@ func (p DashboardPanel) fetchDockerData() (cpu, memory []float64) {
 }
 
 func (p DashboardPanel) fetchMetricsData() (requests, errors []float64) {
-	samples := p.scraper.Fetch(p.app.Settings.Name, ChartSlidingWindow)
+	samples := p.sources.metrics.Fetch(p.app.Settings.Name, ChartSlidingWindow)
 	requests = make([]float64, len(samples))
 	errors = make([]float64, len(samples))
 	for i, s := range samples {
@@ -345,11 +345,11 @@ func (p DashboardPanel) fetchMetricsData() (requests, errors []float64) {
 }
 
 func (p DashboardPanel) fetchTailnetMetricsData() (inbound, outbound, total []float64) {
-	if p.tailscaleStats == nil {
+	if p.sources.tailnet == nil {
 		return nil, nil, nil
 	}
 
-	samples := p.tailscaleStats.Fetch(p.app.Settings.EffectiveServiceName(), ChartSlidingWindow)
+	samples := p.sources.tailnet.Fetch(p.app.Settings.EffectiveServiceName(), ChartSlidingWindow)
 	inbound = make([]float64, len(samples))
 	outbound = make([]float64, len(samples))
 	total = make([]float64, len(samples))

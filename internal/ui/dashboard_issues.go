@@ -91,7 +91,7 @@ func metricIssues(cards [3]MetricCard) []PanelIssue {
 
 // metricIssueText describes a metric breach, e.g. "CPU 82%".
 func metricIssueText(card MetricCard) string {
-	if card.isTraffic {
+	if card.kind != cardMetric {
 		return fmt.Sprintf("%s %.1f%%", card.issueLabel, card.healthPct)
 	}
 	return fmt.Sprintf("%s %s", card.issueLabel, UnitPercent.Format(card.healthPct))
