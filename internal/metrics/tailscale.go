@@ -125,15 +125,17 @@ func (s *TailscaleScraper) setError(err error) {
 	s.lastError = err
 }
 
-// fail records a scrape error and drops every Service's counter baseline, so a
-// later successful scrape re-baselines instead of attributing the whole outage
-// to a single interval.
+// fail records a scrape error, drops every Service's counter baseline, and
+// advances each Service's ring with a zero sample. Dropping the baseline stops
+// the next successful scrape from attributing the whole outage to one interval;
+// advancing the ring lets pre-outage traffic age out during a long outage.
 func (s *TailscaleScraper) fail(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastError = err
 	for _, data := range s.services {
 		data.prevCounters = nil
+		data.samples.push(TailscaleSample{})
 	}
 }
 

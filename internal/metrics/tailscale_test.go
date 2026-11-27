@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -240,4 +241,30 @@ tailscaled_serve_outbound_bytes_total{service="svc:write"} %d
 	require.Len(t, latest, 1)
 	assert.Zero(t, latest[0].InboundBytes)
 	assert.Zero(t, latest[0].OutboundBytes)
+}
+
+func TestTailscaleScraperAgesOutTrafficDuringOutage(t *testing.T) {
+	// A small buffer keeps the test quick; the production scraper uses 200.
+	scraper := NewTailscaleScraper(TailscaleScraperSettings{BufferSize: 5})
+
+	// Build up nonzero traffic.
+	scraper.recordSamples(map[string]*tailscaleCounters{
+		"write": {inbound: 1000, outbound: 5000},
+	})
+	scraper.recordSamples(map[string]*tailscaleCounters{
+		"write": {inbound: 2000, outbound: 6000},
+	})
+
+	// A long outage: more failed intervals than the buffer holds.
+	for range 5 {
+		scraper.fail(errors.New("outage"))
+	}
+
+	// The pre-outage traffic must have aged out of the ring.
+	samples := scraper.Fetch("write", 5)
+	require.Len(t, samples, 5)
+	for _, s := range samples {
+		assert.Zero(t, s.InboundBytes)
+		assert.Zero(t, s.OutboundBytes)
+	}
 }
