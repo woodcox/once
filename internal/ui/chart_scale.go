@@ -15,8 +15,9 @@ func (s ChartScale) Max() float64 {
 }
 
 type DashboardScales struct {
-	CPU, Memory ChartScale // fixed scales from host hardware
-	Traffic     ChartScale // shared across panels
+	CPU, Memory    ChartScale // fixed scales from host hardware
+	Traffic        ChartScale // shared across proxied panels
+	TailnetTraffic ChartScale // shared across tailnet panels
 }
 
 // Helpers
@@ -36,6 +37,20 @@ func niceMax(unit UnitType, raw float64) float64 {
 			GiB = 1024 * MiB
 		)
 		steps := []float64{1 * MiB, 10 * MiB, 100 * MiB, 1 * GiB}
+		for _, step := range steps {
+			if raw <= step {
+				return step
+			}
+		}
+		return math.Ceil(raw/GiB) * GiB
+
+	case UnitBytesRate:
+		const (
+			KiB = 1024
+			MiB = 1024 * KiB
+			GiB = 1024 * MiB
+		)
+		steps := []float64{1 * KiB, 10 * KiB, 100 * KiB, 1 * MiB, 10 * MiB, 100 * MiB, 1 * GiB}
 		for _, step := range steps {
 			if raw <= step {
 				return step

@@ -30,6 +30,24 @@ func TestNiceMaxBytes(t *testing.T) {
 	assert.Equal(t, 2*GB, niceMax(UnitBytes, 1.5*GB))
 }
 
+func TestNiceMaxBytesRate(t *testing.T) {
+	const (
+		KB = 1024.0
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+
+	assert.Equal(t, 0.0, niceMax(UnitBytesRate, 0))
+	assert.Equal(t, 1*KB, niceMax(UnitBytesRate, 500))
+	assert.Equal(t, 10*KB, niceMax(UnitBytesRate, 3_000))
+	assert.Equal(t, 100*KB, niceMax(UnitBytesRate, 50*KB))
+	assert.Equal(t, 1*MB, niceMax(UnitBytesRate, 500*KB))
+	assert.Equal(t, 10*MB, niceMax(UnitBytesRate, 5*MB))
+	assert.Equal(t, 100*MB, niceMax(UnitBytesRate, 50*MB))
+	assert.Equal(t, 1*GB, niceMax(UnitBytesRate, 500*MB))
+	assert.Equal(t, 2*GB, niceMax(UnitBytesRate, 1.5*GB))
+}
+
 func TestNiceMaxCount(t *testing.T) {
 	assert.Equal(t, 0.0, niceMax(UnitCount, 0))
 	assert.Equal(t, 100.0, niceMax(UnitCount, 50))

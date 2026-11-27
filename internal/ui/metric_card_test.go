@@ -79,6 +79,20 @@ func TestTrafficCardZeroErrors(t *testing.T) {
 	assert.Contains(t, view, "0% errors")
 }
 
+func TestByteTrafficCardView(t *testing.T) {
+	card := NewByteTrafficCard(
+		[]float64{3072},
+		[]float64{1024},
+		[]float64{2048},
+		ChartScale{max: 10 * 1024 * 1024},
+	)
+	view := card.View(40)
+
+	assert.Contains(t, view, "Traffic")
+	assert.Contains(t, view, "/min")
+	assert.Contains(t, view, "in 1K / out 2K")
+}
+
 func TestHealthStateColor(t *testing.T) {
 	// Just verify each state returns a non-nil color
 	assert.NotNil(t, healthNormal.Color())

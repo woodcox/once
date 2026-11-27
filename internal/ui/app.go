@@ -66,6 +66,7 @@ type App struct {
 	dockerScraper   *docker.Scraper
 	systemScraper   *system.Scraper
 	userStats       *userstats.Reader
+	tailnetScraper  *metrics.TailscaleScraper
 	currentScreen   Component
 	sizeGuard       TerminalSizeGuard
 	lastSize        tea.WindowSizeMsg
@@ -108,9 +109,21 @@ func NewApp(ns *docker.Namespace, installImageRef string) *App {
 
 	userStats := userstats.NewReader(ns.Name())
 
+	tailnetScraper := metrics.NewTailscaleScraper(metrics.TailscaleScraperSettings{
+		BufferSize: ChartSlidingWindow,
+	})
+
+	sources := dataSources{
+		metrics:   scraper,
+		docker:    dockerScraper,
+		system:    systemScraper,
+		userStats: userStats,
+		tailnet:   tailnetScraper,
+	}
+
 	var screen Component
 	if len(apps) > 0 && installImageRef == "" {
-		screen = NewDashboard(ns, apps, 0, scraper, dockerScraper, systemScraper, userStats)
+		screen = NewDashboard(ns, apps, 0, sources)
 	} else {
 		screen = NewInstall(ns, installImageRef)
 	}
@@ -121,6 +134,7 @@ func NewApp(ns *docker.Namespace, installImageRef string) *App {
 		dockerScraper:   dockerScraper,
 		systemScraper:   systemScraper,
 		userStats:       userStats,
+		tailnetScraper:  tailnetScraper,
 		currentScreen:   screen,
 		sizeGuard:       NewTerminalSizeGuard(80, 24),
 		eventChan:       eventChan,
@@ -134,7 +148,7 @@ func (m *App) Init() tea.Cmd {
 	return tea.Batch(
 		m.currentScreen.Init(),
 		m.watchForChanges(),
-		m.runScrape(),
+		m.runScrape(m.namespace.HasTailnetApps()),
 		m.scheduleNextScrapeTick(),
 		m.runUserStatsScrape(),
 		m.scheduleNextUserStatsTick(),
@@ -184,7 +198,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scrapeTickMsg:
 		return m, tea.Batch(
-			m.runScrape(),
+			m.runScrape(m.namespace.HasTailnetApps()),
 			m.scheduleNextScrapeTick(),
 		)
 
@@ -214,7 +228,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		return m, m.navigateTo(NewDashboard(m.namespace, apps, targetIndex, m.scraper, m.dockerScraper, m.systemScraper, m.userStats))
+		return m, m.navigateTo(NewDashboard(m.namespace, apps, targetIndex, m.dashboardSources()))
 
 	case NavigateToDashboardMsg:
 		if err := m.namespace.Refresh(m.watchCtx); err != nil {
@@ -232,7 +246,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		return m, m.navigateTo(NewDashboard(m.namespace, apps, selectedIndex, m.scraper, m.dockerScraper, m.systemScraper, m.userStats))
+		return m, m.navigateTo(NewDashboard(m.namespace, apps, selectedIndex, m.dashboardSources()))
 
 	case NavigateToSettingsSectionMsg:
 		return m, m.navigateTo(NewSettings(m.namespace, msg.App, msg.Section))
@@ -309,14 +323,27 @@ func (m *App) shutdown() {
 	m.watchCancel()
 }
 
-func (m *App) runScrape() tea.Cmd {
+func (m *App) runScrape(withTailnet bool) tea.Cmd {
 	return func() tea.Msg {
 		var wg sync.WaitGroup
 		wg.Go(func() { m.scraper.Scrape(m.watchCtx) })
 		wg.Go(func() { m.dockerScraper.Scrape(m.watchCtx) })
 		wg.Go(func() { m.systemScraper.Scrape(m.watchCtx) })
+		if withTailnet {
+			wg.Go(func() { m.tailnetScraper.Scrape(m.watchCtx) })
+		}
 		wg.Wait()
 		return scrapeDoneMsg{}
+	}
+}
+
+func (m *App) dashboardSources() dataSources {
+	return dataSources{
+		metrics:   m.scraper,
+		docker:    m.dockerScraper,
+		system:    m.systemScraper,
+		userStats: m.userStats,
+		tailnet:   m.tailnetScraper,
 	}
 }
 

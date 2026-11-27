@@ -11,7 +11,6 @@ import (
 
 	"github.com/basecamp/once/internal/docker"
 	"github.com/basecamp/once/internal/metrics"
-	"github.com/basecamp/once/internal/userstats"
 )
 
 const PanelHeight = 7
@@ -27,32 +26,38 @@ const (
 	trafficErrorPct   = 5
 )
 
+type tailnetStatsFetcher interface {
+	Fetch(service string, n int) []metrics.TailscaleSample
+	LastError() error
+}
+
 type DashboardPanel struct {
 	app           docker.Application
 	stoppedByUser bool
-	scraper       *metrics.MetricsScraper
-	dockerScraper *docker.Scraper
-	userStats     *userstats.Reader
+	sources       dataSources
 	cards         [3]MetricCard
 	issues        []PanelIssue
 }
 
-func NewDashboardPanel(app *docker.Application, scraper *metrics.MetricsScraper, dockerScraper *docker.Scraper, userStats *userstats.Reader) DashboardPanel {
+func NewDashboardPanel(app *docker.Application, sources dataSources) DashboardPanel {
 	return DashboardPanel{
-		app:           *app,
-		scraper:       scraper,
-		dockerScraper: dockerScraper,
-		userStats:     userStats,
+		app:     *app,
+		sources: sources,
 	}
 }
 
-func (p DashboardPanel) DataMaxes() (traffic float64) {
+func (p DashboardPanel) Maxes() (traffic, tailnet float64) {
 	if !p.app.Running {
 		return
 	}
 
+	if p.usesTailnetMetrics() {
+		_, _, total := p.fetchTailnetMetricsData()
+		return 0, maxValue(total)
+	}
+
 	reqData, _ := p.fetchMetricsData()
-	return maxValue(reqData)
+	return maxValue(reqData), 0
 }
 
 func (p DashboardPanel) View(selected bool, toggling bool, showDetails bool, width int) string {
@@ -128,9 +133,19 @@ func (p *DashboardPanel) Refresh(scales DashboardScales) {
 	}
 
 	p.issues = panelIssues(&p.app, p.cards, p.stoppedByUser)
+
+	if p.app.Running && p.usesTailnetMetrics() && p.sources.tailnet != nil {
+		if err := p.sources.tailnet.LastError(); err != nil {
+			p.issues = append(p.issues, PanelIssue{Text: "tailnet traffic unavailable", Health: healthWarning})
+		}
+	}
 }
 
 // Private
+
+func (p DashboardPanel) usesTailnetMetrics() bool {
+	return p.app.Settings.DocktailEnabled()
+}
 
 func (p DashboardPanel) renderHealthBadge(cards [3]MetricCard) string {
 	worst := healthNormal
@@ -197,7 +212,6 @@ func (p DashboardPanel) renderCards(innerWidth int, cards [3]MetricCard) string 
 
 func (p DashboardPanel) buildMetricCards(scales DashboardScales) [3]MetricCard {
 	cpuData, memData := p.fetchDockerData()
-	reqData, errData := p.fetchMetricsData()
 
 	cpuScale := scales.CPU
 	cpuLimit := ""
@@ -213,6 +227,14 @@ func (p DashboardPanel) buildMetricCards(scales DashboardScales) [3]MetricCard {
 		memLimit = UnitBytes.Format(float64(mb) * 1024 * 1024)
 	}
 
+	cpuCard := NewMetricCard("CPU", cpuData, cpuScale, UnitPercent, cpuLimit, defaultWarningPct, defaultErrorPct)
+	memCard := NewMetricCard("Memory", memData, memScale, UnitBytes, memLimit, defaultWarningPct, defaultErrorPct)
+
+	if p.usesTailnetMetrics() {
+		return [3]MetricCard{cpuCard, memCard, p.buildTailnetTrafficCard(scales.TailnetTraffic)}
+	}
+
+	reqData, errData := p.fetchMetricsData()
 	currentReq := lastValue(reqData)
 	currentErr := lastValue(errData)
 	errPct := 0.0
@@ -221,10 +243,15 @@ func (p DashboardPanel) buildMetricCards(scales DashboardScales) [3]MetricCard {
 	}
 
 	return [3]MetricCard{
-		NewMetricCard("CPU", cpuData, cpuScale, UnitPercent, cpuLimit, defaultWarningPct, defaultErrorPct),
-		NewMetricCard("Memory", memData, memScale, UnitBytes, memLimit, defaultWarningPct, defaultErrorPct),
+		cpuCard,
+		memCard,
 		NewTrafficCard(reqData, errData, scales.Traffic, errPct, trafficWarningPct, trafficErrorPct),
 	}
+}
+
+func (p DashboardPanel) buildTailnetTrafficCard(scale ChartScale) MetricCard {
+	inbound, outbound, total := p.fetchTailnetMetricsData()
+	return NewByteTrafficCard(total, inbound, outbound, scale)
 }
 
 func (p DashboardPanel) renderVisitsCard(width int) string {
@@ -234,8 +261,12 @@ func (p DashboardPanel) renderVisitsCard(width int) string {
 	right := boxSide()
 
 	var dayLine, weekLine string
-	if p.userStats != nil {
-		stats := p.userStats.Fetch(p.app.Settings.Name)
+	switch {
+	case p.usesTailnetMetrics():
+		dayLine = " not measured"
+		weekLine = " on tailnet"
+	case p.sources.userStats != nil:
+		stats := p.sources.userStats.Fetch(p.app.Settings.Name)
 		if stats != nil && (stats.UniqueUsers24h > 0 || stats.UniqueUsers7d > 0) {
 			noun := "visitors"
 			if stats.UniqueUsers24h == 1 {
@@ -288,7 +319,7 @@ func (p DashboardPanel) renderIndicator(selected bool, height int) string {
 }
 
 func (p DashboardPanel) fetchDockerData() (cpu, memory []float64) {
-	samples := p.dockerScraper.Fetch(p.app.Settings.Name, containerStatsBuffer)
+	samples := p.sources.docker.Fetch(p.app.Settings.Name, containerStatsBuffer)
 	cpu = make([]float64, len(samples))
 	memory = make([]float64, len(samples))
 	for i, s := range samples {
@@ -301,7 +332,7 @@ func (p DashboardPanel) fetchDockerData() (cpu, memory []float64) {
 }
 
 func (p DashboardPanel) fetchMetricsData() (requests, errors []float64) {
-	samples := p.scraper.Fetch(p.app.Settings.Name, ChartSlidingWindow)
+	samples := p.sources.metrics.Fetch(p.app.Settings.Name, ChartSlidingWindow)
 	requests = make([]float64, len(samples))
 	errors = make([]float64, len(samples))
 	for i, s := range samples {
@@ -311,6 +342,29 @@ func (p DashboardPanel) fetchMetricsData() (requests, errors []float64) {
 	slices.Reverse(requests)
 	slices.Reverse(errors)
 	return SlidingSum(requests, ChartSlidingWindow), SlidingSum(errors, ChartSlidingWindow)
+}
+
+func (p DashboardPanel) fetchTailnetMetricsData() (inbound, outbound, total []float64) {
+	if p.sources.tailnet == nil {
+		return nil, nil, nil
+	}
+
+	samples := p.sources.tailnet.Fetch(p.app.Settings.EffectiveServiceName(), ChartSlidingWindow)
+	inbound = make([]float64, len(samples))
+	outbound = make([]float64, len(samples))
+	total = make([]float64, len(samples))
+	for i, s := range samples {
+		inbound[i] = float64(s.InboundBytes)
+		outbound[i] = float64(s.OutboundBytes)
+		total[i] = inbound[i] + outbound[i]
+	}
+	slices.Reverse(inbound)
+	slices.Reverse(outbound)
+	slices.Reverse(total)
+
+	return SlidingSum(inbound, ChartSlidingWindow),
+		SlidingSum(outbound, ChartSlidingWindow),
+		SlidingSum(total, ChartSlidingWindow)
 }
 
 // Helpers

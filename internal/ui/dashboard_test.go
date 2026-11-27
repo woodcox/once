@@ -386,6 +386,23 @@ func TestDashboard_EmptyStateShowsMessage(t *testing.T) {
 	assert.Contains(t, view, "new app")
 }
 
+func TestDashboardScalesUseBytesForTailnetTraffic(t *testing.T) {
+	d := testDashboard(1)
+
+	tailnet := testDocktailPanel(true)
+	tailnet.sources.tailnet = stubTailnetStats{
+		samples: []metrics.TailscaleSample{
+			{InboundBytes: 1000, OutboundBytes: 2000},
+		},
+	}
+	d.panels = append(d.panels, tailnet)
+
+	scales := d.computeScales()
+
+	assert.Zero(t, scales.Traffic.Max(), "tailnet apps must not affect the request scale")
+	assert.Equal(t, float64(10*1024), scales.TailnetTraffic.Max())
+}
+
 // Helpers
 
 func testDashboard(numApps int) Dashboard {
@@ -405,7 +422,11 @@ func testDashboard(numApps int) Dashboard {
 	systemScraper := system.NewScraper(system.ScraperSettings{BufferSize: 10})
 
 	dashboardShowDetails = true
-	return NewDashboard(nil, apps, 0, scraper, dockerScraper, systemScraper, nil)
+	return NewDashboard(nil, apps, 0, dataSources{
+		metrics: scraper,
+		docker:  dockerScraper,
+		system:  systemScraper,
+	})
 }
 
 func updateDashboard(d Dashboard, msg tea.Msg) (Dashboard, tea.Cmd) {

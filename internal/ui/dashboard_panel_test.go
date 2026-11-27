@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"image/color"
 	"strings"
 	"testing"
@@ -333,6 +334,70 @@ func TestRenderBarZeroWidth(t *testing.T) {
 	assert.Empty(t, renderBar(50, 0, 100, Colors.Success, 0))
 }
 
+func TestDashboardPanelTailnetVisitsNotMeasured(t *testing.T) {
+	panel := testDocktailPanel(true)
+	view := ansi.Strip(panel.View(false, false, true, 120))
+
+	assert.Contains(t, view, "not measured")
+	assert.Contains(t, view, "on tailnet")
+}
+
+func TestDashboardPanelTailnetTrafficUsesBytes(t *testing.T) {
+	panel := testDocktailPanel(true)
+	panel.sources.tailnet = stubTailnetStats{
+		samples: []metrics.TailscaleSample{
+			{InboundBytes: 1024, OutboundBytes: 2048},
+		},
+	}
+	panel.Refresh(DashboardScales{
+		TailnetTraffic: NewChartScale(UnitBytesRate, 10*1024*1024),
+	})
+
+	card := panel.cards[2]
+	assert.Equal(t, cardByteTraffic, card.kind)
+	assert.Equal(t, UnitBytesRate, card.unit)
+	assert.Equal(t, float64(3072), lastValue(card.data))
+
+	view := ansi.Strip(card.View(40))
+	assert.Contains(t, view, "Traffic")
+	assert.Contains(t, view, "/min")
+	assert.Contains(t, view, "in 1K / out 2K")
+}
+
+func TestDashboardPanelMaxes(t *testing.T) {
+	panel := testDocktailPanel(true)
+	panel.sources.tailnet = stubTailnetStats{
+		samples: []metrics.TailscaleSample{
+			{InboundBytes: 1000, OutboundBytes: 2000},
+		},
+	}
+
+	traffic, tailnet := panel.Maxes()
+	assert.Zero(t, traffic, "tailnet apps don't use proxy request traffic")
+	assert.Equal(t, float64(3000), tailnet)
+}
+
+func TestDashboardPanelTailnetTrafficUnavailable(t *testing.T) {
+	panel := testDocktailPanel(true)
+	panel.sources.tailnet = stubTailnetStats{err: errors.New("connection refused")}
+	panel.Refresh(DashboardScales{})
+
+	stripped := ansi.Strip(panel.View(false, false, true, 120))
+
+	assert.Contains(t, stripped, "tailnet traffic unavailable")
+}
+
+func TestDashboardPanelTailnetTrafficAvailable(t *testing.T) {
+	panel := testDocktailPanel(true)
+	panel.sources.tailnet = stubTailnetStats{}
+	panel.Refresh(DashboardScales{})
+
+	stripped := ansi.Strip(panel.View(false, false, true, 120))
+
+	assert.NotContains(t, stripped, "tailnet traffic unavailable")
+	assert.Contains(t, stripped, "✓ no issues")
+}
+
 // Helpers
 
 func testPanel(running bool) DashboardPanel {
@@ -352,7 +417,43 @@ func testPanelWithState(running bool, state string) DashboardPanel {
 	scraper := metrics.NewMetricsScraper(metrics.ScraperSettings{})
 	dockerScraper := &docker.Scraper{}
 
-	return NewDashboardPanel(app, scraper, dockerScraper, nil)
+	return NewDashboardPanel(app, dataSources{metrics: scraper, docker: dockerScraper})
+}
+
+func testDocktailPanel(running bool) DashboardPanel {
+	app := &docker.Application{
+		Running: running,
+		Settings: docker.ApplicationSettings{
+			Name:  "writebook",
+			Host:  "write.example.ts.net",
+			Image: "ghcr.io/basecamp/writebook:latest",
+			Tailscale: docker.TailscaleSettings{
+				Enabled: true,
+				Mode:    docker.DocktailMode,
+				Service: "write",
+			},
+		},
+	}
+	scraper := metrics.NewMetricsScraper(metrics.ScraperSettings{})
+	dockerScraper := &docker.Scraper{}
+
+	return NewDashboardPanel(app, dataSources{metrics: scraper, docker: dockerScraper})
+}
+
+type stubTailnetStats struct {
+	samples []metrics.TailscaleSample
+	err     error
+}
+
+func (s stubTailnetStats) Fetch(service string, n int) []metrics.TailscaleSample {
+	if service != "write" {
+		return nil
+	}
+	return s.samples[:min(n, len(s.samples))]
+}
+
+func (s stubTailnetStats) LastError() error {
+	return s.err
 }
 
 // badgeWithColor renders the health badge in the given colour, so a test can
