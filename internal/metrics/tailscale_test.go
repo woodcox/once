@@ -130,3 +130,114 @@ func TestTailscaleScraperSettingsDefaults(t *testing.T) {
 	assert.Equal(t, defaultTailscaleMetricsURL, settings.URL)
 	assert.Equal(t, defaultBufferSize, settings.BufferSize)
 }
+
+func TestTailscaleScraperSkipsOverlappingScrape(t *testing.T) {
+	var requests atomic.Int32
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		fmt.Fprintln(w, "")
+	}))
+	defer server.Close()
+
+	scraper := NewTailscaleScraper(TailscaleScraperSettings{URL: server.URL})
+
+	done := make(chan struct{})
+	go func() {
+		scraper.Scrape(context.Background())
+		close(done)
+	}()
+
+	<-started
+
+	// A second scrape while the first is still in flight must be skipped.
+	scraper.Scrape(context.Background())
+
+	close(release)
+	<-done
+
+	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestTailscaleScraperExpiresAbsentService(t *testing.T) {
+	scraper := NewTailscaleScraper(TailscaleScraperSettings{BufferSize: 10})
+
+	scraper.recordSamples(map[string]*tailscaleCounters{
+		"write": {inbound: 1000, outbound: 5000},
+	})
+	scraper.recordSamples(map[string]*tailscaleCounters{
+		"write": {inbound: 1500, outbound: 6000},
+	})
+
+	// A successful scrape that no longer reports the Service records a zero
+	// sample and drops the baseline.
+	scraper.recordSamples(map[string]*tailscaleCounters{})
+
+	samples := scraper.Fetch("write", 3)
+	require.Len(t, samples, 3)
+	assert.Zero(t, samples[0].InboundBytes)
+	assert.Zero(t, samples[0].OutboundBytes)
+
+	// A reappearing Service re-baselines instead of producing a stale delta.
+	scraper.recordSamples(map[string]*tailscaleCounters{
+		"write": {inbound: 1600, outbound: 6100},
+	})
+	latest := scraper.Fetch("write", 1)
+	require.Len(t, latest, 1)
+	assert.Zero(t, latest[0].InboundBytes)
+	assert.Zero(t, latest[0].OutboundBytes)
+}
+
+func TestTailscaleScraperRebaselinesAfterFailure(t *testing.T) {
+	var inbound, outbound atomic.Int64
+	inbound.Store(1000)
+	outbound.Store(5000)
+	var failing atomic.Bool
+	failing.Store(true)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failing.Load() {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, `# TYPE tailscaled_serve_inbound_bytes_total counter
+tailscaled_serve_inbound_bytes_total{service="svc:write"} %d
+# TYPE tailscaled_serve_outbound_bytes_total counter
+tailscaled_serve_outbound_bytes_total{service="svc:write"} %d
+`, inbound.Load(), outbound.Load())
+	}))
+	defer server.Close()
+
+	scraper := NewTailscaleScraper(TailscaleScraperSettings{URL: server.URL, BufferSize: 10})
+
+	// Establish a baseline.
+	failing.Store(false)
+	scraper.Scrape(context.Background())
+	require.NoError(t, scraper.LastError())
+
+	// The counters jump while scraping fails.
+	inbound.Store(5000)
+	outbound.Store(20000)
+
+	failing.Store(true)
+	scraper.Scrape(context.Background())
+	require.Error(t, scraper.LastError())
+
+	// The first successful scrape after the outage re-baselines instead of
+	// recording the whole jump as one interval.
+	failing.Store(false)
+	scraper.Scrape(context.Background())
+	require.NoError(t, scraper.LastError())
+
+	latest := scraper.Fetch("write", 1)
+	require.Len(t, latest, 1)
+	assert.Zero(t, latest[0].InboundBytes)
+	assert.Zero(t, latest[0].OutboundBytes)
+}

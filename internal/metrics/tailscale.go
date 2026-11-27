@@ -49,6 +49,7 @@ type TailscaleScraper struct {
 	settings TailscaleScraperSettings
 	client   *http.Client
 
+	scrapeMu  sync.Mutex
 	mu        sync.RWMutex
 	services  map[string]*tailscaleServiceData
 	lastError error
@@ -94,16 +95,21 @@ func (s *TailscaleScraper) LastError() error {
 }
 
 func (s *TailscaleScraper) Scrape(ctx context.Context) {
+	if !s.scrapeMu.TryLock() {
+		return // a scrape is already in flight; skip this tick
+	}
+	defer s.scrapeMu.Unlock()
+
 	body, err := httpGet(ctx, s.client, s.settings.URL)
 	if err != nil {
-		s.setError(err)
+		s.fail(err)
 		return
 	}
 	defer body.Close()
 
 	counters, err := s.parseMetrics(body)
 	if err != nil {
-		s.setError(fmt.Errorf("parsing metrics: %w", err))
+		s.fail(fmt.Errorf("parsing metrics: %w", err))
 		return
 	}
 
@@ -117,6 +123,18 @@ func (s *TailscaleScraper) setError(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastError = err
+}
+
+// fail records a scrape error and drops every Service's counter baseline, so a
+// later successful scrape re-baselines instead of attributing the whole outage
+// to a single interval.
+func (s *TailscaleScraper) fail(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastError = err
+	for _, data := range s.services {
+		data.prevCounters = nil
+	}
 }
 
 func (s *TailscaleScraper) parseMetrics(body io.Reader) (map[string]*tailscaleCounters, error) {
@@ -163,13 +181,7 @@ func (s *TailscaleScraper) recordSamples(counters map[string]*tailscaleCounters)
 	defer s.mu.Unlock()
 
 	for service, current := range counters {
-		data, ok := s.services[service]
-		if !ok {
-			data = &tailscaleServiceData{
-				samples: newSampleRing[TailscaleSample](s.settings.BufferSize),
-			}
-			s.services[service] = data
-		}
+		data := s.serviceData(service)
 
 		var sample TailscaleSample
 		if data.prevCounters != nil {
@@ -180,4 +192,26 @@ func (s *TailscaleScraper) recordSamples(counters map[string]*tailscaleCounters)
 
 		data.samples.push(sample)
 	}
+
+	// Expire Services that were tracked before but are absent from this
+	// successful response: record a zero sample and drop the baseline so a
+	// reappearing Service re-baselines instead of producing a stale delta.
+	for service, data := range s.services {
+		if _, present := counters[service]; present {
+			continue
+		}
+		data.prevCounters = nil
+		data.samples.push(TailscaleSample{})
+	}
+}
+
+func (s *TailscaleScraper) serviceData(service string) *tailscaleServiceData {
+	data, ok := s.services[service]
+	if !ok {
+		data = &tailscaleServiceData{
+			samples: newSampleRing[TailscaleSample](s.settings.BufferSize),
+		}
+		s.services[service] = data
+	}
+	return data
 }
