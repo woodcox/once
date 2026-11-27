@@ -125,7 +125,7 @@ func ApplyPalette(p *Palette) {
 // Private
 
 func (p *Palette) synthesize() {
-	p.FocusOrange = synthesizeOrange(p.samples[int(ansi.Blue)])
+	p.FocusOrange = synthesizeOrange(p.samples[int(ansi.Blue)], p.isDark)
 	p.BackgroundTint = synthesizeTint(p.samples[sampleBackground])
 	p.LightText = synthesizeLightText(
 		p.samples[sampleBackground],
@@ -144,20 +144,28 @@ func (p *Palette) synthesize() {
 	p.Warning = p.FocusOrange
 }
 
-// synthesizeOrange produces a warm orange as the OKLCH complement of blue,
-// with hue clamped to the 35°–75° range.
-func synthesizeOrange(blue colorful.Color) color.Color {
+// synthesizeOrange produces a warm orange as the OKLCH complement of blue.
+// The hue is kept in a narrow orange band, and chroma and lightness are
+// bounded so that a vivid or dark blue cannot clamp to red or brown. Dark
+// backgrounds get a brighter orange for contrast; light backgrounds get a
+// darker one.
+func synthesizeOrange(blue colorful.Color, dark bool) color.Color {
 	l, c, h := blue.OkLch()
 
 	// Complement: rotate 180°
 	h = math.Mod(h+180, 360)
 
 	// Clamp hue to orange band
-	h = max(35, min(75, h))
+	h = max(55, min(75, h))
 
-	// Ensure usable chroma and lightness
-	c = max(c, 0.10)
-	l = max(0.55, min(0.85, l))
+	// Cap chroma so an out-of-gamut orange doesn't clamp towards red
+	c = min(max(c, 0.10), 0.14)
+
+	if dark {
+		l = min(max(l, 0.70), 0.85)
+	} else {
+		l = min(max(l, 0.55), 0.65)
+	}
 
 	return colorful.OkLch(l, c, h).Clamped()
 }
